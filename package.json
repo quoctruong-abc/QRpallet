@@ -9,15 +9,19 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
     "@supabase/ssr": "latest",
     "@supabase/supabase-js": "latest",
     "next": "latest",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.4",
     "react": "latest",
     "react-dom": "latest",
     "read-excel-file": "^9.3.1"
   },
   "devDependencies": {
     "@types/node": "latest",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "eslint": "latest",

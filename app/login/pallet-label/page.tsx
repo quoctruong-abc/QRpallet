@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
 import { requirePosition } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { PalletLabelClient, type ActivePallet, type PlanItem } from "./pallet-label-client";
+import { PalletLabelClient, type PlanItem } from "./pallet-label-client";
 
 type PlanDbRow = {
   machine: string | null;
@@ -13,7 +13,7 @@ type PlanDbRow = {
   quanorder: number | null;
 };
 
-type PalletDbRow = ActivePallet;
+type PalletDbRow = { wo: string; quantity: number; status: string };
 type ConfigDbRow = { itemcode: string; quantity_per_pallet: number };
 
 export default async function PalletLabelPage() {
@@ -28,11 +28,7 @@ export default async function PalletLabelPage() {
       .not("itemcode", "is", null)
       .not("wo", "is", null)
       .order("machine", { ascending: true }),
-    supabase
-      .from("pallet_data")
-      .select("pallet_id,itemcode,product_name,customer,wo,quanorder,machine,quantity,status,note,created_at")
-      .is("effect_to", null)
-      .order("created_at", { ascending: false }),
+    supabase.from("pallet_data").select("wo,quantity,status"),
     supabase.from("item_pallet_config").select("itemcode,quantity_per_pallet"),
   ]);
 
@@ -77,20 +73,20 @@ export default async function PalletLabelPage() {
         <div>
           <p className="eyebrow">MODULE 02</p>
           <h1>Xuất tem pallet</h1>
-          <p className="muted">Chọn máy, tạo tem và quản lý các pallet đang hiệu lực.</p>
+          <p className="muted">Chọn máy, chọn WO và tạo Pallet ID trước khi xuất tem.</p>
         </div>
         <div className="stat-card">
           <span className="stat-number">{palletRows.length.toLocaleString("vi-VN")}</span>
-          <span className="muted">Pallet hiệu lực</span>
+          <span className="muted">Pallet đã tạo</span>
         </div>
       </div>
 
       {!databaseReady ? (
         <section className="alert alert-error">
-          Chưa đủ bảng database. Hãy chạy <b>supabase/004_pallet_history_pdf.sql</b> trong Supabase SQL Editor.
+          Chưa đủ bảng database. Hãy chạy lần lượt <b>supabase/002_planning_inject.sql</b> và <b>supabase/003_pallet_label.sql</b> trong Supabase SQL Editor.
         </section>
       ) : (
-        <PalletLabelClient rows={Array.from(uniquePlan.values())} pallets={palletRows} />
+        <PalletLabelClient rows={Array.from(uniquePlan.values())} />
       )}
 
       {profile.role === "admin" ? <Link className="text-link" href="/admin">← Trở về Admin</Link> : null}
