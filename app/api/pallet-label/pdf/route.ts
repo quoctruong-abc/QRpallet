@@ -155,16 +155,16 @@ export async function GET(request: Request) {
 
     const regularFontPath = path.join(
       process.cwd(),
-      "assets",
+      "public",
       "fonts",
-      "Roboto-Regular.ttf",
+      "Arial-Regular.ttf",
     );
 
     const boldFontPath = path.join(
       process.cwd(),
-      "assets",
+      "public",
       "fonts",
-      "Roboto-Bold.ttf",
+      "Arial-Bold.ttf",
     );
 
     const [
@@ -283,7 +283,7 @@ export async function GET(request: Request) {
       return NextResponse.json(
         {
           error:
-            "Không tìm thấy PDF mẫu hoặc font. Kiểm tra public/templates/pallet-label.pdf và assets/fonts.",
+            "Không tìm thấy PDF mẫu hoặc font. Kiểm tra public/templates/pallet-label.pdf và public/fonts.",
         },
         { status: 500 },
       );
