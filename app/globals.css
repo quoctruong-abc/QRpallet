@@ -248,3 +248,104 @@ td { font-size: .9rem; }
   .page-content { width: min(100% - 20px, 1240px); padding-top: 24px; }
   .panel { padding: 18px; }
 }
+
+/* Planning Inject */
+.planning-hero { align-items: stretch; }
+.planning-stats {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.planning-latest-card { min-width: 230px; align-content: center; }
+.truncate-text {
+  display: block;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planning-upload { display: grid; gap: 16px; }
+.upload-dropzone {
+  min-height: 150px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 24px;
+  border: 2px dashed #b2ccff;
+  border-radius: 16px;
+  background: #f5f8ff;
+}
+.upload-dropzone p { margin: 7px 0 0; line-height: 1.5; }
+.upload-icon {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #027a48;
+  background: #d1fadf;
+  font-weight: 900;
+}
+.file-picker { position: relative; overflow: hidden; }
+.file-picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.upload-selection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.upload-selection > div { min-width: 0; display: grid; gap: 4px; }
+.upload-selection strong {
+  max-width: 680px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planning-warning {
+  margin: 0;
+  padding: 11px 13px;
+  border-radius: 10px;
+  color: #854a0e;
+  background: #fffaeb;
+  border: 1px solid #fedf89;
+  font-size: .88rem;
+}
+.planning-table-wrap { max-height: 590px; border: 1px solid var(--border); border-radius: 12px; }
+.planning-table { min-width: 1540px; }
+.planning-table thead { position: sticky; top: 0; z-index: 2; background: #f8fafc; }
+.planning-table th:first-child,
+.planning-table td:first-child { position: sticky; left: 0; background: inherit; }
+.planning-table tbody tr { background: white; }
+.planning-table tbody tr:hover { background: #f8fafc; }
+.planning-table th:first-child { z-index: 3; }
+.empty-state {
+  min-height: 180px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  padding: 24px;
+  border: 1px dashed #d0d5dd;
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+.empty-state p { margin: 8px 0 0; }
+
+@media (max-width: 760px) {
+  .planning-stats { width: 100%; display: grid; grid-template-columns: 1fr; }
+  .planning-latest-card { min-width: 0; }
+  .upload-dropzone { grid-template-columns: 1fr; text-align: center; justify-items: center; }
+  .upload-selection { align-items: stretch; flex-direction: column; }
+  .upload-selection .button { width: 100%; }
+  .planning-table-heading { align-items: flex-start; gap: 10px; flex-direction: column; }
+}
