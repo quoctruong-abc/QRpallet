@@ -90,6 +90,8 @@ export function ScanQrClient({ initialRows }: { initialRows: ScannedPallet[] }) 
   const [notice, setNotice] = useState<Notice>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [cancelRow, setCancelRow] = useState<ScannedPallet | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const summary = useMemo<SummaryRow[]>(() => {
     const map = new Map<string, SummaryRow>();
@@ -183,6 +185,29 @@ export function ScanQrClient({ initialRows }: { initialRows: ScannedPallet[] }) 
     }
   }
 
+  async function cancelPallet() {
+    if (!cancelRow) return;
+    setCancelling(true);
+    try {
+      const response = await fetch("/api/scan-qr/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ palletId: cancelRow.pallet_id }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || "Không thể hủy pallet.");
+      setRows((current) => current.filter((row) => row.pallet_id !== cancelRow.pallet_id));
+      setNotice({ type: "success", text: `Đã trả pallet ${cancelRow.pallet_id} về production.` });
+      setCancelRow(null);
+      router.refresh();
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể hủy pallet." });
+      setCancelRow(null);
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   async function confirmAll() {
     if (rows.length === 0) return;
     setConfirming(true);
@@ -222,8 +247,8 @@ export function ScanQrClient({ initialRows }: { initialRows: ScannedPallet[] }) 
       <div className="scan-table-card">
         <div className="scan-table-title"><h2>Pallet pendingWH</h2><span>{rows.reduce((sum, row) => sum + Number(row.quantity), 0).toLocaleString("vi-VN")} pcs</span></div>
         {rows.length === 0 ? <div className="scan-empty">Chưa có pallet nào ở trạng thái pendingWH.</div> : (
-          <div className="scan-table-wrap"><table className="scan-table"><thead><tr><th>ID pallet</th><th>WO</th><th>Quantity</th><th>Product name</th><th>Customer</th><th>Itemcode</th></tr></thead>
-          <tbody>{rows.map((row) => <tr key={row.pallet_id}><td><strong>{row.pallet_id}</strong></td><td>{row.wo}</td><td>{Number(row.quantity).toLocaleString("vi-VN")}</td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td>{row.itemcode}</td></tr>)}</tbody></table></div>
+          <div className="scan-table-wrap"><table className="scan-table"><thead><tr><th>ID pallet</th><th>WO</th><th>Quantity</th><th>Product name</th><th>Customer</th><th>Itemcode</th><th>Thao tác</th></tr></thead>
+          <tbody>{rows.map((row) => <tr key={row.pallet_id}><td><strong>{row.pallet_id}</strong></td><td>{row.wo}</td><td>{Number(row.quantity).toLocaleString("vi-VN")}</td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td>{row.itemcode}</td><td><button type="button" className="button button-danger scan-cancel-button" onClick={() => setCancelRow(row)}>Hủy</button></td></tr>)}</tbody></table></div>
         )}
       </div>
 
@@ -233,6 +258,13 @@ export function ScanQrClient({ initialRows }: { initialRows: ScannedPallet[] }) 
         <div className="camera-guide"><span /><p>Đưa QR vào giữa khung</p></div>
         {notice ? <div className={`camera-notice camera-notice-${notice.type}`}><span className={notice.type === "loading" ? "camera-spinner" : ""}>{notice.type === "success" ? "✓" : notice.type === "error" ? "!" : ""}</span><p>{notice.text}</p></div> : null}
       </div> : null}
+
+
+      {cancelRow ? <div className="modal-backdrop" onMouseDown={() => !cancelling && setCancelRow(null)}><div className="modal-card scan-cancel-modal" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-heading"><div><p className="eyebrow">HỦY PALLET</p><h2>Trả pallet về production?</h2></div><button type="button" className="modal-close" disabled={cancelling} onClick={() => setCancelRow(null)}>×</button></div>
+        <p className="muted">Pallet <strong>{cancelRow.pallet_id}</strong> sẽ bị loại khỏi danh sách chờ nhập kho và chuyển về trạng thái <strong>production</strong>.</p>
+        <div className="modal-actions"><button className="button button-secondary" disabled={cancelling} onClick={() => setCancelRow(null)}>Không</button><button className="button button-danger" disabled={cancelling} onClick={cancelPallet}>{cancelling ? "Đang hủy..." : "Có, hủy pallet"}</button></div>
+      </div></div> : null}
 
       {confirmOpen ? <div className="modal-backdrop" onMouseDown={() => !confirming && setConfirmOpen(false)}><div className="modal-card scan-confirm-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-heading"><div><p className="eyebrow">XÁC NHẬN</p><h2>Chuyển sang processingWH?</h2></div><button type="button" className="modal-close" onClick={() => setConfirmOpen(false)}>×</button></div>

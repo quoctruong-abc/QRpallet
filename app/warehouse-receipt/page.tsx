@@ -1,18 +1,19 @@
 import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
 import { requirePosition } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { WarehouseReceiptClient, type WarehousePallet } from "./warehouse-receipt-client";
 
 export default async function WarehouseReceiptPage() {
   const profile = await requirePosition("warehouse");
-  return (
-    <PageShell profile={profile} title="Xử lý data tạm / Nhập kho">
-      <section className="module-page-card">
-        <p className="eyebrow">MODULE 04</p>
-        <h1>Xử lý data tạm</h1>
-        <p className="muted">Xác nhận pallet, sinh số phiếu nhập kho và hoàn tất trạng thái.</p>
-        <div className="placeholder-box">Gắn giao diện xử lý data tạm và phiếu nhập kho vào route này.</div>
-        {profile.role === "admin" ? <Link className="text-link" href="/admin">← Trở về Admin</Link> : null}
-      </section>
-    </PageShell>
-  );
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("pallet_data")
+    .select("pallet_id,itemcode,product_name,customer,wo,quantity,status,updated_at")
+    .is("effect_to", null).eq("status", "processingWH").order("updated_at", { ascending: true });
+
+  return <PageShell profile={profile} title="Xử lý data tạm / Nhập kho">
+    {error ? <section className="alert alert-error">Chưa cập nhật database. Hãy chạy <b>supabase/006_warehouse_receipt.sql</b> trong Supabase SQL Editor.</section>
+      : <WarehouseReceiptClient initialRows={(data ?? []) as WarehousePallet[]} />}
+    {profile.role === "admin" ? <Link className="text-link" href="/admin">← Trở về Admin</Link> : null}
+  </PageShell>;
 }

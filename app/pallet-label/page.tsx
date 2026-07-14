@@ -90,7 +90,10 @@ export default async function PalletLabelPage() {
           Chưa đủ bảng database. Hãy chạy <b>supabase/004_pallet_history_pdf.sql</b> trong Supabase SQL Editor.
         </section>
       ) : (
-        <PalletLabelClient rows={Array.from(uniquePlan.values())} pallets={palletRows} />
+        <PalletLabelClient
+          rows={Array.from(uniquePlan.values())}
+          pallets={palletRows.filter((row) => Date.now() - new Date(row.created_at).getTime() <= 24 * 60 * 60 * 1000)}
+        />
       )}
 
       {profile.role === "admin" ? <Link className="text-link" href="/admin">← Trở về Admin</Link> : null}

@@ -19,6 +19,16 @@ export async function POST(request: Request) {
       if (!palletId || !Number.isInteger(quantity) || quantity <= 0) {
         return NextResponse.json({ error: "Pallet ID hoặc số lượng không hợp lệ." }, { status: 400 });
       }
+      const { data: currentPallet, error: currentError } = await supabase
+        .from("pallet_data")
+        .select("status")
+        .eq("pallet_id", palletId)
+        .is("effect_to", null)
+        .single();
+      if (currentError || !currentPallet) return NextResponse.json({ error: "Không tìm thấy pallet đang hiệu lực." }, { status: 404 });
+      if (currentPallet.status !== "production") {
+        return NextResponse.json({ error: "Chỉ được sửa pallet đang ở trạng thái production." }, { status: 400 });
+      }
       const { data, error } = await supabase.rpc("edit_pallet_quantity", { p_pallet_id: palletId, p_quantity: quantity });
       if (error) throw error;
       return NextResponse.json({ success: true, pallet: data });
@@ -26,6 +36,16 @@ export async function POST(request: Request) {
 
     if (action === "delete") {
       if (!palletId) return NextResponse.json({ error: "Thiếu Pallet ID." }, { status: 400 });
+      const { data: currentPallet, error: currentError } = await supabase
+        .from("pallet_data")
+        .select("status")
+        .eq("pallet_id", palletId)
+        .is("effect_to", null)
+        .single();
+      if (currentError || !currentPallet) return NextResponse.json({ error: "Không tìm thấy pallet đang hiệu lực." }, { status: 404 });
+      if (currentPallet.status !== "production") {
+        return NextResponse.json({ error: "Chỉ được xóa pallet đang ở trạng thái production." }, { status: 400 });
+      }
       const { data, error } = await supabase.rpc("delete_pallet_record", { p_pallet_id: palletId });
       if (error) throw error;
       return NextResponse.json({ success: true, pallet: data });
