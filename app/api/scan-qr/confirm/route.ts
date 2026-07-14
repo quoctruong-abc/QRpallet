@@ -1,0 +1,28 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { getCurrentProfile } from "@/lib/auth";
+
+export async function POST(request: Request) {
+  const profile = await getCurrentProfile();
+  if (!profile || !profile.is_active || (profile.role !== "admin" && profile.position !== "scanner")) {
+    return NextResponse.json({ success: false, error: "Không có quyền xác nhận pallet." }, { status: 403 });
+  }
+
+  const body = await request.json().catch(() => null) as { palletIds?: string[] } | null;
+  const palletIds = Array.from(new Set((body?.palletIds ?? []).map((id) => id.trim()).filter(Boolean)));
+  if (palletIds.length === 0) {
+    return NextResponse.json({ success: false, error: "Không có pallet để xác nhận." }, { status: 400 });
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("confirm_pending_pallets", { p_pallet_ids: palletIds });
+  if (error) {
+    const message = error.message || "Không thể xác nhận pallet.";
+    const friendly = message.includes("PALLET_STATUS_CHANGED")
+      ? "Danh sách đã thay đổi trên thiết bị khác. Vui lòng tải lại trang."
+      : message;
+    return NextResponse.json({ success: false, error: friendly }, { status: 409 });
+  }
+
+  return NextResponse.json({ success: true, pallets: data });
+}

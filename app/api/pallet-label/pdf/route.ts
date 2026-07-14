@@ -93,19 +93,8 @@ export async function GET(request: Request) {
     const { data, error } = await supabase
       .from("pallet_data")
       .select(
-        [
-          "pallet_id",
-          "itemcode",
-          "product_name",
-          "customer",
-          "wo",
-          "quanorder",
-          "machine",
-          "quantity",
-          "status",
-          "note",
-        ].join(","),
-      )
+  "pallet_id,itemcode,product_name,customer,wo,quanorder,machine,quantity,status,note",
+)
       .eq("pallet_id", palletId)
       .is("effect_to", null)
       .maybeSingle();

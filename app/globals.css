@@ -505,3 +505,73 @@ td { font-size: .9rem; }
 .quantity-progress-label span, .quantity-progress small { color: var(--muted); font-size: .76rem; }
 .quantity-progress-track { height: 8px; overflow: hidden; border-radius: 999px; background: #eaecf0; }
 .quantity-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--primary); }
+
+/* Scan QR mobile */
+.scan-page { display: grid; gap: 18px; }
+.scan-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
+.scan-heading h1 { margin-bottom: 6px; }
+.scan-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.scan-main-button {
+  min-height: 76px; border: 0; border-radius: 18px; color: white; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  font-size: 1.45rem; font-weight: 900; box-shadow: 0 10px 24px rgba(16,24,40,.12);
+}
+.scan-main-button span { font-size: 1rem; }
+.scan-main-button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.scan-camera-button { background: linear-gradient(135deg, #155eef, #004eeb); }
+.scan-confirm-button { background: linear-gradient(135deg, #039855, #027a48); }
+.scan-notice { padding: 13px 15px; border-radius: 12px; font-weight: 750; }
+.scan-notice-success { color: var(--success); background: var(--success-bg); border: 1px solid #abefc6; }
+.scan-notice-error { color: var(--danger); background: var(--danger-bg); border: 1px solid #fecdca; }
+.scan-notice-loading { color: #175cd3; background: #eff8ff; border: 1px solid #b2ddff; }
+.scan-table-card { overflow: hidden; border: 1px solid var(--border); border-radius: 18px; background: white; }
+.scan-table-title { display: flex; justify-content: space-between; align-items: center; padding: 18px; border-bottom: 1px solid var(--border); }
+.scan-table-title h2 { font-size: 1.05rem; }
+.scan-table-title span { color: var(--primary); font-weight: 850; }
+.scan-table-wrap { overflow-x: auto; }
+.scan-table { min-width: 860px; }
+.scan-table th, .scan-table td { padding: 13px 12px; }
+.scan-empty { padding: 42px 20px; color: var(--muted); text-align: center; }
+
+.camera-overlay { position: fixed; inset: 0; z-index: 1000; overflow: hidden; background: #000; }
+.camera-reader { position: absolute; inset: 0; width: 100%; height: 100%; }
+.camera-reader video { width: 100% !important; height: 100% !important; object-fit: cover !important; }
+.camera-reader > div { height: 100% !important; border: 0 !important; }
+.camera-topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 3; display: flex; justify-content: space-between; align-items: center; padding: max(16px, env(safe-area-inset-top)) 18px 16px; color: white; background: linear-gradient(to bottom, rgba(0,0,0,.72), transparent); }
+.camera-topbar button { width: 44px; height: 44px; border: 0; border-radius: 50%; color: white; background: rgba(0,0,0,.46); font-size: 1.3rem; }
+.camera-guide { position: absolute; inset: 0; z-index: 2; pointer-events: none; display: grid; place-items: center; }
+.camera-guide span { width: min(72vw, 340px); aspect-ratio: 1; border: 3px solid rgba(255,255,255,.95); border-radius: 22px; box-shadow: 0 0 0 200vmax rgba(0,0,0,.34); }
+.camera-guide p { position: absolute; top: calc(50% + min(36vw, 170px) + 20px); margin: 0; color: white; font-weight: 750; text-shadow: 0 2px 8px #000; }
+.camera-notice { position: absolute; z-index: 4; left: 14px; right: 14px; bottom: max(22px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 16px; color: white; backdrop-filter: blur(10px); }
+.camera-notice p { margin: 0; font-weight: 800; line-height: 1.35; }
+.camera-notice > span { flex: 0 0 auto; width: 28px; height: 28px; display: grid; place-items: center; border: 2px solid currentColor; border-radius: 50%; font-weight: 900; }
+.camera-notice-loading { background: rgba(23,92,211,.88); }
+.camera-notice-success { background: rgba(2,122,72,.9); }
+.camera-notice-error { background: rgba(180,35,24,.92); }
+.camera-spinner { border-color: rgba(255,255,255,.35) !important; border-top-color: white !important; animation: scan-spin .75s linear infinite; }
+@keyframes scan-spin { to { transform: rotate(360deg); } }
+
+.scan-confirm-modal { width: min(920px, calc(100% - 24px)); }
+.scan-summary-wrap { overflow-x: auto; margin: 18px 0; }
+.scan-summary-table { min-width: 700px; }
+.scan-summary-table th, .scan-summary-table td { padding: 12px 10px; }
+
+@media (max-width: 640px) {
+  .scan-actions { position: sticky; top: 84px; z-index: 8; }
+  .scan-main-button { min-height: 68px; border-radius: 15px; }
+  .scan-table-card { margin-inline: -2px; }
+  .scan-table { min-width: 0; }
+  .scan-table thead { display: none; }
+  .scan-table tbody { display: grid; }
+  .scan-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; padding: 14px; border-bottom: 1px solid var(--border); }
+  .scan-table td { display: grid; gap: 3px; padding: 0; border: 0; font-size: .88rem; }
+  .scan-table td::before { color: var(--muted); font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+  .scan-table td:nth-child(1)::before { content: "ID pallet"; }
+  .scan-table td:nth-child(2)::before { content: "WO"; }
+  .scan-table td:nth-child(3)::before { content: "Quantity"; }
+  .scan-table td:nth-child(4)::before { content: "Product name"; }
+  .scan-table td:nth-child(5)::before { content: "Customer"; }
+  .scan-table td:nth-child(6)::before { content: "Itemcode"; }
+  .scan-table td:nth-child(1), .scan-table td:nth-child(4) { grid-column: 1 / -1; }
+  .scan-confirm-modal { max-height: 92vh; overflow: auto; padding: 20px; }
+}
