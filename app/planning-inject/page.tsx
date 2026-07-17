@@ -63,7 +63,16 @@ export default async function PlanningInjectPage() {
 
   return (
     <PageShell profile={profile} title="Planning Inject">
-      <div style={{ width: "100%", maxWidth: "1500px", margin: "0 auto" }}>
+      <div
+        style={{
+          boxSizing: "border-box",
+          margin: "0 auto",
+          maxWidth: "1500px",
+          minWidth: 0,
+          overflow: "hidden",
+          width: "100%",
+        }}
+      >
         <div className="hero-row planning-hero">
           <div>
             <p className="eyebrow">MODULE 01</p>
@@ -90,7 +99,7 @@ export default async function PlanningInjectPage() {
         ) : null}
 
         {canUploadPlan ? (
-          <section className="panel">
+          <section className="panel" style={{ minWidth: 0 }}>
             <div className="section-heading">
               <div>
                 <p className="eyebrow">IMPORT EXCEL</p>
@@ -101,7 +110,7 @@ export default async function PlanningInjectPage() {
           </section>
         ) : null}
 
-        <section className="panel">
+        <section className="panel" style={{ minWidth: 0, overflow: "hidden" }}>
           <div className="section-heading planning-table-heading">
             <div>
               <p className="eyebrow">CURRENT PLAN</p>
@@ -118,10 +127,20 @@ export default async function PlanningInjectPage() {
               <p className="muted">Chưa có dữ liệu kế hoạch hiện tại.</p>
             </div>
           ) : (
-            <div className="table-wrap planning-table-wrap">
-              <table className="planning-table">
+            <div
+              className="table-wrap planning-table-wrap"
+              style={{
+                boxSizing: "border-box",
+                maxWidth: "100%",
+                minWidth: 0,
+                overflowX: "auto",
+                width: "100%",
+              }}
+            >
+              <table className="planning-table" style={{ minWidth: "max-content" }}>
                 <thead>
                   <tr>
+                    {canEditPlan ? <th>Đổi máy</th> : null}
                     <th>#</th>
                     <th>Machine</th>
                     <th>Item Code</th>
@@ -135,12 +154,22 @@ export default async function PlanningInjectPage() {
                     <th>Material</th>
                     <th>Package</th>
                     <th>Quan Order</th>
-                    {canEditPlan ? <th>Thao tác</th> : null}
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, index) => (
                     <tr key={row.id ?? index}>
+                      {canEditPlan ? (
+                        <td>
+                          {row.id ? (
+                            <ChangeMachineButton
+                              currentMachine={row.machine}
+                              machines={machines}
+                              rowId={row.id}
+                            />
+                          ) : null}
+                        </td>
+                      ) : null}
                       <td>{index + 1}</td>
                       <td><strong>{displayValue(row.machine)}</strong></td>
                       <td>{displayValue(row.itemcode)}</td>
@@ -154,17 +183,6 @@ export default async function PlanningInjectPage() {
                       <td>{displayValue(row.material)}</td>
                       <td>{displayValue(row.package)}</td>
                       <td>{displayValue(row.quanorder)}</td>
-                      {canEditPlan ? (
-                        <td>
-                          {row.id ? (
-                            <ChangeMachineButton
-                              currentMachine={row.machine}
-                              machines={machines}
-                              rowId={row.id}
-                            />
-                          ) : null}
-                        </td>
-                      ) : null}
                     </tr>
                   ))}
                 </tbody>
