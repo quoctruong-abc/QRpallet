@@ -121,6 +121,39 @@ export async function toggleEmployeeStatus(formData: FormData) {
   revalidatePath("/admin");
 }
 
+export async function resetEmployeePassword(formData: FormData) {
+  const actor = await requireAdmin();
+  if (actor.role !== "superadmin") {
+    throw new Error("Chỉ superadmin được đặt lại mật khẩu.");
+  }
+
+  const userId = String(formData.get("user_id") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+  if (!userId) {
+    throw new Error("Không xác định được tài khoản cần đặt lại mật khẩu.");
+  }
+  if (password.length < 8) {
+    throw new Error("Mật khẩu mới phải có ít nhất 8 ký tự.");
+  }
+
+  const adminClient = createAdminClient();
+  const { data: target } = await adminClient
+    .from("profiles")
+    .select("id")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!target) {
+    throw new Error("Tài khoản không tồn tại.");
+  }
+
+  const { error } = await adminClient.auth.admin.updateUserById(userId, { password });
+  if (error) {
+    throw new Error(`Không thể đặt lại mật khẩu: ${error.message}`);
+  }
+
+  revalidatePath("/admin");
+}
+
 export async function updateUserPermissions(formData: FormData) {
   const actor = await requireAdmin();
   const userId = String(formData.get("user_id") ?? "");
