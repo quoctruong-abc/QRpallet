@@ -71,8 +71,23 @@ export function ChangePasswordDialog() {
       </button>
 
       {open ? (
-        <div className="modal-backdrop" onMouseDown={closeDialog}>
-          <div className="modal-card" onMouseDown={(event) => event.stopPropagation()}>
+        <div
+          className="modal-backdrop"
+          onMouseDown={closeDialog}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            display: "grid",
+            placeItems: "center",
+            padding: "1rem",
+          }}
+        >
+          <div
+            className="modal-card"
+            onMouseDown={(event) => event.stopPropagation()}
+            style={{ width: "min(100%, 520px)", margin: 0 }}
+          >
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">ACCOUNT SECURITY</p>
