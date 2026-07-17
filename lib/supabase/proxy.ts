@@ -71,6 +71,12 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  if (pathname.startsWith("/superadmin") && profile.role !== "superadmin") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
+    return NextResponse.redirect(url);
+  }
+
   if (pathname.startsWith("/admin") && !["superadmin", "admin"].includes(profile.role)) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
@@ -81,11 +87,23 @@ export async function updateSession(request: NextRequest) {
   if (!protectedPage || profile.role === "superadmin") return response;
 
   const position = profile.position as Position | null;
-  const positionMapped = Boolean(
-    position && POSITION_ROUTES[position]?.some(
-      (path) => pathname === path || pathname.startsWith(`${path}/`),
-    ),
-  );
+  if (!position) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
+    return NextResponse.redirect(url);
+  }
+
+  const { data: mappingRow, error: mappingError } = await supabase
+    .from("position_page_access")
+    .select("is_enabled")
+    .eq("position", position)
+    .eq("path", protectedPage)
+    .maybeSingle();
+
+  const positionMapped = mappingError
+    ? POSITION_ROUTES[position]?.includes(protectedPage)
+    : Boolean(mappingRow?.is_enabled);
+
   if (!positionMapped) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
@@ -94,7 +112,7 @@ export async function updateSession(request: NextRequest) {
 
   if (profile.role === "admin") {
     const required = PAGE_PERMISSIONS[protectedPage];
-    const adminPermissions = position ? POSITION_PERMISSIONS[position] : [];
+    const adminPermissions = POSITION_PERMISSIONS[position];
     if (required.some((permission) => adminPermissions.includes(permission))) return response;
   } else {
     const { data: permissionRows } = await supabase
