@@ -14,10 +14,10 @@ import {
 
 const positions: Position[] = ["planning", "production", "warehouse"];
 const pages = [
-  { path: "/planning-inject", label: "Planning Inject" },
-  { path: "/pallet-label", label: "Xuất tem pallet" },
-  { path: "/scan-qr", label: "Scan QR" },
-  { path: "/warehouse-receipt", label: "Xử lý data tạm" },
+  { path: "/planning-inject", label: "Planning Inject", icon: "📋" },
+  { path: "/pallet-label", label: "Xuất tem pallet", icon: "🏭" },
+  { path: "/scan-qr", label: "Scan QR", icon: "▣" },
+  { path: "/warehouse-receipt", label: "Xử lý data tạm", icon: "📦" },
 ] as const;
 
 const allPermissions: Array<{ key: PermissionKey; label: string }> = [
@@ -81,8 +81,39 @@ export default async function AdminPage() {
         Boolean(profile.position && POSITION_ROUTES[profile.position].includes(page.path)),
       );
 
+  const headerNavigation = (
+    <nav
+      aria-label="Điều hướng module"
+      style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}
+    >
+      {visibleModules.map((module) => (
+        <Link
+          aria-label={module.label}
+          href={module.path}
+          key={module.path}
+          title={module.label}
+          style={{
+            alignItems: "center",
+            background: "rgba(255,255,255,0.72)",
+            border: "1px solid rgba(148,163,184,0.45)",
+            borderRadius: "0.7rem",
+            display: "inline-flex",
+            fontSize: "1.25rem",
+            height: "2.5rem",
+            justifyContent: "center",
+            lineHeight: 1,
+            textDecoration: "none",
+            width: "2.5rem",
+          }}
+        >
+          <span aria-hidden="true">{module.icon}</span>
+        </Link>
+      ))}
+    </nav>
+  );
+
   return (
-    <PageShell profile={profile} title="Admin dashboard">
+    <PageShell profile={profile} title="Admin dashboard" headerNavigation={headerNavigation}>
       <div className="hero-row">
         <div>
           <p className="eyebrow">{isSuperadmin ? "SUPERADMIN CONTROL CENTER" : "ADMIN CONTROL CENTER"}</p>
@@ -98,17 +129,6 @@ export default async function AdminPage() {
           <span className="muted">Tài khoản có thể quản lý</span>
         </div>
       </div>
-
-      <section>
-        <div className="module-grid">
-          {visibleModules.map((module) => (
-            <Link className="module-card" href={module.path} key={module.path}>
-              <h3>{module.label}</h3>
-              <span className="module-link">Mở chức năng →</span>
-            </Link>
-          ))}
-        </div>
-      </section>
 
       {isSuperadmin ? (
         <>
