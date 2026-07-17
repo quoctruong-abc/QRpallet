@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { POSITION_PERMISSIONS } from "@/lib/routes";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isValidUsername, normalizeUsername, usernameToInternalEmail } from "@/lib/username";
 import type { AppRole, PermissionKey, Position } from "@/lib/types";
 
 export type AdminActionState = { error: string; success: string };
@@ -27,13 +28,16 @@ export async function createEmployee(
   const actor = await requireAdmin();
   const fullName = String(formData.get("full_name") ?? "").trim();
   const employeeCode = String(formData.get("employee_code") ?? "").trim();
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const username = normalizeUsername(String(formData.get("username") ?? ""));
   const password = String(formData.get("password") ?? "");
   const requestedRole = String(formData.get("role") ?? "user") as AppRole;
   const requestedPosition = String(formData.get("position") ?? "") as Position;
 
-  if (!fullName || !email || !password) {
-    return { error: "Vui lòng nhập họ tên, email và mật khẩu.", success: "" };
+  if (!fullName || !username || !password) {
+    return { error: "Vui lòng nhập họ tên, tên đăng nhập và mật khẩu.", success: "" };
+  }
+  if (!isValidUsername(username)) {
+    return { error: "Tên đăng nhập phải có 3-32 ký tự và chỉ gồm chữ, số, dấu chấm, gạch dưới hoặc gạch ngang.", success: "" };
   }
   if (password.length < 8) {
     return { error: "Mật khẩu phải có ít nhất 8 ký tự.", success: "" };
@@ -58,17 +62,28 @@ export async function createEmployee(
   }
 
   const adminClient = createAdminClient();
+  const { data: existingProfile } = await adminClient
+    .from("profiles")
+    .select("id")
+    .eq("username", username)
+    .maybeSingle();
+  if (existingProfile) {
+    return { error: "Tên đăng nhập đã tồn tại.", success: "" };
+  }
+
+  const internalEmail = usernameToInternalEmail(username);
   const { data: created, error: createError } = await adminClient.auth.admin.createUser({
-    email,
+    email: internalEmail,
     password,
     email_confirm: true,
-    user_metadata: { full_name: fullName, employee_code: employeeCode || null },
+    user_metadata: { username, full_name: fullName, employee_code: employeeCode || null },
   });
   if (createError || !created.user) {
     return { error: createError?.message ?? "Không thể tạo tài khoản.", success: "" };
   }
 
   const { error: profileError } = await adminClient.from("profiles").update({
+    username,
     full_name: fullName,
     employee_code: employeeCode || null,
     role,
@@ -81,10 +96,9 @@ export async function createEmployee(
     return { error: `Không thể lưu profile: ${profileError.message}`, success: "" };
   }
 
-  // New users intentionally receive no explicit permissions.
   await adminClient.from("user_permissions").delete().eq("user_id", created.user.id);
   revalidatePath("/admin");
-  return { error: "", success: `Đã tạo tài khoản ${email}.` };
+  return { error: "", success: `Đã tạo tài khoản ${username}.` };
 }
 
 export async function toggleEmployeeStatus(formData: FormData) {
