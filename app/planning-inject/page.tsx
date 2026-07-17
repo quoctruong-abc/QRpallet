@@ -14,6 +14,14 @@ function displayValue(value: string | number | null) {
   return value;
 }
 
+const productNameColumnStyle = {
+  maxWidth: "400px",
+  minWidth: "220px",
+  overflowWrap: "anywhere" as const,
+  whiteSpace: "normal" as const,
+  wordBreak: "break-word" as const,
+};
+
 export default async function PlanningInjectPage() {
   const profile = await requirePosition("planning");
   const canUploadPlan = hasPermission(profile, "planning.upload");
@@ -144,7 +152,7 @@ export default async function PlanningInjectPage() {
                     <th>#</th>
                     <th>Machine</th>
                     <th>Item Code</th>
-                    <th>Product Name</th>
+                    <th style={productNameColumnStyle}>Product Name</th>
                     <th>Customer</th>
                     <th>WO</th>
                     <th>Net Weight</th>
@@ -173,7 +181,7 @@ export default async function PlanningInjectPage() {
                       <td>{index + 1}</td>
                       <td><strong>{displayValue(row.machine)}</strong></td>
                       <td>{displayValue(row.itemcode)}</td>
-                      <td>{displayValue(row.product_name)}</td>
+                      <td style={productNameColumnStyle}>{displayValue(row.product_name)}</td>
                       <td>{displayValue(row.customer)}</td>
                       <td><span className="badge">{displayValue(row.wo)}</span></td>
                       <td>{displayValue(row.netweight)}</td>
