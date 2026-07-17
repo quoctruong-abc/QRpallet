@@ -12,6 +12,7 @@ export type PermissionKey =
 
 export type Profile = {
   id: string;
+  username: string;
   email: string;
   full_name: string;
   employee_code: string | null;
