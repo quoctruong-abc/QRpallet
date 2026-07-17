@@ -1,10 +1,10 @@
 import { PageShell } from "@/components/page-shell";
-import { requirePosition } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ScanQrClient, type ScannedPallet } from "./scan-qr-client";
 
 export default async function ScanQrPage() {
-  const profile = await requirePosition("scanner");
+  const profile = await requirePermission("scan.standard");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("pallet_data")
