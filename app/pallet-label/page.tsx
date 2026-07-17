@@ -83,11 +83,17 @@ export default async function PalletLabelPage() {
           <Link className="text-link" href="/admin">Quản lý tài khoản →</Link>
         ) : null}
       </div>
-      <PalletLabelClient
-        databaseReady={databaseReady}
-        initialPlans={Array.from(uniquePlan.values())}
-        initialPallets={palletRows}
-      />
+
+      {!databaseReady ? (
+        <section className="alert alert-error">
+          Chưa đủ bảng database. Kiểm tra các migration Planning Inject và Pallet Label trong Supabase.
+        </section>
+      ) : (
+        <PalletLabelClient
+          rows={Array.from(uniquePlan.values())}
+          pallets={palletRows}
+        />
+      )}
     </PageShell>
   );
 }
