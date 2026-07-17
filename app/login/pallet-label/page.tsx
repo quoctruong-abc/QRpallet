@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
-import { requirePosition } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PalletLabelClient, type PlanItem } from "./pallet-label-client";
 
@@ -17,7 +17,7 @@ type PalletDbRow = { wo: string; quantity: number; status: string };
 type ConfigDbRow = { itemcode: string; quantity_per_pallet: number };
 
 export default async function PalletLabelPage() {
-  const profile = await requirePosition("pallet");
+  const profile = await requirePermission("pallet.create");
   const supabase = await createClient();
 
   const [planResult, palletResult, configResult] = await Promise.all([
