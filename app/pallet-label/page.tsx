@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
-import { requirePermission } from "@/lib/auth";
+import { hasPermission, requirePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PalletLabelClient, type ActivePallet, type PlanItem } from "./pallet-label-client";
 
@@ -18,6 +18,7 @@ type ConfigDbRow = { itemcode: string; quantity_per_pallet: number };
 
 export default async function PalletLabelPage() {
   const profile = await requirePermission("pallet.create");
+  const canEditPallet = hasPermission(profile, "pallet.edit");
   const supabase = await createClient();
 
   const [planResult, palletResult, configResult] = await Promise.all([
@@ -89,10 +90,15 @@ export default async function PalletLabelPage() {
           Chưa đủ bảng database. Kiểm tra các migration Planning Inject và Pallet Label trong Supabase.
         </section>
       ) : (
-        <PalletLabelClient
-          rows={Array.from(uniquePlan.values())}
-          pallets={palletRows}
-        />
+        <div className={canEditPallet ? undefined : "pallet-create-only"}>
+          {!canEditPallet ? (
+            <style>{`.pallet-create-only .pallet-main-toolbar > button:first-child { display: none; }`}</style>
+          ) : null}
+          <PalletLabelClient
+            rows={Array.from(uniquePlan.values())}
+            pallets={palletRows}
+          />
+        </div>
       )}
     </PageShell>
   );
