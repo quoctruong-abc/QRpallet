@@ -1,9 +1,103 @@
 -- RBAC migration for QRpallet.
 -- This migration intentionally converts legacy enum-backed profile columns to text
--- before introducing the new role/position values. That keeps it compatible with
--- databases where role uses public.app_role and position uses another enum type.
+-- before introducing the new role/position values. It temporarily removes existing
+-- public-schema RLS policies because PostgreSQL blocks ALTER COLUMN TYPE when a policy
+-- depends directly or indirectly on profiles.role or profiles.position.
 
 begin;
+
+-- 0. Preserve and temporarily remove every existing policy in schema public.
+-- All definitions are restored after role/position conversion in the same transaction.
+create temporary table _saved_public_policies (
+  schema_name text not null,
+  table_name text not null,
+  policy_name text not null,
+  create_sql text not null
+) on commit drop;
+
+do $$
+declare
+  policy_record record;
+  command_name text;
+  role_list text;
+  using_clause text;
+  check_clause text;
+begin
+  for policy_record in
+    select
+      n.nspname as schema_name,
+      c.relname as table_name,
+      p.polname as policy_name,
+      p.polpermissive,
+      p.polcmd,
+      p.polroles,
+      pg_get_expr(p.polqual, p.polrelid) as using_expression,
+      pg_get_expr(p.polwithcheck, p.polrelid) as check_expression
+    from pg_policy p
+    join pg_class c on c.oid = p.polrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+  loop
+    command_name := case policy_record.polcmd
+      when 'r' then 'SELECT'
+      when 'a' then 'INSERT'
+      when 'w' then 'UPDATE'
+      when 'd' then 'DELETE'
+      else 'ALL'
+    end;
+
+    select string_agg(
+      case when role_oid = 0 then 'public' else quote_ident(pg_get_userbyid(role_oid)) end,
+      ', '
+    )
+    into role_list
+    from unnest(policy_record.polroles) as role_oid;
+
+    if role_list is null or role_list = '' then
+      role_list := 'public';
+    end if;
+
+    using_clause := case
+      when policy_record.using_expression is null then ''
+      else format(' USING (%s)', policy_record.using_expression)
+    end;
+
+    check_clause := case
+      when policy_record.check_expression is null then ''
+      else format(' WITH CHECK (%s)', policy_record.check_expression)
+    end;
+
+    insert into _saved_public_policies (
+      schema_name,
+      table_name,
+      policy_name,
+      create_sql
+    ) values (
+      policy_record.schema_name,
+      policy_record.table_name,
+      policy_record.policy_name,
+      format(
+        'CREATE POLICY %I ON %I.%I AS %s FOR %s TO %s%s%s',
+        policy_record.policy_name,
+        policy_record.schema_name,
+        policy_record.table_name,
+        case when policy_record.polpermissive then 'PERMISSIVE' else 'RESTRICTIVE' end,
+        command_name,
+        role_list,
+        using_clause,
+        check_clause
+      )
+    );
+
+    execute format(
+      'DROP POLICY %I ON %I.%I',
+      policy_record.policy_name,
+      policy_record.schema_name,
+      policy_record.table_name
+    );
+  end loop;
+end
+$$;
 
 -- 1. Normalize legacy roles and positions while preserving existing profiles.
 alter table public.profiles
@@ -53,6 +147,21 @@ alter table public.profiles
 alter table public.profiles
   add constraint profiles_position_check
   check (position is null or position in ('planning', 'production', 'warehouse'));
+
+-- Restore all policies that existed before the column conversion.
+do $$
+declare
+  saved_policy record;
+begin
+  for saved_policy in
+    select create_sql
+    from _saved_public_policies
+    order by schema_name, table_name, policy_name
+  loop
+    execute saved_policy.create_sql;
+  end loop;
+end
+$$;
 
 -- 2. Permission catalog.
 create table if not exists public.permissions (
