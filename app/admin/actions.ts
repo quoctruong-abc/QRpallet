@@ -2,30 +2,35 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
+import { POSITION_PERMISSIONS } from "@/lib/routes";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { AppRole, Position } from "@/lib/types";
+import type { AppRole, PermissionKey, Position } from "@/lib/types";
 
-export type AdminActionState = {
-  error: string;
-  success: string;
-};
+export type AdminActionState = { error: string; success: string };
 
-const validRoles: AppRole[] = ["admin", "user"];
-const validPositions: Position[] = ["planning", "pallet", "scanner", "warehouse"];
+const validRoles: AppRole[] = ["superadmin", "admin", "user"];
+const validPositions: Position[] = ["planning", "production", "warehouse"];
+const validPermissions = new Set<PermissionKey>(Object.values(POSITION_PERMISSIONS).flat());
+
+function canManageTarget(
+  actor: Awaited<ReturnType<typeof requireAdmin>>,
+  target: { id: string; role: AppRole; position: Position | null },
+) {
+  if (actor.role === "superadmin") return true;
+  return target.role === "user" && target.position === actor.position && target.id !== actor.id;
+}
 
 export async function createEmployee(
   _previousState: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  await requireAdmin();
-
+  const actor = await requireAdmin();
   const fullName = String(formData.get("full_name") ?? "").trim();
   const employeeCode = String(formData.get("employee_code") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
-  const role = String(formData.get("role") ?? "user") as AppRole;
-  const rawPosition = String(formData.get("position") ?? "");
-  const position = rawPosition ? (rawPosition as Position) : null;
+  const requestedRole = String(formData.get("role") ?? "user") as AppRole;
+  const requestedPosition = String(formData.get("position") ?? "") as Position;
 
   if (!fullName || !email || !password) {
     return { error: "Vui lòng nhập họ tên, email và mật khẩu.", success: "" };
@@ -33,11 +38,23 @@ export async function createEmployee(
   if (password.length < 8) {
     return { error: "Mật khẩu phải có ít nhất 8 ký tự.", success: "" };
   }
-  if (!validRoles.includes(role)) {
+  if (!validRoles.includes(requestedRole)) {
     return { error: "Role không hợp lệ.", success: "" };
   }
-  if (role === "user" && (!position || !validPositions.includes(position))) {
-    return { error: "Người dùng thường phải được gán position.", success: "" };
+
+  const role: AppRole = actor.role === "superadmin" ? requestedRole : "user";
+  const position: Position | null =
+    role === "superadmin"
+      ? null
+      : actor.role === "admin"
+        ? actor.position
+        : requestedPosition;
+
+  if (role !== "superadmin" && (!position || !validPositions.includes(position))) {
+    return { error: "Admin và user phải thuộc một position hợp lệ.", success: "" };
+  }
+  if (actor.role === "admin" && requestedRole !== "user") {
+    return { error: "Admin chỉ được tạo tài khoản role=user.", success: "" };
   }
 
   const adminClient = createAdminClient();
@@ -45,50 +62,83 @@ export async function createEmployee(
     email,
     password,
     email_confirm: true,
-    user_metadata: {
-      full_name: fullName,
-      employee_code: employeeCode || null,
-    },
+    user_metadata: { full_name: fullName, employee_code: employeeCode || null },
   });
-
   if (createError || !created.user) {
-    return {
-      error: createError?.message ?? "Không thể tạo tài khoản.",
-      success: "",
-    };
+    return { error: createError?.message ?? "Không thể tạo tài khoản.", success: "" };
   }
 
-  const { error: profileError } = await adminClient
-    .from("profiles")
-    .update({
-      full_name: fullName,
-      employee_code: employeeCode || null,
-      role,
-      position: role === "admin" ? null : position,
-      is_active: true,
-    })
-    .eq("id", created.user.id);
+  const { error: profileError } = await adminClient.from("profiles").update({
+    full_name: fullName,
+    employee_code: employeeCode || null,
+    role,
+    position,
+    is_active: true,
+  }).eq("id", created.user.id);
 
   if (profileError) {
     await adminClient.auth.admin.deleteUser(created.user.id);
-    return {
-      error: `Đã tạo Auth user nhưng cấu hình profile thất bại: ${profileError.message}`,
-      success: "",
-    };
+    return { error: `Không thể lưu profile: ${profileError.message}`, success: "" };
   }
 
+  // New users intentionally receive no explicit permissions.
+  await adminClient.from("user_permissions").delete().eq("user_id", created.user.id);
   revalidatePath("/admin");
   return { error: "", success: `Đã tạo tài khoản ${email}.` };
 }
 
 export async function toggleEmployeeStatus(formData: FormData) {
-  await requireAdmin();
+  const actor = await requireAdmin();
   const userId = String(formData.get("user_id") ?? "");
   const nextStatus = String(formData.get("next_status") ?? "false") === "true";
+  if (!userId || userId === actor.id) return;
 
+  const adminClient = createAdminClient();
+  const { data: target } = await adminClient
+    .from("profiles")
+    .select("id,role,position")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!target || !canManageTarget(actor, target as { id: string; role: AppRole; position: Position | null })) {
+    throw new Error("Bạn không có quyền chỉnh tài khoản này.");
+  }
+
+  await adminClient.from("profiles").update({ is_active: nextStatus }).eq("id", userId);
+  revalidatePath("/admin");
+}
+
+export async function updateUserPermissions(formData: FormData) {
+  const actor = await requireAdmin();
+  const userId = String(formData.get("user_id") ?? "");
+  const requested = formData.getAll("permissions").map(String) as PermissionKey[];
   if (!userId) return;
 
   const adminClient = createAdminClient();
-  await adminClient.from("profiles").update({ is_active: nextStatus }).eq("id", userId);
+  const { data: target } = await adminClient
+    .from("profiles")
+    .select("id,role,position")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!target || !canManageTarget(actor, target as { id: string; role: AppRole; position: Position | null })) {
+    throw new Error("Bạn không có quyền chỉnh permissions của tài khoản này.");
+  }
+
+  const targetPosition = target.position as Position | null;
+  const allowed = actor.role === "superadmin"
+    ? requested.filter((permission) => validPermissions.has(permission))
+    : requested.filter((permission) =>
+        Boolean(targetPosition && POSITION_PERMISSIONS[targetPosition].includes(permission)),
+      );
+
+  await adminClient.from("user_permissions").delete().eq("user_id", userId);
+  if (allowed.length > 0) {
+    await adminClient.from("user_permissions").insert(
+      allowed.map((permission_key) => ({
+        user_id: userId,
+        permission_key,
+        granted_by: actor.id,
+      })),
+    );
+  }
   revalidatePath("/admin");
 }
