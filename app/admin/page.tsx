@@ -36,6 +36,13 @@ export default async function AdminPage() {
               ? "Toàn quyền tài khoản, position mapping và permissions."
               : `Quản lý user thuộc position ${profile.position ?? "—"}.`}
           </p>
+          {profile.role === "superadmin" ? (
+            <div style={{ marginTop: "1rem" }}>
+              <Link className="button button-primary" href="/superadmin">
+                Mở giao diện Superadmin
+              </Link>
+            </div>
+          ) : null}
         </div>
         <div className="stat-card">
           <span className="stat-number">{users.length}</span>
