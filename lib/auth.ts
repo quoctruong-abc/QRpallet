@@ -3,6 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import { POSITION_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
 import type { AppRole, PermissionKey, Position, Profile } from "@/lib/types";
 
+type LegacyPosition = Position | "pallet" | "scanner";
+
+function normalizePosition(position: LegacyPosition): Position {
+  if (position === "pallet") return "production";
+  if (position === "scanner") return "warehouse";
+  return position;
+}
+
 async function loadPermissions(profile: Profile): Promise<PermissionKey[]> {
   if (profile.role === "superadmin") return [];
   const supabase = await createClient();
@@ -42,8 +50,9 @@ export function hasRole(profile: Profile, roles: AppRole | AppRole[]) {
   return (Array.isArray(roles) ? roles : [roles]).includes(profile.role);
 }
 
-export function hasPosition(profile: Profile, position: Position) {
-  return profile.role === "superadmin" || profile.position === position;
+export function hasPosition(profile: Profile, position: LegacyPosition) {
+  const normalized = normalizePosition(position);
+  return profile.role === "superadmin" || profile.position === normalized;
 }
 
 export function hasPermission(profile: Profile, permission: PermissionKey) {
@@ -58,12 +67,9 @@ export function canAccessPath(profile: Profile, pathname: string) {
   if (profile.role === "superadmin") return true;
   const position = profile.position;
   if (!position) return false;
-  const mapped = POSITION_ROUTES[position].some(
+  return POSITION_ROUTES[position].some(
     (path) => pathname === path || pathname.startsWith(`${path}/`),
   );
-  if (!mapped) return false;
-  if (profile.role === "admin") return true;
-  return true;
 }
 
 export async function requireRole(roles: AppRole | AppRole[]): Promise<Profile> {
@@ -76,7 +82,7 @@ export async function requireAdmin(): Promise<Profile> {
   return requireRole(["superadmin", "admin"]);
 }
 
-export async function requirePosition(position: Position): Promise<Profile> {
+export async function requirePosition(position: LegacyPosition): Promise<Profile> {
   const profile = await requireProfile();
   if (!hasPosition(profile, position)) redirect("/dashboard");
   return profile;
