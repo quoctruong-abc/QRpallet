@@ -26,7 +26,12 @@ export function PageShell({
             <strong>{profile.full_name}</strong>
             <p className="muted small">{profile.email}</p>
           </div>
-          <LogoutButton />
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+            <Link className="button button-secondary" href="/change-password">
+              Đổi mật khẩu
+            </Link>
+            <LogoutButton />
+          </div>
         </div>
       </header>
       <section className="page-content">{children}</section>
