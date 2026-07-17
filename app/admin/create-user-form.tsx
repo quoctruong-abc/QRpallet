@@ -28,8 +28,16 @@ export function CreateUserForm({
         <input name="employee_code" placeholder="SVN001" />
       </label>
       <label>
-        Email đăng nhập
-        <input name="email" required type="email" placeholder="svn001@company.com" />
+        Tên đăng nhập
+        <input
+          name="username"
+          required
+          minLength={3}
+          maxLength={32}
+          pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,31}"
+          title="3-32 ký tự, chỉ gồm chữ, số, dấu chấm, gạch dưới hoặc gạch ngang."
+          placeholder="svn001"
+        />
       </label>
       <label>
         Mật khẩu tạm
