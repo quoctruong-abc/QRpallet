@@ -90,9 +90,14 @@ export default async function PalletLabelPage() {
           Chưa đủ bảng database. Kiểm tra các migration Planning Inject và Pallet Label trong Supabase.
         </section>
       ) : (
-        <div className={canEditPallet ? undefined : "pallet-create-only"}>
+        <div className={canEditPallet ? undefined : "pallet-read-only"}>
           {!canEditPallet ? (
-            <style>{`.pallet-create-only .pallet-main-toolbar > button:first-child { display: none; }`}</style>
+            <style>{`
+              .pallet-read-only .modal-card table thead th:last-child,
+              .pallet-read-only .modal-card table tbody td:last-child {
+                display: none;
+              }
+            `}</style>
           ) : null}
           <PalletLabelClient
             rows={Array.from(uniquePlan.values())}
