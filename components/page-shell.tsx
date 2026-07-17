@@ -7,10 +7,12 @@ import { LogoutButton } from "@/components/logout-button";
 export function PageShell({
   profile,
   title,
+  headerNavigation,
   children,
 }: {
   profile: Profile;
   title: string;
+  headerNavigation?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -23,6 +25,7 @@ export function PageShell({
           <p className="muted topbar-subtitle">{title}</p>
         </div>
         <div className="topbar-user">
+          {headerNavigation}
           <div>
             <strong>{profile.full_name}</strong>
             <p className="muted small">{profile.email}</p>
