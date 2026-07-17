@@ -1,3 +1,8 @@
+-- RBAC migration for QRpallet.
+-- This migration intentionally converts legacy enum-backed profile columns to text
+-- before introducing the new role/position values. That keeps it compatible with
+-- databases where role uses public.app_role and position uses another enum type.
+
 begin;
 
 -- 1. Normalize legacy roles and positions while preserving existing profiles.
@@ -6,9 +11,22 @@ alter table public.profiles
 alter table public.profiles
   drop constraint if exists profiles_position_check;
 
+-- Enum defaults can block ALTER COLUMN TYPE, so remove them first.
+alter table public.profiles
+  alter column role drop default;
+alter table public.profiles
+  alter column position drop default;
+
+-- Convert enum or varchar columns to text. USING ...::text works for both.
+alter table public.profiles
+  alter column role type text using role::text;
+alter table public.profiles
+  alter column position type text using position::text;
+
 update public.profiles
 set role = 'admin'
-where role not in ('superadmin', 'admin', 'user') or role is null;
+where role is null
+   or role not in ('superadmin', 'admin', 'user');
 
 update public.profiles
 set position = case position
@@ -20,6 +38,14 @@ set position = case position
   else position
 end;
 
+-- Existing global admins are promoted so they keep their previous global access.
+update public.profiles
+set role = 'superadmin', position = null
+where role = 'admin' and position is null;
+
+alter table public.profiles
+  alter column role set default 'user';
+
 alter table public.profiles
   add constraint profiles_role_check
   check (role in ('superadmin', 'admin', 'user'));
@@ -27,12 +53,6 @@ alter table public.profiles
 alter table public.profiles
   add constraint profiles_position_check
   check (position is null or position in ('planning', 'production', 'warehouse'));
-
--- Admins now belong to one position. Existing admins without a position are promoted
--- to superadmin to avoid losing their previous global access.
-update public.profiles
-set role = 'superadmin', position = null
-where role = 'admin' and position is null;
 
 -- 2. Permission catalog.
 create table if not exists public.permissions (
@@ -132,11 +152,11 @@ alter table public.permissions enable row level security;
 alter table public.user_permissions enable row level security;
 alter table public.position_page_access enable row level security;
 
- drop policy if exists permissions_read_authenticated on public.permissions;
+drop policy if exists permissions_read_authenticated on public.permissions;
 create policy permissions_read_authenticated on public.permissions
 for select to authenticated using (true);
 
- drop policy if exists user_permissions_read_scope on public.user_permissions;
+drop policy if exists user_permissions_read_scope on public.user_permissions;
 create policy user_permissions_read_scope on public.user_permissions
 for select to authenticated using (
   user_id = auth.uid()
@@ -152,7 +172,7 @@ for select to authenticated using (
   )
 );
 
- drop policy if exists user_permissions_manage_scope on public.user_permissions;
+drop policy if exists user_permissions_manage_scope on public.user_permissions;
 create policy user_permissions_manage_scope on public.user_permissions
 for all to authenticated
 using (
@@ -180,11 +200,11 @@ with check (
   )
 );
 
- drop policy if exists position_page_access_read on public.position_page_access;
+drop policy if exists position_page_access_read on public.position_page_access;
 create policy position_page_access_read on public.position_page_access
 for select to authenticated using (true);
 
- drop policy if exists position_page_access_superadmin_manage on public.position_page_access;
+drop policy if exists position_page_access_superadmin_manage on public.position_page_access;
 create policy position_page_access_superadmin_manage on public.position_page_access
 for all to authenticated
 using (public.current_profile_role() = 'superadmin')
