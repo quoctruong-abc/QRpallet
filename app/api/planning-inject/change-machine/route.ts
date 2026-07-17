@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizePermission } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
   const authorization = await authorizePermission("planning.change");
@@ -23,8 +23,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Vui lòng chọn máy." }, { status: 400 });
   }
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
     .from("planning_inject")
     .update({ machine })
     .eq("id", id)
