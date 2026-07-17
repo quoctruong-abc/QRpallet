@@ -1,6 +1,6 @@
 import readXlsxFile, { type CellValue } from "read-excel-file/node";
 import { NextResponse } from "next/server";
-import { getCurrentProfile } from "@/lib/auth";
+import { authorizePermission } from "@/lib/auth";
 import type { PlanningRow } from "@/lib/planning";
 import { createClient } from "@/lib/supabase/server";
 
@@ -21,7 +21,6 @@ function toText(value: CellPrimitive): string | null {
 
 function toNumber(value: CellPrimitive, excelRow: number, columnName: string): number | null {
   if (value === null || value === undefined || value === "") return null;
-
   if (typeof value === "number") {
     if (Number.isFinite(value)) return value;
     throw new Error(`Dòng ${excelRow}, cột ${columnName}: giá trị số không hợp lệ.`);
@@ -29,10 +28,8 @@ function toNumber(value: CellPrimitive, excelRow: number, columnName: string): n
 
   const raw = String(value).trim().replace(/\s/g, "");
   if (!raw) return null;
-
   const isParenthesizedNegative = raw.startsWith("(") && raw.endsWith(")");
   const unsignedRaw = isParenthesizedNegative ? raw.slice(1, -1) : raw;
-
   let normalized = unsignedRaw;
   if (unsignedRaw.includes(",") && unsignedRaw.includes(".")) {
     normalized = unsignedRaw.replace(/,/g, "");
@@ -53,18 +50,14 @@ function isEmptyRow(row: PlanningRow) {
 }
 
 export async function POST(request: Request) {
-  const profile = await getCurrentProfile();
-  if (!profile) {
-    return NextResponse.json({ error: "Phiên đăng nhập đã hết hạn." }, { status: 401 });
-  }
-  if (!profile.is_active || (profile.role !== "admin" && profile.position !== "planning")) {
-    return NextResponse.json({ error: "Bạn không có quyền cập nhật Planning Inject." }, { status: 403 });
+  const authorization = await authorizePermission("planning.upload");
+  if (!authorization.ok) {
+    return NextResponse.json({ error: authorization.error }, { status: authorization.status });
   }
 
   try {
     const formData = await request.formData();
     const file = formData.get("file");
-
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "Vui lòng chọn file Excel." }, { status: 400 });
     }
@@ -83,24 +76,15 @@ export async function POST(request: Request) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const sheets = await readXlsxFile(buffer);
-    const worksheet = sheets.find(
-      (sheet) => sheet.sheet.trim().toLowerCase() === "data",
-    );
-
+    const worksheet = sheets.find((sheet) => sheet.sheet.trim().toLowerCase() === "data");
     if (!worksheet) {
-      return NextResponse.json(
-        { error: 'Không tìm thấy sheet tên "data" trong file Excel.' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Không tìm thấy sheet tên data trong file Excel." }, { status: 400 });
     }
 
-    const widestRow = worksheet.data.reduce(
-      (max, row) => Math.max(max, row.length),
-      0,
-    );
+    const widestRow = worksheet.data.reduce((max, row) => Math.max(max, row.length), 0);
     if (widestRow < EXPECTED_COLUMN_COUNT) {
       return NextResponse.json(
-        { error: `Sheet "data" phải có ít nhất ${EXPECTED_COLUMN_COUNT} cột từ A đến L.` },
+        { error: `Sheet data phải có ít nhất ${EXPECTED_COLUMN_COUNT} cột từ A đến L.` },
         { status: 400 },
       );
     }
@@ -123,7 +107,6 @@ export async function POST(request: Request) {
         package: toText(row[10] ?? null),
         quanorder: toNumber(row[11] ?? null, excelRow, "quanorder"),
       };
-
       if (!isEmptyRow(parsedRow)) rows.push(parsedRow);
       if (rows.length > MAX_ROWS) {
         return NextResponse.json(
@@ -134,10 +117,7 @@ export async function POST(request: Request) {
     }
 
     if (rows.length === 0) {
-      return NextResponse.json(
-        { error: 'Sheet "data" không có dữ liệu sau dòng header.' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Sheet data không có dữ liệu sau dòng header." }, { status: 400 });
     }
 
     const supabase = await createClient();
@@ -145,20 +125,12 @@ export async function POST(request: Request) {
       p_rows: rows,
       p_source_file: file.name,
     });
-
     if (error) {
       console.error("replace_planning_inject failed", error);
-      return NextResponse.json(
-        { error: `Không thể cập nhật database: ${error.message}` },
-        { status: 500 },
-      );
+      return NextResponse.json({ error: `Không thể cập nhật database: ${error.message}` }, { status: 500 });
     }
 
-    return NextResponse.json({
-      success: true,
-      imported: Number(data ?? rows.length),
-      fileName: file.name,
-    });
+    return NextResponse.json({ success: true, imported: Number(data ?? rows.length), fileName: file.name });
   } catch (error) {
     console.error("Planning Inject import failed", error);
     const message = error instanceof Error ? error.message : "Không thể đọc file Excel.";

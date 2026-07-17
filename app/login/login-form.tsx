@@ -11,14 +11,18 @@ export function LoginForm() {
   return (
     <form action={formAction} className="form-stack">
       <label>
-        Email
+        Tên đăng nhập
         <input
-          autoComplete="email"
+          autoComplete="username"
           autoFocus
-          name="email"
-          placeholder="nhanvien@congty.com"
+          name="username"
+          placeholder="svn001"
           required
-          type="email"
+          minLength={3}
+          maxLength={32}
+          pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,31}"
+          title="3-32 ký tự, chỉ gồm chữ, số, dấu chấm, gạch dưới hoặc gạch ngang."
+          type="text"
         />
       </label>
 

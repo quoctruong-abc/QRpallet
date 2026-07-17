@@ -1,4 +1,4 @@
-﻿import { readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import fontkit from "@pdf-lib/fontkit";
@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 import { PDFDocument, rgb } from "pdf-lib";
 import QRCode from "qrcode";
 
-import { getCurrentProfile } from "@/lib/auth";
+import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -55,23 +55,12 @@ function sanitizeFilename(value: string): string {
 
 export async function GET(request: Request) {
   try {
-    const profile = await getCurrentProfile();
+    const authorization = await authorizePermission("pallet.create");
 
-    if (!profile) {
+    if (!authorization.ok) {
       return NextResponse.json(
-        { error: "Phiên đăng nhập đã hết hạn." },
-        { status: 401 },
-      );
-    }
-
-    if (
-      !profile.is_active ||
-      (profile.role !== "admin" &&
-        profile.position !== "pallet")
-    ) {
-      return NextResponse.json(
-        { error: "Bạn không có quyền in tem pallet." },
-        { status: 403 },
+        { error: authorization.error },
+        { status: authorization.status },
       );
     }
 
@@ -93,8 +82,8 @@ export async function GET(request: Request) {
     const { data, error } = await supabase
       .from("pallet_data")
       .select(
-  "pallet_id,itemcode,product_name,customer,wo,quanorder,machine,quantity,status,note",
-)
+        "pallet_id,itemcode,product_name,customer,wo,quanorder,machine,quantity,status,note",
+      )
       .eq("pallet_id", palletId)
       .is("effect_to", null)
       .maybeSingle();

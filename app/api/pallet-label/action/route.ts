@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
-import { getCurrentProfile } from "@/lib/auth";
+import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export async function POST(request: Request) {
-  const profile = await getCurrentProfile();
-  if (!profile) return NextResponse.json({ error: "Phiên đăng nhập đã hết hạn." }, { status: 401 });
-  if (!profile.is_active || (profile.role !== "admin" && profile.position !== "pallet")) {
-    return NextResponse.json({ error: "Bạn không có quyền thao tác pallet." }, { status: 403 });
+  const authorization = await authorizePermission("pallet.edit");
+  if (!authorization.ok) {
+    return NextResponse.json(
+      { error: authorization.error },
+      { status: authorization.status },
+    );
   }
+
   try {
     const body = await request.json();
     const action = String(body.action ?? "");
