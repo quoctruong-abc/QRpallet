@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
+import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentProfile } from "@/lib/auth";
 
 export async function POST(request: Request) {
-  const profile = await getCurrentProfile();
-  if (!profile || !profile.is_active || (profile.role !== "admin" && profile.position !== "scanner")) {
-    return NextResponse.json({ success: false, error: "Không có quyền quét pallet." }, { status: 403 });
+  const authorization = await authorizePermission("scan.standard");
+  if (!authorization.ok) {
+    return NextResponse.json(
+      { success: false, error: authorization.error },
+      { status: authorization.status },
+    );
   }
 
   const body = await request.json().catch(() => null) as { palletId?: string } | null;
