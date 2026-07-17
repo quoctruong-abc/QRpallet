@@ -3,7 +3,7 @@ import { authorizePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
-  const authorization = await authorizePermission("pallet.edit");
+  const authorization = await authorizePermission("pallet.create");
   if (!authorization.ok) {
     return NextResponse.json({ error: authorization.error }, { status: authorization.status });
   }
