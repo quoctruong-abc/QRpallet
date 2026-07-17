@@ -5,7 +5,7 @@ import { POSITION_LABELS } from "@/lib/routes";
 import type { Profile } from "@/lib/types";
 import { PageShell } from "@/components/page-shell";
 import { CreateUserForm } from "./create-user-form";
-import { toggleEmployeeStatus } from "./actions";
+import { resetEmployeePassword, toggleEmployeeStatus } from "./actions";
 
 const modules = [
   { title: "Planning Inject", href: "/planning-inject" },
@@ -80,7 +80,7 @@ export default async function AdminPage() {
                 <th>Role</th>
                 <th>Position</th>
                 <th>Trạng thái</th>
-                <th></th>
+                <th>Thao tác</th>
               </tr>
             </thead>
             <tbody>
@@ -99,17 +99,37 @@ export default async function AdminPage() {
                     </span>
                   </td>
                   <td>
-                    {user.id === profile.id ? (
-                      <span className="muted small">Tài khoản hiện tại</span>
-                    ) : (
-                      <form action={toggleEmployeeStatus}>
-                        <input type="hidden" name="user_id" value={user.id} />
-                        <input type="hidden" name="next_status" value={String(!user.is_active)} />
-                        <button className="button button-small button-secondary" type="submit">
-                          {user.is_active ? "Khóa" : "Mở khóa"}
-                        </button>
-                      </form>
-                    )}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+                      {profile.role === "superadmin" ? (
+                        <form action={resetEmployeePassword} style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                          <input type="hidden" name="user_id" value={user.id} />
+                          <input
+                            aria-label={`Mật khẩu mới cho ${user.username}`}
+                            name="password"
+                            type="password"
+                            minLength={8}
+                            required
+                            placeholder="Mật khẩu mới"
+                            style={{ minWidth: "150px" }}
+                          />
+                          <button className="button button-small button-secondary" type="submit">
+                            Đặt lại mật khẩu
+                          </button>
+                        </form>
+                      ) : null}
+
+                      {user.id === profile.id ? (
+                        <span className="muted small">Tài khoản hiện tại</span>
+                      ) : (
+                        <form action={toggleEmployeeStatus}>
+                          <input type="hidden" name="user_id" value={user.id} />
+                          <input type="hidden" name="next_status" value={String(!user.is_active)} />
+                          <button className="button button-small button-secondary" type="submit">
+                            {user.is_active ? "Khóa" : "Mở khóa"}
+                          </button>
+                        </form>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
