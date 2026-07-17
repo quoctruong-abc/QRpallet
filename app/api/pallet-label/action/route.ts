@@ -6,7 +6,7 @@ export async function POST(request: Request) {
   const authorization = await authorizePermission("pallet.edit");
   if (!authorization.ok) {
     return NextResponse.json(
-      { error: authorization.message },
+      { error: authorization.error },
       { status: authorization.status },
     );
   }
