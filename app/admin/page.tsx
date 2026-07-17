@@ -8,39 +8,21 @@ import { CreateUserForm } from "./create-user-form";
 import { toggleEmployeeStatus } from "./actions";
 
 const modules = [
-  {
-    title: "Planning Inject",
-    description: "Import kế hoạch Excel và tạo dữ liệu Work Order.",
-    href: "/planning-inject",
-    icon: "01",
-  },
-  {
-    title: "Xuất tem pallet",
-    description: "Sinh Pallet ID, QR code và xuất tem/PDF.",
-    href: "/pallet-label",
-    icon: "02",
-  },
-  {
-    title: "Scan QR",
-    description: "Quét QR pallet, đối chiếu và xác nhận dữ liệu tạm.",
-    href: "/scan-qr",
-    icon: "03",
-  },
-  {
-    title: "Xử lý data tạm",
-    description: "Tạo phiếu nhập kho và cập nhật trạng thái pallet.",
-    href: "/warehouse-receipt",
-    icon: "04",
-  },
+  { title: "Planning Inject", href: "/planning-inject" },
+  { title: "Xuất tem pallet", href: "/pallet-label" },
+  { title: "Scan QR", href: "/scan-qr" },
+  { title: "Xử lý data tạm", href: "/warehouse-receipt" },
 ];
 
 export default async function AdminPage() {
   const profile = await requireAdmin();
   const adminClient = createAdminClient();
-  const { data } = await adminClient
-    .from("profiles")
-    .select("*")
-    .order("created_at", { ascending: false });
+
+  let query = adminClient.from("profiles").select("*").order("created_at", { ascending: false });
+  if (profile.role === "admin") {
+    query = query.eq("role", "user").eq("position", profile.position!);
+  }
+  const { data } = await query;
   const users = (data ?? []) as Profile[];
 
   return (
@@ -49,27 +31,23 @@ export default async function AdminPage() {
         <div>
           <p className="eyebrow">ADMIN CONTROL CENTER</p>
           <h1>Quản lý hệ thống SVN</h1>
-          <p className="muted">Điều hướng module và quản lý tài khoản đăng nhập.</p>
+          <p className="muted">
+            {profile.role === "superadmin"
+              ? "Toàn quyền tài khoản, position mapping và permissions."
+              : `Quản lý user thuộc position ${profile.position ?? "—"}.`}
+          </p>
         </div>
         <div className="stat-card">
           <span className="stat-number">{users.length}</span>
-          <span className="muted">Tài khoản</span>
+          <span className="muted">Tài khoản có thể quản lý</span>
         </div>
       </div>
 
       <section>
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">MODULES</p>
-            <h2>Chức năng chính</h2>
-          </div>
-        </div>
         <div className="module-grid">
           {modules.map((module) => (
             <Link className="module-card" href={module.href} key={module.href}>
-              <span className="module-index">{module.icon}</span>
               <h3>{module.title}</h3>
-              <p>{module.description}</p>
               <span className="module-link">Mở chức năng →</span>
             </Link>
           ))}
@@ -80,10 +58,10 @@ export default async function AdminPage() {
         <div className="section-heading">
           <div>
             <p className="eyebrow">ACCOUNT MANAGEMENT</p>
-            <h2>Tạo tài khoản nhân viên</h2>
+            <h2>Tạo tài khoản</h2>
           </div>
         </div>
-        <CreateUserForm />
+        <CreateUserForm actorRole={profile.role} actorPosition={profile.position} />
       </section>
 
       <section className="panel">
