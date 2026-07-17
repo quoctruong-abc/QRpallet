@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { POSITION_ROUTES } from "@/lib/routes";
-import type { Position, Profile } from "@/lib/types";
+import type { Profile } from "@/lib/types";
 
 export type LoginState = { error: string };
 
@@ -43,12 +43,20 @@ export async function login(
     return { error: "Tài khoản đã bị khóa. Vui lòng liên hệ admin." };
   }
 
-  if (profile.role === "admin") redirect("/admin");
+  if (profile.role === "superadmin" || profile.role === "admin") {
+    redirect("/admin");
+  }
 
   if (!profile.position) {
     await supabase.auth.signOut({ scope: "local" });
     return { error: "Tài khoản chưa được gán position." };
   }
 
-  redirect(POSITION_ROUTES[profile.position as Position]);
+  const defaultRoute = POSITION_ROUTES[profile.position][0];
+  if (!defaultRoute) {
+    await supabase.auth.signOut({ scope: "local" });
+    return { error: "Position chưa được cấu hình trang truy cập." };
+  }
+
+  redirect(defaultRoute);
 }
