@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
-import { requirePosition } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PalletLabelClient, type ActivePallet, type PlanItem } from "./pallet-label-client";
 
@@ -17,7 +17,7 @@ type PalletDbRow = ActivePallet;
 type ConfigDbRow = { itemcode: string; quantity_per_pallet: number };
 
 export default async function PalletLabelPage() {
-  const profile = await requirePosition("pallet");
+  const profile = await requirePermission("pallet.create");
   const supabase = await createClient();
 
   const [planResult, palletResult, configResult] = await Promise.all([
@@ -79,24 +79,15 @@ export default async function PalletLabelPage() {
           <h1>Xuất tem pallet</h1>
           <p className="muted">Chọn máy, tạo tem và quản lý các pallet đang hiệu lực.</p>
         </div>
-        <div className="stat-card">
-          <span className="stat-number">{palletRows.length.toLocaleString("vi-VN")}</span>
-          <span className="muted">Pallet hiệu lực</span>
-        </div>
+        {profile.role === "superadmin" || profile.role === "admin" ? (
+          <Link className="text-link" href="/admin">Quản lý tài khoản →</Link>
+        ) : null}
       </div>
-
-      {!databaseReady ? (
-        <section className="alert alert-error">
-          Chưa đủ bảng database. Hãy chạy <b>supabase/004_pallet_history_pdf.sql</b> trong Supabase SQL Editor.
-        </section>
-      ) : (
-        <PalletLabelClient
-          rows={Array.from(uniquePlan.values())}
-          pallets={palletRows.filter((row) => Date.now() - new Date(row.created_at).getTime() <= 24 * 60 * 60 * 1000)}
-        />
-      )}
-
-      {profile.role === "admin" ? <Link className="text-link" href="/admin">← Trở về Admin</Link> : null}
+      <PalletLabelClient
+        databaseReady={databaseReady}
+        initialPlans={Array.from(uniquePlan.values())}
+        initialPallets={palletRows}
+      />
     </PageShell>
   );
 }
