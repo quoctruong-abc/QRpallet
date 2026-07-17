@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { Profile } from "@/lib/types";
+import { ChangePasswordDialog } from "@/components/change-password-dialog";
 import { LogoutButton } from "@/components/logout-button";
 
 export function PageShell({
@@ -27,9 +28,7 @@ export function PageShell({
             <p className="muted small">{profile.email}</p>
           </div>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
-            <Link className="button button-secondary" href="/change-password">
-              Đổi mật khẩu
-            </Link>
+            <ChangePasswordDialog />
             <LogoutButton />
           </div>
         </div>
