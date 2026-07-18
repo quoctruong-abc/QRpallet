@@ -32,6 +32,12 @@ type SummaryRow = {
   totalQuantity: number;
 };
 
+type Props = {
+  initialRows: WarehousePallet[];
+  canConfirm: boolean;
+  canCancel: boolean;
+};
+
 function downloadPdf(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -43,7 +49,7 @@ function downloadPdf(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function WarehouseReceiptClient({ initialRows }: { initialRows: WarehousePallet[] }) {
+export function WarehouseReceiptClient({ initialRows, canConfirm, canCancel }: Props) {
   const router = useRouter();
   const [rows, setRows] = useState(initialRows);
   const [itemFilter, setItemFilter] = useState("");
@@ -103,6 +109,7 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
   }
 
   async function cancelSelected() {
+    if (!canCancel) return;
     const palletIds = Array.from(selected);
     if (!palletIds.length) return;
     setWorking("cancel");
@@ -127,6 +134,7 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
   }
 
   async function confirmSelected() {
+    if (!canConfirm) return;
     const palletIds = Array.from(selected);
     if (!palletIds.length) return;
     setWorking("confirm");
@@ -198,7 +206,7 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
 
   return <section className="warehouse-page">
     <div className="hero-row">
-      <div><p className="eyebrow">MODULE 04</p><h1>Xử lý nhập kho</h1><p className="muted">Chọn pallet processingWH để tạo phiếu nhập kho hoặc trả lại sản xuất.</p></div>
+      <div><p className="eyebrow">MODULE 04</p><h1>Xử lý nhập kho</h1><p className="muted">Production review và xác nhận nhập kho; Warehouse hủy bỏ và trả pallet về Production.</p></div>
       <div className="warehouse-hero-actions">
         <button className="button button-secondary" type="button" disabled={working === "history"} onClick={() => loadReceipts("")}>{working === "history" ? "Đang tải..." : "Lịch sử / In lại phiếu"}</button>
         <div className="stat-card"><span className="stat-number">{rows.length}</span><span className="muted">Pallet chờ xử lý</span></div>
@@ -221,11 +229,11 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
     </div>
 
     <div className="warehouse-actions">
-      <button className="button button-danger" type="button" disabled={!selected.size || !!working} onClick={cancelSelected}>{working === "cancel" ? "Đang hủy..." : "Hủy bỏ - trả về Production"}</button>
-      <button className="button button-primary" type="button" disabled={!selected.size || !!working} onClick={() => setReviewOpen(true)}>Review & xác nhận</button>
+      {canCancel ? <button className="button button-danger" type="button" disabled={!selected.size || !!working} onClick={cancelSelected}>{working === "cancel" ? "Đang hủy..." : "Hủy bỏ - trả về Production"}</button> : null}
+      {canConfirm ? <button className="button button-primary" type="button" disabled={!selected.size || !!working} onClick={() => setReviewOpen(true)}>Review & xác nhận</button> : null}
     </div>
 
-    {reviewOpen ? <div className="modal-backdrop" onMouseDown={() => !working && setReviewOpen(false)}><div className="modal-card scan-confirm-modal" onMouseDown={(event) => event.stopPropagation()}>
+    {canConfirm && reviewOpen ? <div className="modal-backdrop" onMouseDown={() => !working && setReviewOpen(false)}><div className="modal-card scan-confirm-modal" onMouseDown={(event) => event.stopPropagation()}>
       <div className="modal-heading"><div><p className="eyebrow">REVIEW PHIẾU</p><h2>Kiểm tra dữ liệu trước khi xác nhận</h2></div><button className="modal-close" type="button" disabled={!!working} onClick={() => setReviewOpen(false)}>×</button></div>
       <div className="pallet-summary"><div><span>Tổng pallet</span><strong>{selectedRows.length}</strong></div><div><span>Tổng số lượng</span><strong>{totalQuantity.toLocaleString("vi-VN")}</strong></div><div><span>Số dòng tổng hợp</span><strong>{reviewRows.length}</strong></div></div>
       <div className="scan-summary-wrap"><table className="scan-summary-table"><thead><tr><th>Itemcode</th><th>Customer</th><th>Product name</th><th>Total pallet</th><th>Total quantity</th></tr></thead><tbody>{reviewRows.map((row) => <tr key={`${row.itemcode}-${row.customer}-${row.productName}`}><td><strong>{row.itemcode}</strong></td><td>{row.customer}</td><td>{row.productName}</td><td>{row.palletCount}</td><td>{row.totalQuantity.toLocaleString("vi-VN")}</td></tr>)}</tbody></table></div>
