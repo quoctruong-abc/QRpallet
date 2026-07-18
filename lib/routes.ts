@@ -3,7 +3,7 @@ import type { PermissionKey, Position } from "@/lib/types";
 export const POSITION_ROUTES: Record<Position, string[]> = {
   planning: ["/planning-inject"],
   production: ["/pallet-label", "/warehouse-receipt"],
-  warehouse: ["/scan-qr"],
+  warehouse: ["/scan-qr", "/warehouse-receipt"],
 };
 
 export const POSITION_LABELS: Record<Position, string> = {
@@ -21,6 +21,6 @@ export const PAGE_PERMISSIONS: Record<string, PermissionKey[]> = {
 
 export const POSITION_PERMISSIONS: Record<Position, PermissionKey[]> = {
   planning: ["planning.upload", "planning.change"],
-  production: ["pallet.create", "pallet.edit", "receipt.create", "receipt.edit"],
-  warehouse: ["scan.standard"],
+  production: ["pallet.create", "pallet.edit", "receipt.create"],
+  warehouse: ["scan.standard", "receipt.edit"],
 };
