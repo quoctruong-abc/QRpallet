@@ -49,7 +49,7 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
   const [itemFilter, setItemFilter] = useState("");
   const [customerFilter, setCustomerFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [working, setWorking] = useState<"confirm" | "cancel" | "history" | "reprint" | "void" | null>(null);
+  const [working, setWorking] = useState<"confirm" | "cancel" | "history" | "reprint" | null>(null);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -57,8 +57,8 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
   const [receipts, setReceipts] = useState<ReceiptRow[]>([]);
   const [activeReceiptId, setActiveReceiptId] = useState<string | null>(null);
 
-  const itemOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.itemcode))).sort(), [rows]);
-  const customerOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.customer || ""))).filter(Boolean).sort(), [rows]);
+  const itemOptions = useMemo(() => Array.from(new Set(rows.map((row) => row.itemcode))).sort(), [rows]);
+  const customerOptions = useMemo(() => Array.from(new Set(rows.map((row) => row.customer || ""))).filter(Boolean).sort(), [rows]);
   const filteredRows = useMemo(() => rows.filter((row) =>
     (!itemFilter || row.itemcode === itemFilter) && (!customerFilter || (row.customer || "") === customerFilter)
   ), [rows, itemFilter, customerFilter]);
@@ -96,7 +96,8 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
   function toggleOne(id: string) {
     setSelected((current) => {
       const next = new Set(current);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -104,10 +105,13 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
   async function cancelSelected() {
     const palletIds = Array.from(selected);
     if (!palletIds.length) return;
-    setWorking("cancel"); setNotice(null);
+    setWorking("cancel");
+    setNotice(null);
     try {
       const response = await fetch("/api/warehouse-receipt/cancel", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ palletIds }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ palletIds }),
       });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || "Không thể hủy pallet.");
@@ -117,16 +121,21 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
       router.refresh();
     } catch (error) {
       setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể hủy pallet." });
-    } finally { setWorking(null); }
+    } finally {
+      setWorking(null);
+    }
   }
 
   async function confirmSelected() {
     const palletIds = Array.from(selected);
     if (!palletIds.length) return;
-    setWorking("confirm"); setNotice(null);
+    setWorking("confirm");
+    setNotice(null);
     try {
       const response = await fetch("/api/warehouse-receipt/confirm", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ palletIds }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ palletIds }),
       });
       if (!response.ok) {
         const result = await response.json().catch(() => null);
@@ -142,11 +151,14 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
       router.refresh();
     } catch (error) {
       setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể tạo phiếu nhập kho." });
-    } finally { setWorking(null); }
+    } finally {
+      setWorking(null);
+    }
   }
 
   async function loadReceipts(date = receiptDate) {
-    setWorking("history"); setNotice(null);
+    setWorking("history");
+    setNotice(null);
     try {
       const query = date ? `?date=${encodeURIComponent(date)}` : "";
       const response = await fetch(`/api/warehouse-receipt/list${query}`, { cache: "no-store" });
@@ -156,14 +168,20 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
       setHistoryOpen(true);
     } catch (error) {
       setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể tải danh sách phiếu." });
-    } finally { setWorking(null); }
+    } finally {
+      setWorking(null);
+    }
   }
 
   async function reprintReceipt(receiptId: string) {
-    setWorking("reprint"); setActiveReceiptId(receiptId); setNotice(null);
+    setWorking("reprint");
+    setActiveReceiptId(receiptId);
+    setNotice(null);
     try {
       const response = await fetch("/api/warehouse-receipt/reprint", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ receiptId }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receiptId }),
       });
       if (!response.ok) {
         const result = await response.json().catch(() => null);
@@ -172,58 +190,34 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
       downloadPdf(await response.blob(), receiptId);
     } catch (error) {
       setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể in lại phiếu." });
-    } finally { setWorking(null); setActiveReceiptId(null); }
-  }
-
-  async function voidReceipt(receiptId: string) {
-    const accepted = window.confirm(`Hủy phiếu ${receiptId}? Các pallet thuộc phiếu sẽ được trả về trạng thái production.`);
-    if (!accepted) return;
-    setWorking("void"); setActiveReceiptId(receiptId); setNotice(null);
-    try {
-      const response = await fetch("/api/warehouse-receipt/void", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ receiptId }),
-      });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.error || "Không thể hủy phiếu.");
-      setReceipts((current) => current.map((receipt) => receipt.receipt_id === receiptId
-        ? { ...receipt, status: "cancelled", cancelled_at: new Date().toISOString() }
-        : receipt));
-      setNotice({ type: "success", text: `Đã hủy phiếu ${receiptId} và trả ${result.palletCount} pallet về production.` });
-      router.refresh();
-    } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể hủy phiếu." });
-    } finally { setWorking(null); setActiveReceiptId(null); }
+    } finally {
+      setWorking(null);
+      setActiveReceiptId(null);
+    }
   }
 
   return <section className="warehouse-page">
     <div className="hero-row">
       <div><p className="eyebrow">MODULE 04</p><h1>Xử lý nhập kho</h1><p className="muted">Chọn pallet processingWH để tạo phiếu nhập kho hoặc trả lại sản xuất.</p></div>
       <div className="warehouse-hero-actions">
-        <button className="button button-secondary" type="button" disabled={working === "history"} onClick={() => loadReceipts("")}>{working === "history" ? "Đang tải..." : "In lại / Hủy phiếu"}</button>
+        <button className="button button-secondary" type="button" disabled={working === "history"} onClick={() => loadReceipts("")}>{working === "history" ? "Đang tải..." : "Lịch sử / In lại phiếu"}</button>
         <div className="stat-card"><span className="stat-number">{rows.length}</span><span className="muted">Pallet chờ xử lý</span></div>
       </div>
     </div>
 
     <div className="warehouse-filter-card">
-      <label><span>Item</span><select value={itemFilter} onChange={(e) => setItemFilter(e.target.value)}><option value="">Tất cả item</option>{itemOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
-      <label><span>Khách hàng</span><select value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}><option value="">Tất cả khách hàng</option>{customerOptions.map((customer) => <option key={customer}>{customer}</option>)}</select></label>
+      <label><span>Item</span><select value={itemFilter} onChange={(event) => setItemFilter(event.target.value)}><option value="">Tất cả item</option>{itemOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
+      <label><span>Khách hàng</span><select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)}><option value="">Tất cả khách hàng</option>{customerOptions.map((customer) => <option key={customer}>{customer}</option>)}</select></label>
       <button className="button button-secondary" type="button" onClick={() => { setItemFilter(""); setCustomerFilter(""); }}>Xóa bộ lọc</button>
     </div>
 
-    <div className="warehouse-summary-bar">
-      <span>Đang hiển thị <strong>{filteredRows.length}</strong> / {rows.length} pallet</span>
-      <span>Đã chọn <strong>{selected.size}</strong> pallet - <strong>{totalQuantity.toLocaleString("vi-VN")}</strong> pcs</span>
-    </div>
+    <div className="warehouse-summary-bar"><span>Đang hiển thị <strong>{filteredRows.length}</strong> / {rows.length} pallet</span><span>Đã chọn <strong>{selected.size}</strong> pallet - <strong>{totalQuantity.toLocaleString("vi-VN")}</strong> pcs</span></div>
     {notice ? <div className={`alert ${notice.type === "error" ? "alert-error" : "alert-success"}`}>{notice.text}</div> : null}
 
     <div className="scan-table-card">
-      {filteredRows.length === 0 ? <div className="scan-empty">Không có pallet processingWH phù hợp bộ lọc.</div> : <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr>
-        <th><input aria-label="Chọn tất cả dòng đang lọc" type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} /></th>
-        <th>ID pallet</th><th>Itemcode</th><th>Customer</th><th>Product name</th><th>WO</th><th>Quantity</th>
-      </tr></thead><tbody>{filteredRows.map((row) => <tr key={row.pallet_id} className={selected.has(row.pallet_id) ? "is-selected" : ""}>
-        <td><input aria-label={`Chọn ${row.pallet_id}`} type="checkbox" checked={selected.has(row.pallet_id)} onChange={() => toggleOne(row.pallet_id)} /></td>
-        <td><strong>{row.pallet_id}</strong></td><td>{row.itemcode}</td><td>{row.customer || "-"}</td><td>{row.product_name || "-"}</td><td>{row.wo}</td><td>{Number(row.quantity).toLocaleString("vi-VN")}</td>
-      </tr>)}</tbody></table></div>}
+      {filteredRows.length === 0 ? <div className="scan-empty">Không có pallet processingWH phù hợp bộ lọc.</div> : <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th><input aria-label="Chọn tất cả dòng đang lọc" type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} /></th><th>ID pallet</th><th>Itemcode</th><th>Customer</th><th>Product name</th><th>WO</th><th>Quantity</th></tr></thead><tbody>
+        {filteredRows.map((row) => <tr key={row.pallet_id} className={selected.has(row.pallet_id) ? "is-selected" : ""}><td><input aria-label={`Chọn ${row.pallet_id}`} type="checkbox" checked={selected.has(row.pallet_id)} onChange={() => toggleOne(row.pallet_id)} /></td><td><strong>{row.pallet_id}</strong></td><td>{row.itemcode}</td><td>{row.customer || "-"}</td><td>{row.product_name || "-"}</td><td>{row.wo}</td><td>{Number(row.quantity).toLocaleString("vi-VN")}</td></tr>)}
+      </tbody></table></div>}
     </div>
 
     <div className="warehouse-actions">
@@ -235,14 +229,16 @@ export function WarehouseReceiptClient({ initialRows }: { initialRows: Warehouse
       <div className="modal-heading"><div><p className="eyebrow">REVIEW PHIẾU</p><h2>Kiểm tra dữ liệu trước khi xác nhận</h2></div><button className="modal-close" type="button" disabled={!!working} onClick={() => setReviewOpen(false)}>×</button></div>
       <div className="pallet-summary"><div><span>Tổng pallet</span><strong>{selectedRows.length}</strong></div><div><span>Tổng số lượng</span><strong>{totalQuantity.toLocaleString("vi-VN")}</strong></div><div><span>Số dòng tổng hợp</span><strong>{reviewRows.length}</strong></div></div>
       <div className="scan-summary-wrap"><table className="scan-summary-table"><thead><tr><th>Itemcode</th><th>Customer</th><th>Product name</th><th>Total pallet</th><th>Total quantity</th></tr></thead><tbody>{reviewRows.map((row) => <tr key={`${row.itemcode}-${row.customer}-${row.productName}`}><td><strong>{row.itemcode}</strong></td><td>{row.customer}</td><td>{row.productName}</td><td>{row.palletCount}</td><td>{row.totalQuantity.toLocaleString("vi-VN")}</td></tr>)}</tbody></table></div>
-      <p className="muted">Sau khi xác nhận, pallet sẽ chuyển sang WHdone và PDF sẽ được tải xuống.</p>
+      <p className="muted">Sau khi xác nhận, pallet sẽ chuyển sang WHdone, bị khóa nghiệp vụ và PDF sẽ được tải xuống.</p>
       <div className="modal-actions"><button className="button button-secondary" disabled={!!working} onClick={() => setReviewOpen(false)}>Quay lại chỉnh</button><button className="button button-primary" disabled={!!working} onClick={confirmSelected}>{working === "confirm" ? "Đang tạo phiếu..." : "Xác nhận cuối & xuất PDF"}</button></div>
     </div></div> : null}
 
     {historyOpen ? <div className="modal-backdrop" onMouseDown={() => !working && setHistoryOpen(false)}><div className="modal-card receipt-history-modal" onMouseDown={(event) => event.stopPropagation()}>
       <div className="modal-heading"><div><p className="eyebrow">LỊCH SỬ PHIẾU</p><h2>Phiếu nhập kho 7 ngày gần nhất</h2></div><button className="modal-close" type="button" disabled={!!working} onClick={() => setHistoryOpen(false)}>×</button></div>
       <div className="receipt-search-row"><label><span>Tìm theo ngày</span><input type="date" value={receiptDate} onChange={(event) => setReceiptDate(event.target.value)} /></label><button className="button button-primary" disabled={working === "history"} onClick={() => loadReceipts(receiptDate)}>Tìm kiếm</button><button className="button button-secondary" disabled={working === "history"} onClick={() => { setReceiptDate(""); loadReceipts(""); }}>7 ngày gần nhất</button></div>
-      <div className="scan-table-wrap"><table className="receipt-history-table"><thead><tr><th>ID Receipt</th><th>Date</th><th>Total pallet</th><th>Total quantity</th><th>Status</th><th>Thao tác</th></tr></thead><tbody>{receipts.length ? receipts.map((receipt) => <tr key={receipt.receipt_id}><td><strong>{receipt.receipt_id}</strong></td><td>{receipt.receipt_date.split("-").reverse().join("/")}</td><td>{receipt.total_pallet}</td><td>{Number(receipt.total_quantity).toLocaleString("vi-VN")}</td><td><span className={`receipt-status receipt-status-${receipt.status}`}>{receipt.status === "active" ? "Đang hiệu lực" : "Đã hủy"}</span></td><td><div className="action-row"><button className="button button-small button-secondary" disabled={receipt.status === "cancelled" || !!working} onClick={() => reprintReceipt(receipt.receipt_id)}>{working === "reprint" && activeReceiptId === receipt.receipt_id ? "Đang in..." : "In lại"}</button><button className="button button-small button-danger" disabled={receipt.status === "cancelled" || !!working} onClick={() => voidReceipt(receipt.receipt_id)}>{working === "void" && activeReceiptId === receipt.receipt_id ? "Đang hủy..." : "Hủy phiếu"}</button></div></td></tr>) : <tr><td colSpan={6} className="scan-empty">Không tìm thấy phiếu phù hợp.</td></tr>}</tbody></table></div>
+      <div className="scan-table-wrap"><table className="receipt-history-table"><thead><tr><th>ID Receipt</th><th>Date</th><th>Total pallet</th><th>Total quantity</th><th>Status</th><th>Thao tác</th></tr></thead><tbody>
+        {receipts.length ? receipts.map((receipt) => <tr key={receipt.receipt_id}><td><strong>{receipt.receipt_id}</strong></td><td>{receipt.receipt_date.split("-").reverse().join("/")}</td><td>{receipt.total_pallet}</td><td>{Number(receipt.total_quantity).toLocaleString("vi-VN")}</td><td><span className={`receipt-status receipt-status-${receipt.status}`}>{receipt.status === "active" ? "Đang hiệu lực" : "Đã hủy trước đây"}</span></td><td><button className="button button-small button-secondary" disabled={receipt.status === "cancelled" || !!working} onClick={() => reprintReceipt(receipt.receipt_id)}>{working === "reprint" && activeReceiptId === receipt.receipt_id ? "Đang in..." : "In lại"}</button></td></tr>) : <tr><td colSpan={6} className="scan-empty">Không tìm thấy phiếu phù hợp.</td></tr>}
+      </tbody></table></div>
     </div></div> : null}
   </section>;
 }
