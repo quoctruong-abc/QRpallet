@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("confirm_pending_pallets", { p_pallet_ids: palletIds });
+  const { data, error } = await supabase.rpc("confirm_pending_pallets_tracked", { p_pallet_ids: palletIds });
   if (error) {
     const message = error.message || "Không thể xác nhận pallet.";
     const friendly = message.includes("PALLET_STATUS_CHANGED")
