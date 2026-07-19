@@ -9,12 +9,12 @@ const modules: Array<{
   path: string;
   label: string;
   icon: string;
-  permission: PermissionKey;
+  permissions: PermissionKey[];
 }> = [
-  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permission: "planning.upload" },
-  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permission: "pallet.create" },
-  { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permission: "scan.standard" },
-  { path: "/warehouse-receipt", label: "Xác nhận chuyển kho", icon: "📦", permission: "receipt.create" },
+  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload"] },
+  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create"] },
+  { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permissions: ["scan.standard"] },
+  { path: "/warehouse-receipt", label: "Xác nhận chuyển kho", icon: "📦", permissions: ["receipt.create", "receipt.edit"] },
 ];
 
 export function PageShell({
@@ -26,7 +26,9 @@ export function PageShell({
   title: string;
   children: ReactNode;
 }) {
-  const visibleModules = modules.filter((module) => hasPermission(profile, module.permission));
+  const visibleModules = modules.filter((module) =>
+    module.permissions.some((permission) => hasPermission(profile, permission)),
+  );
 
   return (
     <main className="app-shell">
