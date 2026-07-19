@@ -70,7 +70,7 @@ export default async function PlanningInjectPage() {
     : "Chưa có dữ liệu";
 
   return (
-    <PageShell profile={profile} title="Planning Inject">
+    <PageShell profile={profile} title="Update kế hoạch">
       <div
         style={{
           boxSizing: "border-box",
@@ -83,8 +83,7 @@ export default async function PlanningInjectPage() {
       >
         <div className="hero-row planning-hero">
           <div>
-            <p className="eyebrow">MODULE 01</p>
-            <h1>Planning Inject</h1>
+            <h1>Update kế hoạch</h1>
             <p className="muted">Import kế hoạch sản xuất từ Excel và thay thế plan hiện tại.</p>
           </div>
           <div className="planning-stats">
