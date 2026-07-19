@@ -41,7 +41,6 @@ type ScannerInstance = {
 };
 
 type Notice = { type: "success" | "error" | "loading"; text: string } | null;
-
 type SummaryRow = {
   itemcode: string;
   product_name: string;
@@ -234,7 +233,7 @@ export function ScanQrClient({ initialRows }: { initialRows: ScannedPallet[] }) 
   return (
     <section className="scan-page">
       <div className="scan-heading">
-        <div><p className="eyebrow">MODULE 03</p><h1>Scan QR pallet</h1><p className="muted">Danh sách đang chờ nhập kho: <strong>{rows.length}</strong> pallet</p></div>
+        <div><h1>Scan để nhập kho</h1><p className="muted">Danh sách đang chờ nhập kho: <strong>{rows.length}</strong> pallet</p></div>
       </div>
 
       <div className="scan-actions">
@@ -245,8 +244,8 @@ export function ScanQrClient({ initialRows }: { initialRows: ScannedPallet[] }) 
       {notice && !cameraOpen ? <div className={`scan-notice scan-notice-${notice.type}`}>{notice.text}</div> : null}
 
       <div className="scan-table-card">
-        <div className="scan-table-title"><h2>Pallet pendingWH</h2><span>{rows.reduce((sum, row) => sum + Number(row.quantity), 0).toLocaleString("vi-VN")} pcs</span></div>
-        {rows.length === 0 ? <div className="scan-empty">Chưa có pallet nào ở trạng thái pendingWH.</div> : (
+        <div className="scan-table-title"><h2>Pallet đã scan</h2><span>{rows.reduce((sum, row) => sum + Number(row.quantity), 0).toLocaleString("vi-VN")} pcs</span></div>
+        {rows.length === 0 ? <div className="scan-empty">Chưa có pallet nào được scan.</div> : (
           <div className="scan-table-wrap"><table className="scan-table"><thead><tr><th>ID pallet</th><th>WO</th><th>Quantity</th><th>Product name</th><th>Customer</th><th>Itemcode</th><th>Thao tác</th></tr></thead>
           <tbody>{rows.map((row) => <tr key={row.pallet_id}><td><strong>{row.pallet_id}</strong></td><td>{row.wo}</td><td>{Number(row.quantity).toLocaleString("vi-VN")}</td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td>{row.itemcode}</td><td><button type="button" className="button button-danger scan-cancel-button" onClick={() => setCancelRow(row)}>Hủy</button></td></tr>)}</tbody></table></div>
         )}
@@ -259,7 +258,6 @@ export function ScanQrClient({ initialRows }: { initialRows: ScannedPallet[] }) 
         {notice ? <div className={`camera-notice camera-notice-${notice.type}`}><span className={notice.type === "loading" ? "camera-spinner" : ""}>{notice.type === "success" ? "✓" : notice.type === "error" ? "!" : ""}</span><p>{notice.text}</p></div> : null}
       </div> : null}
 
-
       {cancelRow ? <div className="modal-backdrop" onMouseDown={() => !cancelling && setCancelRow(null)}><div className="modal-card scan-cancel-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-heading"><div><p className="eyebrow">HỦY PALLET</p><h2>Trả pallet về production?</h2></div><button type="button" className="modal-close" disabled={cancelling} onClick={() => setCancelRow(null)}>×</button></div>
         <p className="muted">Pallet <strong>{cancelRow.pallet_id}</strong> sẽ bị loại khỏi danh sách chờ nhập kho và chuyển về trạng thái <strong>production</strong>.</p>
@@ -267,7 +265,7 @@ export function ScanQrClient({ initialRows }: { initialRows: ScannedPallet[] }) 
       </div></div> : null}
 
       {confirmOpen ? <div className="modal-backdrop" onMouseDown={() => !confirming && setConfirmOpen(false)}><div className="modal-card scan-confirm-modal" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="modal-heading"><div><p className="eyebrow">XÁC NHẬN</p><h2>Chuyển sang processingWH?</h2></div><button type="button" className="modal-close" onClick={() => setConfirmOpen(false)}>×</button></div>
+        <div className="modal-heading"><div><p className="eyebrow">XÁC NHẬN</p><h2>Chuyển sang chờ nhập kho?</h2></div><button type="button" className="modal-close" onClick={() => setConfirmOpen(false)}>×</button></div>
         <div className="scan-summary-wrap"><table className="scan-summary-table"><thead><tr><th>Itemcode</th><th>Tên sản phẩm</th><th>KH</th><th>Số pallet</th><th>Tổng SL</th></tr></thead><tbody>{summary.map((row) => <tr key={`${row.itemcode}-${row.product_name}-${row.customer}`}><td><strong>{row.itemcode}</strong></td><td>{row.product_name}</td><td>{row.customer}</td><td>{row.palletCount}</td><td><strong>{row.totalQuantity.toLocaleString("vi-VN")}</strong></td></tr>)}</tbody></table></div>
         <div className="modal-actions"><button className="button button-secondary" disabled={confirming} onClick={() => setConfirmOpen(false)}>Hủy</button><button className="button button-primary" disabled={confirming} onClick={confirmAll}>{confirming ? "Đang xác nhận..." : "OK, xác nhận"}</button></div>
       </div></div> : null}
