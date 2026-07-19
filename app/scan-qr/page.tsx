@@ -13,7 +13,7 @@ export default async function ScanQrPage() {
     .order("updated_at", { ascending: false });
 
   return (
-    <PageShell profile={profile} title="Scan QR">
+    <PageShell profile={profile} title="Scan để nhập kho">
       <ScanQrClient initialRows={(error ? [] : data ?? []) as ScannedPallet[]} />
     </PageShell>
   );
