@@ -206,10 +206,10 @@ export function WarehouseReceiptClient({ initialRows, canConfirm, canCancel }: P
 
   return <section className="warehouse-page">
     <div className="hero-row">
-      <div><p className="eyebrow">MODULE 04</p><h1>Xử lý nhập kho</h1><p className="muted">Production review và xác nhận nhập kho; Warehouse hủy bỏ và trả pallet về Production.</p></div>
+      <div><h1>Xác nhận nhập kho</h1><p className="muted">Production review và xác nhận nhập kho; Warehouse hủy bỏ và trả pallet về Production.</p></div>
       <div className="warehouse-hero-actions">
         <button className="button button-secondary" type="button" disabled={working === "history"} onClick={() => loadReceipts("")}>{working === "history" ? "Đang tải..." : "Lịch sử / In lại phiếu"}</button>
-        <div className="stat-card"><span className="stat-number">{rows.length}</span><span className="muted">Pallet chờ xử lý</span></div>
+        <div className="stat-card"><span className="stat-number">{rows.length}</span><span className="muted">Pallet chờ nhập kho</span></div>
       </div>
     </div>
 
@@ -223,7 +223,7 @@ export function WarehouseReceiptClient({ initialRows, canConfirm, canCancel }: P
     {notice ? <div className={`alert ${notice.type === "error" ? "alert-error" : "alert-success"}`}>{notice.text}</div> : null}
 
     <div className="scan-table-card">
-      {filteredRows.length === 0 ? <div className="scan-empty">Không có pallet processingWH phù hợp bộ lọc.</div> : <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th><input aria-label="Chọn tất cả dòng đang lọc" type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} /></th><th>ID pallet</th><th>Itemcode</th><th>Customer</th><th>Product name</th><th>WO</th><th>Quantity</th></tr></thead><tbody>
+      {filteredRows.length === 0 ? <div className="scan-empty">Không có pallet chờ nhập kho phù hợp bộ lọc.</div> : <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th><input aria-label="Chọn tất cả dòng đang lọc" type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} /></th><th>ID pallet</th><th>Itemcode</th><th>Customer</th><th>Product name</th><th>WO</th><th>Quantity</th></tr></thead><tbody>
         {filteredRows.map((row) => <tr key={row.pallet_id} className={selected.has(row.pallet_id) ? "is-selected" : ""}><td><input aria-label={`Chọn ${row.pallet_id}`} type="checkbox" checked={selected.has(row.pallet_id)} onChange={() => toggleOne(row.pallet_id)} /></td><td><strong>{row.pallet_id}</strong></td><td>{row.itemcode}</td><td>{row.customer || "-"}</td><td>{row.product_name || "-"}</td><td>{row.wo}</td><td>{Number(row.quantity).toLocaleString("vi-VN")}</td></tr>)}
       </tbody></table></div>}
     </div>
