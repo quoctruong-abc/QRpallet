@@ -11,10 +11,10 @@ const modules: Array<{
   icon: string;
   permission: PermissionKey;
 }> = [
-  { path: "/planning-inject", label: "Planning Inject", icon: "📋", permission: "planning.upload" },
-  { path: "/pallet-label", label: "Xuất tem pallet", icon: "🏭", permission: "pallet.create" },
-  { path: "/scan-qr", label: "Scan QR", icon: "▣", permission: "scan.standard" },
-  { path: "/warehouse-receipt", label: "Xử lý data tạm", icon: "📦", permission: "receipt.create" },
+  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permission: "planning.upload" },
+  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permission: "pallet.create" },
+  { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permission: "scan.standard" },
+  { path: "/warehouse-receipt", label: "Xác nhận chuyển kho", icon: "📦", permission: "receipt.create" },
 ];
 
 export function PageShell({
@@ -72,7 +72,6 @@ export function PageShell({
 
           <div>
             <strong>{profile.full_name}</strong>
-            <p className="muted small">{profile.email}</p>
           </div>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
             <ChangePasswordDialog />
