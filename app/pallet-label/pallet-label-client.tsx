@@ -31,7 +31,7 @@ export type ActivePallet = {
 
 type Props = { rows: PlanItem[]; pallets: ActivePallet[] };
 type Mode = "full" | "partial";
-type Dialog = "create" | "features" | "edit" | "delete" | "merge" | null;
+type Dialog = "create" | "history" | "edit" | "delete" | "merge" | null;
 
 function formatNumber(value: number | null) {
   return value === null ? "—" : Number(value).toLocaleString("vi-VN");
@@ -54,10 +54,11 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const validRows = useMemo(() => rows.filter((row) => row.wo.trim() !== "" && row.wo.trim() !== "0"), [rows]);
   const machines = useMemo(() => Array.from(new Set(validRows.map((row) => row.machine))).sort((a, b) => a.localeCompare(b, "vi")), [validRows]);
   const allWos = useMemo(() => Array.from(new Set(validRows.map((row) => row.wo))).sort((a, b) => a.localeCompare(b, "vi")), [validRows]);
+
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<PlanItem | null>(null);
   const [selectedPallet, setSelectedPallet] = useState<ActivePallet | null>(null);
-  const [featurePallets, setFeaturePallets] = useState<ActivePallet[]>(initialPallets);
+  const [historyPallets, setHistoryPallets] = useState<ActivePallet[]>(initialPallets);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [mode, setMode] = useState<Mode>("full");
   const [quantity, setQuantity] = useState("");
@@ -66,10 +67,12 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [wo2, setWo2] = useState("");
   const [searchWo, setSearchWo] = useState("");
   const [searchItem, setSearchItem] = useState("");
+  const [historyDays, setHistoryDays] = useState(1);
   const [pending, setPending] = useState(false);
   const [searching, setSearching] = useState(false);
   const [updatingItemcode, setUpdatingItemcode] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   const visibleRows = selectedMachine ? validRows.filter((row) => row.machine === selectedMachine) : [];
 
   function closeDialog() {
@@ -131,28 +134,31 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     }
   }
 
-  async function openFeatures(row?: PlanItem) {
+  async function openHistory(row?: PlanItem) {
     setSelectedRow(row ?? null);
     setSearchWo(row?.wo ?? "");
     setSearchItem(row?.itemcode ?? "");
+    setHistoryDays(1);
     setMessage(null);
-    setDialog("features");
-    await loadPallets(row?.wo ?? "", row?.itemcode ?? "");
+    setDialog("history");
+    await loadPallets(row?.wo ?? "", row?.itemcode ?? "", 1);
   }
 
-  async function loadPallets(wo = searchWo, itemcode = searchItem) {
+  async function loadPallets(wo = searchWo, itemcode = searchItem, days = historyDays) {
     setSearching(true);
     setMessage(null);
     try {
       const params = new URLSearchParams();
       if (wo.trim()) params.set("wo", wo.trim());
       if (itemcode.trim()) params.set("itemcode", itemcode.trim());
+      if (!wo.trim() && !itemcode.trim()) params.set("days", String(days));
       const response = await fetch(`/api/pallet-label/search?${params.toString()}`, { cache: "no-store" });
       const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.error ?? "Không thể tải danh sách pallet.");
-      setFeaturePallets(result.pallets);
+      if (!response.ok || !result.success) throw new Error(result.error ?? "Không thể tải lịch sử in tem.");
+      setHistoryPallets(result.pallets);
+      setHistoryDays(days);
     } catch (error) {
-      setMessage({ type: "error", text: error instanceof Error ? error.message : "Không thể tải danh sách pallet." });
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "Không thể tải lịch sử in tem." });
     } finally {
       setSearching(false);
     }
@@ -215,7 +221,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       await postAction({ action: "edit", pallet_id: selectedPallet.pallet_id, quantity: newQuantity, reason: reason.trim() });
       setMessage({ type: "success", text: `Đã sửa ${selectedPallet.pallet_id}.` });
       await loadPallets();
-      setDialog("features");
+      setDialog("history");
       setSelectedPallet(null);
       setReason("");
       router.refresh();
@@ -237,7 +243,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       await postAction({ action: "delete", pallet_id: selectedPallet.pallet_id, reason: reason.trim() });
       setMessage({ type: "success", text: `Đã xóa hiệu lực ${selectedPallet.pallet_id}.` });
       await loadPallets();
-      setDialog("features");
+      setDialog("history");
       setSelectedPallet(null);
       setReason("");
       router.refresh();
@@ -272,7 +278,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
 
   return <>
     <div className="feature-toolbar pallet-main-toolbar">
-      <button className="button button-secondary" onClick={() => openFeatures()}>Tính năng pallet</button>
+      <button className="button button-secondary" onClick={() => openHistory()}>Lịch sử in tem</button>
       <button className="button button-primary" onClick={() => { setWo1(""); setWo2(""); setQuantity(""); setDialog("merge"); }}>Gộp WO</button>
     </div>
 
@@ -303,7 +309,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     </div>
 
     {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className="modal-card modal-card-wide" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Tính năng pallet"}</h2></div><button className="modal-close" onClick={closeDialog}>×</button></div>
+      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2></div><button className="modal-close" onClick={closeDialog}>×</button></div>
 
       {dialog === "create" && selectedRow ? <>
         <div className="pallet-choice-grid">
@@ -314,15 +320,20 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending} onClick={savePallet}>{pending ? "Đang lưu..." : "Xác nhận & lưu"}</button></div>
       </> : null}
 
-      {dialog === "features" ? <>
+      {dialog === "history" ? <>
         <div className="form-grid pallet-search-grid">
           <label>Tìm theo WO<input value={searchWo} onChange={(event) => setSearchWo(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") loadPallets(); }} placeholder="Nhập WO" /></label>
           <label>Tìm theo Itemcode<input value={searchItem} onChange={(event) => setSearchItem(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") loadPallets(); }} placeholder="Nhập Itemcode" /></label>
-          <div className="pallet-search-actions"><button className="button button-primary" disabled={searching} onClick={() => loadPallets()}>{searching ? "Đang tìm..." : "Tìm kiếm"}</button><button className="button button-secondary" onClick={() => { setSearchWo(""); setSearchItem(""); loadPallets("", ""); }}>1 ngày gần nhất</button></div>
+          <div className="pallet-search-actions">
+            <button className="button button-primary" disabled={searching} onClick={() => loadPallets()}>{searching ? "Đang tìm..." : "Tìm kiếm"}</button>
+            <button className="button button-secondary" disabled={searching} onClick={() => { setSearchWo(""); setSearchItem(""); loadPallets("", "", 1); }}>1 ngày</button>
+            <button className="button button-secondary" disabled={searching} onClick={() => { setSearchWo(""); setSearchItem(""); loadPallets("", "", 7); }}>7 ngày</button>
+            <button className="button button-secondary" disabled={searching} onClick={() => { setSearchWo(""); setSearchItem(""); loadPallets("", "", 30); }}>30 ngày</button>
+          </div>
         </div>
-        <p className="muted small">Không nhập điều kiện: hiển thị pallet được tạo trong 24 giờ gần nhất.</p>
+        <p className="muted small">Đang xem dữ liệu {historyDays} ngày gần nhất khi không nhập WO hoặc Itemcode.</p>
         <div className="table-wrap"><table><thead><tr><th>Pallet ID</th><th>WO</th><th>Itemcode</th><th>Số lượng</th><th>Status</th><th>Ngày tạo</th><th>Thao tác</th></tr></thead><tbody>
-          {featurePallets.length ? featurePallets.map((pallet) => <tr key={`${pallet.pallet_id}-${pallet.created_at}`}><td><strong>{pallet.pallet_id}</strong></td><td>{pallet.wo}</td><td>{pallet.itemcode}</td><td>{formatNumber(pallet.quantity)}</td><td>{pallet.status}</td><td>{new Date(pallet.created_at).toLocaleString("vi-VN")}</td><td><div className="action-row">
+          {historyPallets.length ? historyPallets.map((pallet) => <tr key={`${pallet.pallet_id}-${pallet.created_at}`}><td><strong>{pallet.pallet_id}</strong></td><td>{pallet.wo}</td><td>{pallet.itemcode}</td><td>{formatNumber(pallet.quantity)}</td><td>{pallet.status}</td><td>{new Date(pallet.created_at).toLocaleString("vi-VN")}</td><td><div className="action-row">
             <button className="button button-secondary button-small" disabled={pallet.status !== "production"} title={pallet.status !== "production" ? "Chỉ sửa được pallet trạng thái production" : undefined} onClick={() => openEdit(pallet)}>Sửa</button>
             <button className="button button-secondary button-small" disabled={pending || pallet.status !== "production"} title={pallet.status !== "production" ? "Chỉ xóa được pallet trạng thái production" : undefined} onClick={() => openDelete(pallet)}>Xóa</button>
             <button className="button button-primary button-small" onClick={() => printPallet(pallet.pallet_id)}>In lại</button>
@@ -334,14 +345,14 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         <div className="pallet-summary"><div><span>Pallet ID</span><strong>{selectedPallet.pallet_id}</strong></div><div><span>Số lượng hiện tại</span><strong>{formatNumber(selectedPallet.quantity)}</strong></div></div>
         <label>Số lượng mới<input type="number" min="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Lý do sửa<textarea required rows={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Nhập lý do thay đổi số lượng pallet" /></label>
-        <div className="modal-actions"><button className="button button-secondary" onClick={() => { setDialog("features"); setReason(""); }}>Quay lại</button><button className="button button-primary" disabled={pending || !reason.trim()} onClick={editPallet}>{pending ? "Đang lưu..." : "Lưu sửa đổi"}</button></div>
+        <div className="modal-actions"><button className="button button-secondary" onClick={() => { setDialog("history"); setReason(""); }}>Quay lại</button><button className="button button-primary" disabled={pending || !reason.trim()} onClick={editPallet}>{pending ? "Đang lưu..." : "Lưu sửa đổi"}</button></div>
       </> : null}
 
       {dialog === "delete" && selectedPallet ? <>
         <div className="pallet-summary"><div><span>Pallet ID</span><strong>{selectedPallet.pallet_id}</strong></div><div><span>Số lượng</span><strong>{formatNumber(selectedPallet.quantity)}</strong></div></div>
         <p className="muted">Pallet sẽ bị xóa hiệu lực nhưng dữ liệu gốc và lịch sử vẫn được giữ lại.</p>
         <label>Lý do xóa<textarea required rows={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Nhập lý do xóa pallet" /></label>
-        <div className="modal-actions"><button className="button button-secondary" onClick={() => { setDialog("features"); setReason(""); }}>Không xóa</button><button className="button button-danger" disabled={pending || !reason.trim()} onClick={deletePallet}>{pending ? "Đang xóa..." : "Xác nhận xóa"}</button></div>
+        <div className="modal-actions"><button className="button button-secondary" onClick={() => { setDialog("history"); setReason(""); }}>Không xóa</button><button className="button button-danger" disabled={pending || !reason.trim()} onClick={deletePallet}>{pending ? "Đang xóa..." : "Xác nhận xóa"}</button></div>
       </> : null}
 
       {dialog === "merge" ? <>
