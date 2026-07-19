@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
 import { hasPermission, requirePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -73,16 +72,12 @@ export default async function PalletLabelPage() {
   }
 
   return (
-    <PageShell profile={profile} title="Xuất tem pallet">
+    <PageShell profile={profile} title="In tem pallet">
       <div className="hero-row">
         <div>
-          <p className="eyebrow">MODULE 02</p>
-          <h1>Xuất tem pallet</h1>
+          <h1>In tem pallet</h1>
           <p className="muted">Chọn máy, tạo tem và quản lý các pallet đang hiệu lực.</p>
         </div>
-        {profile.role === "superadmin" || profile.role === "admin" ? (
-          <Link className="text-link" href="/admin">Quản lý tài khoản →</Link>
-        ) : null}
       </div>
 
       {!databaseReady ? (
