@@ -53,19 +53,35 @@ function sanitizeFilename(value: string): string {
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
 }
 
-// Tất cả x/y dùng đơn vị mm, tính từ góc trên bên trái giấy A4.
-// Chỉ cần chỉnh khối này để thay đổi vị trí và cỡ chữ.
+function withPrefix(prefix: string, value: unknown): string {
+  return `${prefix}${safe(value)}`;
+}
+
+// Nội dung đứng trước dữ liệu. Để chuỗi rỗng "" nếu không muốn hiện tiêu đề.
+const LABEL_PREFIX = {
+  palletId: "Pallet ID: ",
+  itemcode: "Mã hàng: ",
+  wo: "WO: ",
+  productName: "Tên sản phẩm: ",
+  customer: "Khách hàng: ",
+  machine: "Máy: ",
+  quantity: "Số lượng: ",
+  quanorder: "Số lượng đơn hàng: ",
+} as const;
+
+// Tất cả x/y dùng đơn vị mm, tính từ góc trên bên trái giấy A4 nằm ngang.
+// A4 landscape có kích thước 297 x 210 mm.
 const LABEL_LAYOUT = {
-  palletId: { x: 18, y: 34, size: 24, bold: true, maxWidth: 125 },
-  itemcode: { x: 18, y: 58, size: 16, bold: true, maxWidth: 105 },
-  wo: { x: 18, y: 80, size: 16, bold: true, maxWidth: 105 },
-  productName: { x: 18, y: 103, size: 13, bold: false, maxWidth: 125 },
-  customer: { x: 18, y: 124, size: 13, bold: false, maxWidth: 125 },
-  machine: { x: 112, y: 58, size: 16, bold: true, maxWidth: 35 },
-  quantity: { x: 112, y: 82, size: 24, bold: true, maxWidth: 35 },
-  quanorder: { x: 112, y: 106, size: 13, bold: false, maxWidth: 35 },
-  qr: { x: 154, y: 40, size: 38 },
-  qrCaption: { x: 154, y: 83, size: 9, bold: true, maxWidth: 38 },
+  palletId: { x: 18, y: 30, size: 24, bold: true, maxWidth: 185 },
+  itemcode: { x: 18, y: 56, size: 17, bold: true, maxWidth: 150 },
+  wo: { x: 18, y: 78, size: 17, bold: true, maxWidth: 150 },
+  productName: { x: 18, y: 101, size: 14, bold: false, maxWidth: 185 },
+  customer: { x: 18, y: 123, size: 14, bold: false, maxWidth: 185 },
+  machine: { x: 175, y: 56, size: 17, bold: true, maxWidth: 55 },
+  quantity: { x: 175, y: 82, size: 24, bold: true, maxWidth: 55 },
+  quanorder: { x: 175, y: 109, size: 13, bold: false, maxWidth: 70 },
+  qr: { x: 240, y: 34, size: 42 },
+  qrCaption: { x: 238, y: 82, size: 9, bold: true, maxWidth: 48 },
 } satisfies Record<string, TextLayout | { x: number; y: number; size: number }>;
 
 export async function GET(request: Request) {
@@ -129,8 +145,8 @@ export async function GET(request: Request) {
     const regularFont = await pdfDoc.embedFont(regularFontBytes, { subset: true });
     const boldFont = await pdfDoc.embedFont(boldFontBytes, { subset: true });
 
-    // A4 portrait: 210 x 297 mm. Tạo trang trắng trực tiếp, không dùng template nền.
-    const page = pdfDoc.addPage([mm(210), mm(297)]);
+    // A4 landscape: rộng 297 mm, cao 210 mm.
+    const page = pdfDoc.addPage([mm(297), mm(210)]);
     const pageHeight = page.getHeight();
 
     const drawText = (text: unknown, config: TextLayout) => {
@@ -152,14 +168,14 @@ export async function GET(request: Request) {
     });
     const qrImage = await pdfDoc.embedPng(qrBuffer);
 
-    drawText(pallet.pallet_id, LABEL_LAYOUT.palletId);
-    drawText(pallet.itemcode, LABEL_LAYOUT.itemcode);
-    drawText(pallet.wo, LABEL_LAYOUT.wo);
-    drawText(pallet.product_name, LABEL_LAYOUT.productName);
-    drawText(pallet.customer, LABEL_LAYOUT.customer);
-    drawText(pallet.machine, LABEL_LAYOUT.machine);
-    drawText(formatNumber(pallet.quantity), LABEL_LAYOUT.quantity);
-    drawText(formatNumber(pallet.quanorder), LABEL_LAYOUT.quanorder);
+    drawText(withPrefix(LABEL_PREFIX.palletId, pallet.pallet_id), LABEL_LAYOUT.palletId);
+    drawText(withPrefix(LABEL_PREFIX.itemcode, pallet.itemcode), LABEL_LAYOUT.itemcode);
+    drawText(withPrefix(LABEL_PREFIX.wo, pallet.wo), LABEL_LAYOUT.wo);
+    drawText(withPrefix(LABEL_PREFIX.productName, pallet.product_name), LABEL_LAYOUT.productName);
+    drawText(withPrefix(LABEL_PREFIX.customer, pallet.customer), LABEL_LAYOUT.customer);
+    drawText(withPrefix(LABEL_PREFIX.machine, pallet.machine), LABEL_LAYOUT.machine);
+    drawText(withPrefix(LABEL_PREFIX.quantity, formatNumber(pallet.quantity)), LABEL_LAYOUT.quantity);
+    drawText(withPrefix(LABEL_PREFIX.quanorder, formatNumber(pallet.quanorder)), LABEL_LAYOUT.quanorder);
 
     page.drawImage(qrImage, {
       x: mm(LABEL_LAYOUT.qr.x),
