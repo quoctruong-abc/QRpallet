@@ -14,7 +14,7 @@ const modules: Array<{
   { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload"] },
   { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create"] },
   { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permissions: ["scan.standard"] },
-  { path: "/warehouse-receipt", label: "Xác nhận chuyển kho", icon: "📦", permissions: ["receipt.create", "receipt.edit"] },
+  { path: "/warehouse-receipt", label: "Xem phiếu nhập kho", icon: "📦", permissions: ["receipt.view"] },
 ];
 
 export function PageShell({
