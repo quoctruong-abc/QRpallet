@@ -216,16 +216,23 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       setMessage({ type: "error", text: "Vui lòng nhập lý do sửa pallet." });
       return;
     }
+
+    const pdfWindow = window.open("", "_blank");
     setPending(true);
     try {
-      await postAction({ action: "edit", pallet_id: selectedPallet.pallet_id, quantity: newQuantity, reason: reason.trim() });
-      setMessage({ type: "success", text: `Đã sửa ${selectedPallet.pallet_id}.` });
+      const result = await postAction({ action: "edit", pallet_id: selectedPallet.pallet_id, quantity: newQuantity, reason: reason.trim() });
+      const editedPalletId = result.pallet?.pallet_id || selectedPallet.pallet_id;
+      const pdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(editedPalletId)}`;
+      if (pdfWindow) pdfWindow.location.href = pdfUrl;
+      else window.location.href = pdfUrl;
+      setMessage({ type: "success", text: `Đã sửa ${editedPalletId} và mở PDF mới.` });
       await loadPallets();
       setDialog("history");
       setSelectedPallet(null);
       setReason("");
       router.refresh();
     } catch (error) {
+      pdfWindow?.close();
       setMessage({ type: "error", text: error instanceof Error ? error.message : "Không thể sửa pallet." });
     } finally {
       setPending(false);
