@@ -60,10 +60,10 @@ function withPrefix(prefix: string, value: unknown): string {
 // Nội dung đứng trước dữ liệu. Để chuỗi rỗng "" nếu không muốn hiện tiêu đề.
 const LABEL_PREFIX = {
   palletId: "Pallet ID: ",
-  itemcode: "Mã hàng: ",
-  wo: "WO: ",
+  itemcode: "Itemcode: ",
+  wo: "Số WO: ",
   productName: "Tên sản phẩm: ",
-  customer: "Khách hàng: ",
+  customer: "",
   machine: "Máy: ",
   quantity: "Số lượng: ",
   quanorder: "Số lượng đơn hàng: ",
@@ -72,16 +72,16 @@ const LABEL_PREFIX = {
 // Tất cả x/y dùng đơn vị mm, tính từ góc trên bên trái giấy A4 nằm ngang.
 // A4 landscape có kích thước 297 x 210 mm.
 const LABEL_LAYOUT = {
-  palletId: { x: 18, y: 30, size: 24, bold: true, maxWidth: 185 },
-  itemcode: { x: 18, y: 56, size: 17, bold: true, maxWidth: 150 },
-  wo: { x: 18, y: 78, size: 17, bold: true, maxWidth: 150 },
-  productName: { x: 18, y: 101, size: 14, bold: false, maxWidth: 185 },
-  customer: { x: 18, y: 123, size: 14, bold: false, maxWidth: 185 },
-  machine: { x: 175, y: 56, size: 17, bold: true, maxWidth: 55 },
-  quantity: { x: 175, y: 82, size: 24, bold: true, maxWidth: 55 },
-  quanorder: { x: 175, y: 109, size: 13, bold: false, maxWidth: 70 },
-  qr: { x: 240, y: 34, size: 42 },
-  qrCaption: { x: 238, y: 82, size: 9, bold: true, maxWidth: 48 },
+  palletId: { x: 18, y: 160, size: 20, bold: false, maxWidth: 185 },
+  itemcode: { x: 18, y: 115, size: 20, bold: false, maxWidth: 150 },
+  wo: { x: 18, y: 100, size: 20, bold: false, maxWidth: 150 },
+  productName: { x: 18, y: 57, size: 25, bold: true, maxWidth: 270 },
+  customer: { x: 18, y: 40, size: 92, bold: true, maxWidth: 185 },
+  machine: { x: 18, y: 130, size: 20, bold: false, maxWidth: 100 },
+  quantity: { x: 18, y: 180, size: 40, bold: true, maxWidth: 140 },
+  quanorder: { x: 18, y: 145, size: 20, bold: false, maxWidth: 100 },
+  qr: { x: 210, y: 130, size: 72 },
+  qrCaption: { x: 225, y: 130, size: 15, bold: true, maxWidth: 70 },
 } satisfies Record<string, TextLayout | { x: number; y: number; size: number }>;
 
 export async function GET(request: Request) {
