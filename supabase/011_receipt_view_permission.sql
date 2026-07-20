@@ -3,8 +3,8 @@ begin;
 -- Replace the obsolete receipt.create / receipt.edit permissions with one
 -- read-only module access permission: receipt.view.
 
--- Remove legacy CHECK constraints that enumerate permission keys, then recreate
--- one constraint containing the current permission set.
+-- Remove legacy CHECK constraints that enumerate permission keys before
+-- migrating existing rows.
 do $$
 declare
   v_constraint record;
@@ -24,19 +24,8 @@ begin
 end;
 $$;
 
-alter table public.user_permissions
-  add constraint user_permissions_permission_key_check
-  check (permission_key in (
-    'planning.upload',
-    'planning.change',
-    'pallet.create',
-    'pallet.edit',
-    'scan.standard',
-    'receipt.view'
-  ));
-
 -- Keep one receipt.view row for every user that previously had either receipt
--- permission. ON CONFLICT assumes the existing unique key on user + permission.
+-- permission. ON CONFLICT uses the existing unique key on user + permission.
 insert into public.user_permissions (user_id, permission_key, granted_by)
 select distinct
   user_id,
@@ -48,6 +37,18 @@ on conflict (user_id, permission_key) do nothing;
 
 delete from public.user_permissions
 where permission_key in ('receipt.create', 'receipt.edit');
+
+-- Add the current permission-key constraint only after legacy rows are removed.
+alter table public.user_permissions
+  add constraint user_permissions_permission_key_check
+  check (permission_key in (
+    'planning.upload',
+    'planning.change',
+    'pallet.create',
+    'pallet.edit',
+    'scan.standard',
+    'receipt.view'
+  ));
 
 -- Module 4 now belongs to Warehouse. Production no longer receives this route
 -- or permission by default.
