@@ -126,11 +126,20 @@ begin
   insert into public.wh_receipt(receipt_id, receipt_date, total_pallet, total_quantity, user_id)
   values (v_receipt_id, v_date, v_total_pallet, v_total_quantity, auth.uid());
 
+  -- Preserve the existing database transition rule while keeping the UI flow
+  -- as one confirmation step: pendingWH -> processingWH -> WHdone happens in
+  -- the same transaction, so users never see an intermediate warehouse step.
+  update public.pallet_data
+  set status = 'processingWH'
+  where pallet_id = any(p_pallet_ids)
+    and effect_to is null
+    and status = 'pendingWH';
+
   update public.pallet_data
   set status = 'WHdone', wh_receipt = v_receipt_id
   where pallet_id = any(p_pallet_ids)
     and effect_to is null
-    and status = 'pendingWH';
+    and status = 'processingWH';
 
   return query select v_receipt_id, v_date, v_total_pallet, v_total_quantity;
 end;
