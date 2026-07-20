@@ -1,16 +1,14 @@
-import { getCurrentProfile } from "@/lib/auth";
+import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createReceiptPdf, safeReceiptFilename, type ReceiptPalletRow } from "@/lib/warehouse-receipt/pdf";
 
 export async function POST(request: Request) {
-  const profile = await getCurrentProfile();
-  const canReprint = Boolean(
-    profile?.is_active &&
-    (profile.role === "superadmin" || profile.role === "admin" || profile.position === "warehouse"),
-  );
-
-  if (!canReprint) {
-    return Response.json({ success: false, error: "Không có quyền in lại phiếu." }, { status: 403 });
+  const authorization = await authorizePermission("receipt.view");
+  if (!authorization.ok) {
+    return Response.json(
+      { success: false, error: authorization.error },
+      { status: authorization.status },
+    );
   }
 
   const body = await request.json().catch(() => null) as { receiptId?: string } | null;
