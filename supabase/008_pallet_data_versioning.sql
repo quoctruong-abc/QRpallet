@@ -18,10 +18,15 @@ create unique index if not exists pallet_data_one_active_version_idx
   on public.pallet_data(pallet_id)
   where effect_to is null;
 
+-- PostgreSQL cannot change an existing function return type with CREATE OR REPLACE.
+-- Drop the old signatures first, then recreate them with the new return type.
+drop function if exists public.edit_pallet_quantity_tracked(text, integer, text);
+drop function if exists public.delete_pallet_record_tracked(text, text);
+
 -- Editing does not update the active row in place.
 -- It expires the old row and creates an identical active version with only
 -- quantity/note changed. old_data_refer points to the expired physical row.
-create or replace function public.edit_pallet_quantity_tracked(
+create function public.edit_pallet_quantity_tracked(
   p_pallet_id text,
   p_quantity integer,
   p_reason text
@@ -113,7 +118,7 @@ $$;
 -- Deleting also creates a trace row. Both the former active row and the new
 -- tombstone row are inactive, so normal application queries no longer show it.
 -- The tombstone points back to the deleted physical row through old_data_refer.
-create or replace function public.delete_pallet_record_tracked(
+create function public.delete_pallet_record_tracked(
   p_pallet_id text,
   p_reason text
 )
