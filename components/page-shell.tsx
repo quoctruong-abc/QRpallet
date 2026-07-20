@@ -10,7 +10,15 @@ const modules: Array<{
   label: string;
   icon: string;
   permissions: PermissionKey[];
+  adminOnly?: boolean;
 }> = [
+  {
+    path: "/production-dashboard",
+    label: "Dashboard sản xuất",
+    icon: "📊",
+    permissions: [],
+    adminOnly: true,
+  },
   { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload"] },
   { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create"] },
   { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permissions: ["scan.standard"] },
@@ -26,9 +34,10 @@ export function PageShell({
   title: string;
   children: ReactNode;
 }) {
-  const visibleModules = modules.filter((module) =>
-    module.permissions.some((permission) => hasPermission(profile, permission)),
-  );
+  const visibleModules = modules.filter((module) => {
+    if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
+    return module.permissions.some((permission) => hasPermission(profile, permission));
+  });
 
   return (
     <main className="app-shell">
