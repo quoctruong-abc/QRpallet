@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { POSITION_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
+import { POSITION_ROUTES } from "@/lib/routes";
 import type { AppRole, PermissionKey, Position, Profile } from "@/lib/types";
 
 type LegacyPosition = Position | "pallet" | "scanner";
@@ -57,9 +57,6 @@ export function hasPosition(profile: Profile, position: LegacyPosition) {
 
 export function hasPermission(profile: Profile, permission: PermissionKey) {
   if (profile.role === "superadmin") return true;
-  if (profile.role === "admin") {
-    return Boolean(profile.position && POSITION_PERMISSIONS[profile.position].includes(permission));
-  }
   return profile.permissions?.includes(permission) ?? false;
 }
 
