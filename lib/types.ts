@@ -7,8 +7,7 @@ export type PermissionKey =
   | "pallet.create"
   | "pallet.edit"
   | "scan.standard"
-  | "receipt.create"
-  | "receipt.edit";
+  | "receipt.view";
 
 export type Profile = {
   id: string;
