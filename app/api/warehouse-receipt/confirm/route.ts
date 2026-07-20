@@ -5,7 +5,7 @@ import { createReceiptPdf, safeReceiptFilename, type ReceiptPalletRow } from "@/
 type PalletRow = ReceiptPalletRow & { pallet_id: string };
 
 export async function POST(request: Request) {
-  const authorization = await authorizePermission("receipt.create");
+  const authorization = await authorizePermission("scan.standard");
   if (!authorization.ok) {
     return Response.json(
       { success: false, error: authorization.error },
