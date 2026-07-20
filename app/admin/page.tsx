@@ -30,8 +30,8 @@ const allPermissions: Array<{ key: PermissionKey; label: string }> = [
 
 const roleRules = [
   { role: "superadmin", system: "Toàn hệ thống", create: "superadmin, admin, user", accounts: "Tất cả tài khoản", mapping: "Được chỉnh", permissions: "Toàn bộ, luôn bypass" },
-  { role: "admin", system: "Trong position của mình", create: "Chỉ user cùng position", accounts: "Chỉ user cùng position", mapping: "Không được chỉnh", permissions: "Toàn bộ quyền thuộc position" },
-  { role: "user", system: "Không có quyền mặc định", create: "Không", accounts: "Không", mapping: "Không", permissions: "Phải được cấp từng quyền" },
+  { role: "admin", system: "Trong position của mình", create: "Chỉ user cùng position", accounts: "Chỉ user cùng position", mapping: "Không được chỉnh", permissions: "Do superadmin cấp từng quyền" },
+  { role: "user", system: "Không có quyền mặc định", create: "Không", accounts: "Không", mapping: "Không", permissions: "Được cấp từng quyền" },
 ] as const;
 
 function mappingEnabled(rows: PositionPageMapping[], position: Position, path: string) {
@@ -81,7 +81,7 @@ export default async function AdminPage() {
           <h1>Quản trị phân quyền hệ thống</h1>
           <p className="muted">
             {isSuperadmin
-              ? "Quản lý toàn bộ tài khoản, position mapping và permission của user."
+              ? "Quản lý toàn bộ tài khoản, position mapping và permission của admin/user."
               : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}.`}
           </p>
         </div>
@@ -133,7 +133,7 @@ export default async function AdminPage() {
             <h2>Quyền của từng tài khoản</h2>
             <p className="muted small">
               {isSuperadmin
-                ? "Hiển thị toàn bộ tài khoản; chỉ user được cấp permission thủ công."
+                ? "Superadmin có thể cấp từng quyền cho cả admin và user."
                 : `Chỉ hiển thị user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"} và các quyền thuộc position này.`}
             </p>
           </div>
@@ -142,16 +142,28 @@ export default async function AdminPage() {
           <thead><tr><th>Tài khoản</th><th>Role</th><th>Position</th>{visiblePermissions.map((permission) => <th key={permission.key}>{permission.label}</th>)}<th>Lưu</th><th>Quản lý</th></tr></thead>
           <tbody>{users.map((user) => {
             const granted = permissionMap.get(user.id) ?? new Set<PermissionKey>();
-            const isUser = user.role === "user";
+            const canEditPermissions = user.role !== "superadmin" && (isSuperadmin || user.role === "user");
             return <tr key={user.id}>
               <td><strong>{user.full_name}</strong><span className="table-subtext">{user.username}</span></td>
               <td><span className="badge">{user.role}</span></td>
               <td>{user.position ? POSITION_LABELS[user.position] : "Toàn quyền"}</td>
-              {visiblePermissions.map((permission) => {
-                const fixedChecked = user.role === "superadmin" || Boolean(user.role === "admin" && user.position && POSITION_PERMISSIONS[user.position].includes(permission.key));
-                return <td key={permission.key}>{isUser ? <input aria-label={`${user.username} - ${permission.label}`} defaultChecked={granted.has(permission.key)} form={`permissions-${user.id}`} name="permissions" type="checkbox" value={permission.key} /> : <input checked={fixedChecked} disabled readOnly type="checkbox" />}</td>;
-              })}
-              <td>{isUser ? <form action={updateUserPermissions} id={`permissions-${user.id}`}><input name="user_id" type="hidden" value={user.id} /><button className="button button-small button-primary" type="submit">Lưu</button></form> : <span className="muted small">Theo role</span>}</td>
+              {visiblePermissions.map((permission) => (
+                <td key={permission.key}>
+                  {canEditPermissions ? (
+                    <input
+                      aria-label={`${user.username} - ${permission.label}`}
+                      defaultChecked={granted.has(permission.key)}
+                      form={`permissions-${user.id}`}
+                      name="permissions"
+                      type="checkbox"
+                      value={permission.key}
+                    />
+                  ) : (
+                    <input checked disabled readOnly type="checkbox" />
+                  )}
+                </td>
+              ))}
+              <td>{canEditPermissions ? <form action={updateUserPermissions} id={`permissions-${user.id}`}><input name="user_id" type="hidden" value={user.id} /><button className="button button-small button-primary" type="submit">Lưu</button></form> : <span className="muted small">Theo role</span>}</td>
               <td><div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", minWidth: "190px" }}>
                 {isSuperadmin ? <form action={resetEmployeePassword} style={{ display: "flex", gap: "0.5rem" }}><input name="user_id" type="hidden" value={user.id} /><input name="password" minLength={8} placeholder="Mật khẩu mới" required type="password" /><button className="button button-small button-secondary" type="submit">Đặt lại</button></form> : null}
                 {user.id === profile.id ? <span className="muted small">Tài khoản hiện tại</span> : <form action={toggleEmployeeStatus}><input name="user_id" type="hidden" value={user.id} /><input name="next_status" type="hidden" value={String(!user.is_active)} /><button className="button button-small button-secondary" type="submit">{user.is_active ? "Khóa tài khoản" : "Mở khóa tài khoản"}</button></form>}
