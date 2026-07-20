@@ -3,7 +3,7 @@ import path from "node:path";
 
 import fontkit from "@pdf-lib/fontkit";
 import { NextResponse } from "next/server";
-import { PDFDocument, PageSizes, rgb } from "pdf-lib";
+import { PDFDocument, rgb } from "pdf-lib";
 import QRCode from "qrcode";
 
 import { authorizePermission } from "@/lib/auth";
@@ -22,6 +22,14 @@ type PalletRecord = {
   machine: string | null;
   quantity: number | string | null;
   status: string | null;
+};
+
+type TextLayout = {
+  x: number;
+  y: number;
+  size: number;
+  bold: boolean;
+  maxWidth: number;
 };
 
 const MM_TO_POINT = 72 / 25.4;
@@ -45,8 +53,8 @@ function sanitizeFilename(value: string): string {
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
 }
 
-// All positions use millimetres measured from the top-left corner of an A4 page.
-// Change only this block when adjusting the label layout.
+// Tất cả x/y dùng đơn vị mm, tính từ góc trên bên trái giấy A4.
+// Chỉ cần chỉnh khối này để thay đổi vị trí và cỡ chữ.
 const LABEL_LAYOUT = {
   palletId: { x: 18, y: 34, size: 24, bold: true, maxWidth: 125 },
   itemcode: { x: 18, y: 58, size: 16, bold: true, maxWidth: 105 },
@@ -58,7 +66,7 @@ const LABEL_LAYOUT = {
   quanorder: { x: 112, y: 106, size: 13, bold: false, maxWidth: 35 },
   qr: { x: 154, y: 40, size: 38 },
   qrCaption: { x: 154, y: 83, size: 9, bold: true, maxWidth: 38 },
-} as const;
+} satisfies Record<string, TextLayout | { x: number; y: number; size: number }>;
 
 export async function GET(request: Request) {
   try {
@@ -120,13 +128,12 @@ export async function GET(request: Request) {
 
     const regularFont = await pdfDoc.embedFont(regularFontBytes, { subset: true });
     const boldFont = await pdfDoc.embedFont(boldFontBytes, { subset: true });
-    const page = pdfDoc.addPage(PageSizes.A4);
+
+    // A4 portrait: 210 x 297 mm. Tạo trang trắng trực tiếp, không dùng template nền.
+    const page = pdfDoc.addPage([mm(210), mm(297)]);
     const pageHeight = page.getHeight();
 
-    const drawText = (
-      text: unknown,
-      config: { x: number; y: number; size: number; bold: boolean; maxWidth: number },
-    ) => {
+    const drawText = (text: unknown, config: TextLayout) => {
       page.drawText(safe(text), {
         x: mm(config.x),
         y: pageHeight - mm(config.y),
