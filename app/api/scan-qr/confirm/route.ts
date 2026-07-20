@@ -1,8 +1,5 @@
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { createReceiptPdf, safeReceiptFilename, type ReceiptPalletRow } from "@/lib/warehouse-receipt/pdf";
-
-type PalletRow = ReceiptPalletRow & { pallet_id: string };
 
 export async function POST(request: Request) {
   const authorization = await authorizePermission("scan.standard");
@@ -24,7 +21,7 @@ export async function POST(request: Request) {
 
   let palletQuery = supabase
     .from("pallet_data")
-    .select("pallet_id,itemcode,customer,product_name,quantity,scanned_by")
+    .select("pallet_id,scanned_by")
     .in("pallet_id", palletIds)
     .is("effect_to", null)
     .eq("status", "pendingWH");
@@ -57,19 +54,11 @@ export async function POST(request: Request) {
     total_quantity: number;
   };
 
-  const pdfBytes = await createReceiptPdf(
-    receipt.receipt_id,
-    receipt.receipt_date,
-    palletData as PalletRow[],
-    { pallets: Number(receipt.total_pallet), quantity: Number(receipt.total_quantity) },
-  );
-
-  return new Response(Buffer.from(pdfBytes), {
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${safeReceiptFilename(receipt.receipt_id)}.pdf"`,
-      "X-Receipt-Id": receipt.receipt_id,
-      "X-Pallet-Count": String(receipt.total_pallet),
-    },
+  return Response.json({
+    success: true,
+    receiptId: receipt.receipt_id,
+    receiptDate: receipt.receipt_date,
+    totalPallet: Number(receipt.total_pallet),
+    totalQuantity: Number(receipt.total_quantity),
   });
 }
