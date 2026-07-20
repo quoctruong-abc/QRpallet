@@ -36,17 +36,6 @@ type Notice = { type: "success" | "error" | "loading"; text: string } | null;
 type SummaryRow = { itemcode: string; product_name: string; customer: string; palletCount: number; totalQuantity: number };
 const SCRIPT_ID = "html5-qrcode-script";
 
-function downloadPdf(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${filename}.pdf`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 function loadScannerScript() {
   return new Promise<void>((resolve, reject) => {
     if (window.Html5Qrcode) return resolve();
@@ -186,16 +175,14 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     setConfirming(true);
     try {
       const response = await fetch("/api/scan-qr/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ palletIds: rows.map((row) => row.pallet_id) }) });
-      if (!response.ok) {
-        const result = await response.json().catch(() => null);
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
         throw new Error(result?.error || "Không thể tạo phiếu nhập kho.");
       }
-      const receiptId = response.headers.get("X-Receipt-Id") || "warehouse-receipt";
-      downloadPdf(await response.blob(), receiptId);
-      const count = rows.length;
+      const receiptId = result.receiptId as string;
       setRows([]);
       setConfirmOpen(false);
-      setNotice({ type: "success", text: `Đã tạo phiếu ${receiptId} cho ${count} pallet và chuyển sang WHdone.` });
+      setNotice({ type: "success", text: `Tạo phiếu nhập kho thành công. Số phiếu: ${receiptId}` });
       router.refresh();
     } catch (error) {
       setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể tạo phiếu nhập kho." });
@@ -219,7 +206,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       </div>
       {cameraOpen ? <div className="camera-overlay"><div id="qr-camera-reader" className="camera-reader" /><div className="camera-topbar"><strong>Quét QR pallet</strong><button type="button" onClick={closeCamera}>✕</button></div><div className="camera-guide"><span /><p>Đưa QR vào giữa khung</p></div>{notice ? <div className={`camera-notice camera-notice-${notice.type}`}><span className={notice.type === "loading" ? "camera-spinner" : ""}>{notice.type === "success" ? "✓" : notice.type === "error" ? "!" : ""}</span><p>{notice.text}</p></div> : null}</div> : null}
       {cancelRow ? <div className="modal-backdrop" onMouseDown={() => !cancelling && setCancelRow(null)}><div className="modal-card scan-cancel-modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">HỦY PALLET</p><h2>Trả pallet về production?</h2></div><button type="button" className="modal-close" disabled={cancelling} onClick={() => setCancelRow(null)}>×</button></div><p className="muted">Pallet <strong>{cancelRow.pallet_id}</strong> sẽ bị loại khỏi danh sách và chuyển về <strong>production</strong>.</p><div className="modal-actions"><button className="button button-secondary" disabled={cancelling} onClick={() => setCancelRow(null)}>Không</button><button className="button button-danger" disabled={cancelling} onClick={cancelPallet}>{cancelling ? "Đang hủy..." : "Có, hủy pallet"}</button></div></div></div> : null}
-      {confirmOpen ? <div className="modal-backdrop" onMouseDown={() => !confirming && setConfirmOpen(false)}><div className="modal-card scan-confirm-modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">TẠO PHIẾU NHẬP KHO</p><h2>Xác nhận và xuất phiếu?</h2></div><button type="button" className="modal-close" disabled={confirming} onClick={() => setConfirmOpen(false)}>×</button></div><div className="scan-summary-wrap"><table className="scan-summary-table"><thead><tr><th>Itemcode</th><th>Tên sản phẩm</th><th>KH</th><th>Số pallet</th><th>Tổng SL</th></tr></thead><tbody>{summary.map((row) => <tr key={`${row.itemcode}-${row.product_name}-${row.customer}`}><td><strong>{row.itemcode}</strong></td><td>{row.product_name}</td><td>{row.customer}</td><td>{row.palletCount}</td><td><strong>{row.totalQuantity.toLocaleString("vi-VN")}</strong></td></tr>)}</tbody></table></div><p className="muted">Sau khi xác nhận, hệ thống tạo phiếu nhập kho, chuyển pallet sang WHdone và tải PDF.</p><div className="modal-actions"><button className="button button-secondary" disabled={confirming} onClick={() => setConfirmOpen(false)}>Quay lại</button><button className="button button-primary" disabled={confirming} onClick={confirmAll}>{confirming ? "Đang tạo phiếu..." : "Xác nhận & xuất PDF"}</button></div></div></div> : null}
+      {confirmOpen ? <div className="modal-backdrop" onMouseDown={() => !confirming && setConfirmOpen(false)}><div className="modal-card scan-confirm-modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">TẠO PHIẾU NHẬP KHO</p><h2>Xác nhận tạo phiếu?</h2></div><button type="button" className="modal-close" disabled={confirming} onClick={() => setConfirmOpen(false)}>×</button></div><div className="scan-summary-wrap"><table className="scan-summary-table"><thead><tr><th>Itemcode</th><th>Tên sản phẩm</th><th>KH</th><th>Số pallet</th><th>Tổng SL</th></tr></thead><tbody>{summary.map((row) => <tr key={`${row.itemcode}-${row.product_name}-${row.customer}`}><td><strong>{row.itemcode}</strong></td><td>{row.product_name}</td><td>{row.customer}</td><td>{row.palletCount}</td><td><strong>{row.totalQuantity.toLocaleString("vi-VN")}</strong></td></tr>)}</tbody></table></div><p className="muted">Sau khi xác nhận, hệ thống tạo phiếu nhập kho và chuyển pallet sang WHdone. PDF chỉ in lại tại module 4.</p><div className="modal-actions"><button className="button button-secondary" disabled={confirming} onClick={() => setConfirmOpen(false)}>Quay lại</button><button className="button button-primary" disabled={confirming} onClick={confirmAll}>{confirming ? "Đang tạo phiếu..." : "Xác nhận tạo phiếu"}</button></div></div></div> : null}
     </section>
   );
 }
