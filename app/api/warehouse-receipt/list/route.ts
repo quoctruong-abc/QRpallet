@@ -1,15 +1,13 @@
-import { getCurrentProfile } from "@/lib/auth";
+import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
-  const profile = await getCurrentProfile();
-  const canView = Boolean(
-    profile?.is_active &&
-    (profile.role === "superadmin" || profile.role === "admin" || profile.position === "warehouse"),
-  );
-
-  if (!canView) {
-    return Response.json({ success: false, error: "Không có quyền xem phiếu nhập kho." }, { status: 403 });
+  const authorization = await authorizePermission("receipt.view");
+  if (!authorization.ok) {
+    return Response.json(
+      { success: false, error: authorization.error },
+      { status: authorization.status },
+    );
   }
 
   const url = new URL(request.url);
