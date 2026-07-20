@@ -3,9 +3,18 @@ begin;
 alter table public.pallet_data
   add column if not exists scanned_by uuid references auth.users(id);
 
+-- Some existing databases were created before wh_receipt.user_id was added.
+-- Keep this migration repeatable so the direct scan confirmation can record
+-- who created the warehouse receipt.
+alter table public.wh_receipt
+  add column if not exists user_id uuid references auth.users(id);
+
 create index if not exists pallet_data_scanned_by_status_idx
   on public.pallet_data(scanned_by, status)
   where effect_to is null;
+
+create index if not exists wh_receipt_user_id_idx
+  on public.wh_receipt(user_id);
 
 create or replace function public.scan_pallet_to_pending(p_pallet_id text)
 returns public.pallet_data
