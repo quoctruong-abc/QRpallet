@@ -15,6 +15,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const action = String(body.action ?? "");
     const palletId = String(body.pallet_id ?? "").trim();
+    const reason = String(body.reason ?? "").trim();
     const supabase = await createClient();
 
     if (action === "edit") {
@@ -22,34 +23,57 @@ export async function POST(request: Request) {
       if (!palletId || !Number.isInteger(quantity) || quantity <= 0) {
         return NextResponse.json({ error: "Pallet ID hoặc số lượng không hợp lệ." }, { status: 400 });
       }
+      if (!reason) {
+        return NextResponse.json({ error: "Vui lòng nhập lý do sửa pallet." }, { status: 400 });
+      }
+
       const { data: currentPallet, error: currentError } = await supabase
         .from("pallet_data")
         .select("status")
         .eq("pallet_id", palletId)
         .is("effect_to", null)
         .single();
-      if (currentError || !currentPallet) return NextResponse.json({ error: "Không tìm thấy pallet đang hiệu lực." }, { status: 404 });
-      if (currentPallet.status !== "production") {
-        return NextResponse.json({ error: "Chỉ được sửa pallet đang ở trạng thái production." }, { status: 400 });
+      if (currentError || !currentPallet) {
+        return NextResponse.json({ error: "Không tìm thấy pallet đang hiệu lực." }, { status: 404 });
       }
-      const { data, error } = await supabase.rpc("edit_pallet_quantity", { p_pallet_id: palletId, p_quantity: quantity });
+      if (currentPallet.status !== "production") {
+        return NextResponse.json({ error: "Chỉ được sửa pallet đang ở trạng thái production." }, { status: 409 });
+      }
+
+      const { data, error } = await supabase.rpc("edit_pallet_quantity_tracked", {
+        p_pallet_id: palletId,
+        p_quantity: quantity,
+        p_reason: reason,
+      });
       if (error) throw error;
       return NextResponse.json({ success: true, pallet: data });
     }
 
     if (action === "delete") {
-      if (!palletId) return NextResponse.json({ error: "Thiếu Pallet ID." }, { status: 400 });
+      if (!palletId) {
+        return NextResponse.json({ error: "Thiếu Pallet ID." }, { status: 400 });
+      }
+      if (!reason) {
+        return NextResponse.json({ error: "Vui lòng nhập lý do xóa pallet." }, { status: 400 });
+      }
+
       const { data: currentPallet, error: currentError } = await supabase
         .from("pallet_data")
         .select("status")
         .eq("pallet_id", palletId)
         .is("effect_to", null)
         .single();
-      if (currentError || !currentPallet) return NextResponse.json({ error: "Không tìm thấy pallet đang hiệu lực." }, { status: 404 });
-      if (currentPallet.status !== "production") {
-        return NextResponse.json({ error: "Chỉ được xóa pallet đang ở trạng thái production." }, { status: 400 });
+      if (currentError || !currentPallet) {
+        return NextResponse.json({ error: "Không tìm thấy pallet đang hiệu lực." }, { status: 404 });
       }
-      const { data, error } = await supabase.rpc("delete_pallet_record", { p_pallet_id: palletId });
+      if (currentPallet.status !== "production") {
+        return NextResponse.json({ error: "Chỉ được xóa pallet đang ở trạng thái production." }, { status: 409 });
+      }
+
+      const { data, error } = await supabase.rpc("delete_pallet_record_tracked", {
+        p_pallet_id: palletId,
+        p_reason: reason,
+      });
       if (error) throw error;
       return NextResponse.json({ success: true, pallet: data });
     }
@@ -67,7 +91,9 @@ export async function POST(request: Request) {
         .eq("wo", wo1)
         .limit(1)
         .single();
-      if (planError || !plan) return NextResponse.json({ error: `Không tìm thấy WO ${wo1} trong kế hoạch.` }, { status: 404 });
+      if (planError || !plan) {
+        return NextResponse.json({ error: `Không tìm thấy WO ${wo1} trong kế hoạch.` }, { status: 404 });
+      }
       const { data, error } = await supabase.rpc("create_pallet_record", {
         p_itemcode: plan.itemcode,
         p_product_name: plan.product_name,

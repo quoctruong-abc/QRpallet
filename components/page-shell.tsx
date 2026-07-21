@@ -9,12 +9,20 @@ const modules: Array<{
   path: string;
   label: string;
   icon: string;
-  permission: PermissionKey;
+  permissions: PermissionKey[];
+  adminOnly?: boolean;
 }> = [
-  { path: "/planning-inject", label: "Planning Inject", icon: "📋", permission: "planning.upload" },
-  { path: "/pallet-label", label: "Xuất tem pallet", icon: "🏭", permission: "pallet.create" },
-  { path: "/scan-qr", label: "Scan QR", icon: "▣", permission: "scan.standard" },
-  { path: "/warehouse-receipt", label: "Xử lý data tạm", icon: "📦", permission: "receipt.create" },
+  {
+    path: "/production-dashboard",
+    label: "Dashboard sản xuất",
+    icon: "📊",
+    permissions: [],
+    adminOnly: true,
+  },
+  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload"] },
+  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create"] },
+  { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permissions: ["scan.standard"] },
+  { path: "/warehouse-receipt", label: "Xem phiếu nhập kho", icon: "📦", permissions: ["receipt.view"] },
 ];
 
 export function PageShell({
@@ -26,7 +34,10 @@ export function PageShell({
   title: string;
   children: ReactNode;
 }) {
-  const visibleModules = modules.filter((module) => hasPermission(profile, module.permission));
+  const visibleModules = modules.filter((module) => {
+    if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
+    return module.permissions.some((permission) => hasPermission(profile, permission));
+  });
 
   return (
     <main className="app-shell">
@@ -72,7 +83,6 @@ export function PageShell({
 
           <div>
             <strong>{profile.full_name}</strong>
-            <p className="muted small">{profile.email}</p>
           </div>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
             <ChangePasswordDialog />

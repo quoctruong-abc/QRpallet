@@ -14,6 +14,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const wo = searchParams.get("wo")?.trim() ?? "";
   const itemcode = searchParams.get("itemcode")?.trim() ?? "";
+  const requestedDays = Number(searchParams.get("days") ?? "1");
+  const days = [1, 7, 30].includes(requestedDays) ? requestedDays : 1;
   const supabase = await createClient();
 
   let query = supabase
@@ -21,12 +23,12 @@ export async function GET(request: Request) {
     .select("pallet_id,itemcode,product_name,customer,wo,quanorder,machine,quantity,status,note,created_at")
     .is("effect_to", null)
     .order("created_at", { ascending: false })
-    .limit(300);
+    .limit(1000);
 
   if (wo) query = query.ilike("wo", `%${wo}%`);
   if (itemcode) query = query.ilike("itemcode", `%${itemcode}%`);
   if (!wo && !itemcode) {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     query = query.gte("created_at", since);
   }
 
