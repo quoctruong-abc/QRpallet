@@ -10,8 +10,8 @@ export function NavigationLoadingIndicator() {
   const pathname = usePathname();
   const previousPathname = useRef(pathname);
   const startedAt = useRef(0);
-  const fallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const finishTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackTimer = useRef<number | null>(null);
+  const finishTimer = useRef<number | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
