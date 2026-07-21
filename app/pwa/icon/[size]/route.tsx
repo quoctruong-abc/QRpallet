@@ -110,6 +110,7 @@ export async function GET(
             <div
               style={{
                 position: "relative",
+                display: "flex",
                 width: size * 0.255,
                 height: size * 0.255,
                 borderRadius: size * 0.025,
