@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 type PalletDetailRow = {
@@ -52,6 +53,7 @@ type ReturnHistoryRow = {
 
 type ProfileRow = {
   id: string;
+  username: string | null;
   full_name: string | null;
   employee_code: string | null;
 };
@@ -204,28 +206,37 @@ async function loadPalletHistory(palletId: string) {
 
   const actorIds = Array.from(
     new Set(
-      [...versions.map((row) => row.created_by), ...returns.map((row) => row.cancelled_by)].filter(
-        (value): value is string => Boolean(value),
-      ),
+      [
+        ...versions.map((row) => row.created_by),
+        ...returns.map((row) => row.scanned_by),
+        ...returns.map((row) => row.cancelled_by),
+      ].filter((value): value is string => Boolean(value)),
     ),
   );
 
   const profileMap = new Map<string, ProfileRow>();
   if (actorIds.length) {
-    const { data: profiles } = await supabase
+    const adminSupabase = createAdminClient();
+    const { data: profiles, error: profileError } = await adminSupabase
       .from("profiles")
-      .select("id,full_name,employee_code")
+      .select("id,username,full_name,employee_code")
       .in("id", actorIds);
-    for (const profile of (profiles ?? []) as ProfileRow[]) profileMap.set(profile.id, profile);
+
+    if (profileError) {
+      console.error("Dashboard actor profile lookup failed", profileError);
+    } else {
+      for (const profile of (profiles ?? []) as ProfileRow[]) profileMap.set(profile.id, profile);
+    }
   }
 
   const actorName = (userId: string | null) => {
     if (!userId) return fallbackActor(userId);
     const profile = profileMap.get(userId);
     if (!profile) return fallbackActor(userId);
-    return profile.employee_code
-      ? `${profile.full_name || "Không rõ tên"} · ${profile.employee_code}`
-      : profile.full_name || fallbackActor(userId);
+
+    const displayName = profile.full_name?.trim() || profile.username?.trim();
+    if (!displayName) return fallbackActor(userId);
+    return profile.employee_code ? `${displayName} · ${profile.employee_code}` : displayName;
   };
 
   const byId = new Map(versions.map((row) => [row.id, row]));
