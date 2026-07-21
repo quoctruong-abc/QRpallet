@@ -2,11 +2,17 @@ import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import {
+  DashboardTableClient,
+  type DashboardMode,
+  type DashboardSummaryRow,
+} from "./dashboard-table-client";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
 type PalletDashboardRow = {
   id: number;
+  pallet_id: string;
   itemcode: string | null;
   product_name: string | null;
   customer: string | null;
@@ -17,19 +23,6 @@ type PalletDashboardRow = {
   has_been_edited: boolean | null;
   has_been_return: boolean | null;
   working_day: string;
-};
-
-type DashboardSummary = {
-  key: string;
-  label: string;
-  itemcode: string;
-  productName: string;
-  customer: string;
-  orderQuantity: number;
-  producedQuantity: number;
-  scannedQuantity: number;
-  warehouseQuantity: number;
-  warning: boolean;
 };
 
 function formatNumber(value: number) {
@@ -67,44 +60,14 @@ function summarizeValues(values: Set<string>) {
   return `${cleaned[0]} (+${cleaned.length - 1})`;
 }
 
-function QuantityProgress({ value, total }: { value: number; total: number }) {
-  const validTotal = total > 0;
-  const percent = validTotal ? (value / total) * 100 : 0;
-
-  return (
-    <div className="quantity-progress">
-      <div className="quantity-progress-label">
-        <strong>{formatNumber(value)}</strong>
-        <span>/ {validTotal ? formatNumber(total) : "—"}</span>
-      </div>
-      <div className="quantity-progress-track">
-        <span style={{ width: `${Math.min(Math.max(percent, 0), 100)}%` }} />
-      </div>
-      <small>{validTotal ? `${Math.round(percent)}%` : "Chưa có order"}</small>
-    </div>
-  );
-}
-
-function WarningMark({ show }: { show: boolean }) {
-  if (!show) return null;
-  return (
-    <span
-      aria-label="Có pallet đã chỉnh sửa hoặc đã trả lại"
-      className="dashboard-warning-mark"
-      title="Có pallet đã chỉnh sửa hoặc đã trả lại"
-    >
-      !
-    </span>
-  );
-}
-
-function aggregateByWo(rows: PalletDashboardRow[]): DashboardSummary[] {
+function aggregateByWo(rows: PalletDashboardRow[]): DashboardSummaryRow[] {
   const groups = new Map<
     string,
     {
       itemcodes: Set<string>;
       productNames: Set<string>;
       customers: Set<string>;
+      palletIds: Set<string>;
       orderQuantity: number;
       producedQuantity: number;
       scannedQuantity: number;
@@ -121,6 +84,7 @@ function aggregateByWo(rows: PalletDashboardRow[]): DashboardSummary[] {
       itemcodes: new Set<string>(),
       productNames: new Set<string>(),
       customers: new Set<string>(),
+      palletIds: new Set<string>(),
       orderQuantity: 0,
       producedQuantity: 0,
       scannedQuantity: 0,
@@ -131,6 +95,7 @@ function aggregateByWo(rows: PalletDashboardRow[]): DashboardSummary[] {
     if (row.itemcode?.trim()) current.itemcodes.add(row.itemcode.trim());
     if (row.product_name?.trim()) current.productNames.add(row.product_name.trim());
     if (row.customer?.trim()) current.customers.add(row.customer.trim());
+    if (row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
 
     const quantity = Number(row.quantity) || 0;
     const orderQuantity = Number(row.quanorder) || 0;
@@ -153,6 +118,7 @@ function aggregateByWo(rows: PalletDashboardRow[]): DashboardSummary[] {
       productName: summarizeValues(group.productNames),
       customer: summarizeValues(group.customers),
       orderQuantity: group.orderQuantity,
+      palletCount: group.palletIds.size,
       producedQuantity: group.producedQuantity,
       scannedQuantity: group.scannedQuantity,
       warehouseQuantity: group.warehouseQuantity,
@@ -161,12 +127,13 @@ function aggregateByWo(rows: PalletDashboardRow[]): DashboardSummary[] {
     .sort((a, b) => a.label.localeCompare(b.label, "vi", { numeric: true }));
 }
 
-function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummary[] {
+function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummaryRow[] {
   const groups = new Map<
     string,
     {
       productNames: Set<string>;
       customers: Set<string>;
+      palletIds: Set<string>;
       orderByWo: Map<string, number>;
       producedQuantity: number;
       scannedQuantity: number;
@@ -182,6 +149,7 @@ function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummary[] {
     const current = groups.get(itemcode) ?? {
       productNames: new Set<string>(),
       customers: new Set<string>(),
+      palletIds: new Set<string>(),
       orderByWo: new Map<string, number>(),
       producedQuantity: 0,
       scannedQuantity: 0,
@@ -191,6 +159,7 @@ function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummary[] {
 
     if (row.product_name?.trim()) current.productNames.add(row.product_name.trim());
     if (row.customer?.trim()) current.customers.add(row.customer.trim());
+    if (row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
 
     const wo = row.wo?.trim();
     const orderQuantity = Number(row.quanorder) || 0;
@@ -217,6 +186,7 @@ function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummary[] {
       productName: summarizeValues(group.productNames),
       customer: summarizeValues(group.customers),
       orderQuantity: Array.from(group.orderByWo.values()).reduce((sum, value) => sum + value, 0),
+      palletCount: group.palletIds.size,
       producedQuantity: group.producedQuantity,
       scannedQuantity: group.scannedQuantity,
       warehouseQuantity: group.warehouseQuantity,
@@ -225,15 +195,22 @@ function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummary[] {
     .sort((a, b) => a.label.localeCompare(b.label, "vi", { numeric: true }));
 }
 
-function getTotals(rows: DashboardSummary[]) {
+function getTotals(rows: DashboardSummaryRow[]) {
   return rows.reduce(
     (total, row) => ({
       orderQuantity: total.orderQuantity + row.orderQuantity,
+      palletCount: total.palletCount + row.palletCount,
       producedQuantity: total.producedQuantity + row.producedQuantity,
       scannedQuantity: total.scannedQuantity + row.scannedQuantity,
       warehouseQuantity: total.warehouseQuantity + row.warehouseQuantity,
     }),
-    { orderQuantity: 0, producedQuantity: 0, scannedQuantity: 0, warehouseQuantity: 0 },
+    {
+      orderQuantity: 0,
+      palletCount: 0,
+      producedQuantity: 0,
+      scannedQuantity: 0,
+      warehouseQuantity: 0,
+    },
   );
 }
 
@@ -249,7 +226,7 @@ export default async function ProductionDashboardPage({
   const selectedDay = readParam(params.day);
   const requestedFrom = readParam(params.from);
   const requestedTo = readParam(params.to);
-  const mode = readParam(params.mode) === "item" ? "item" : "wo";
+  const mode: DashboardMode = readParam(params.mode) === "item" ? "item" : "wo";
 
   let startDate = currentWorkingDay;
   let endDate = currentWorkingDay;
@@ -274,7 +251,7 @@ export default async function ProductionDashboardPage({
     const { data, error } = await supabase
       .from("pallet_data")
       .select(
-        "id,itemcode,product_name,customer,wo,quanorder,quantity,status,has_been_edited,has_been_return,working_day",
+        "id,pallet_id,itemcode,product_name,customer,wo,quanorder,quantity,status,has_been_edited,has_been_return,working_day",
       )
       .is("effect_to", null)
       .gte("working_day", startDate)
@@ -325,15 +302,13 @@ export default async function ProductionDashboardPage({
         .dashboard-tabs { display: inline-flex; gap: 6px; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: #f2f4f7; }
         .dashboard-tab { min-width: 120px; padding: 9px 14px; border-radius: 9px; color: #475467; font-weight: 800; text-align: center; }
         .dashboard-tab-active { color: white; background: var(--primary); box-shadow: 0 4px 10px rgba(21,94,239,.2); }
-        .dashboard-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+        .dashboard-summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
         .dashboard-summary-grid .stat-card { min-width: 0; }
         .dashboard-table-header { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 16px; }
         .dashboard-table-header p { margin-bottom: 0; }
-        .dashboard-warning-mark { width: 20px; height: 20px; display: inline-grid; place-items: center; margin-left: 7px; border-radius: 50%; color: white; background: #d92d20; font-size: .76rem; font-weight: 900; vertical-align: middle; }
-        .dashboard-total-row td { border-top: 2px solid #98a2b3; background: #f8fafc; font-weight: 800; }
-        .dashboard-total-label { font-size: 1rem; }
-        .dashboard-empty { padding: 42px 20px; color: var(--muted); text-align: center; }
-        .dashboard-table { min-width: 1120px; }
+        @media (max-width: 1050px) {
+          .dashboard-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
         @media (max-width: 900px) {
           .dashboard-filter-grid { grid-template-columns: 1fr; }
           .dashboard-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -363,9 +338,7 @@ export default async function ProductionDashboardPage({
               Tìm theo ngày
               <input defaultValue={filterType === "day" ? startDate : ""} name="day" type="date" />
             </label>
-            <button className="button button-primary" type="submit">
-              Xem ngày
-            </button>
+            <button className="button button-primary" type="submit">Xem ngày</button>
           </form>
 
           <form action="/production-dashboard" className="dashboard-filter-card" method="get">
@@ -378,22 +351,22 @@ export default async function ProductionDashboardPage({
               Đến ngày
               <input defaultValue={endDate} name="to" type="date" />
             </label>
-            <button className="button button-primary" type="submit">
-              Xem khoảng ngày
-            </button>
+            <button className="button button-primary" type="submit">Xem khoảng ngày</button>
           </form>
         </div>
 
         {queryError ? (
-          <section className="alert alert-error">
-            Không thể tải dữ liệu dashboard: {queryError}
-          </section>
+          <section className="alert alert-error">Không thể tải dữ liệu dashboard: {queryError}</section>
         ) : null}
 
         <div className="dashboard-summary-grid">
           <div className="stat-card">
             <span className="muted small">Quan order</span>
             <span className="stat-number">{formatNumber(totals.orderQuantity)}</span>
+          </div>
+          <div className="stat-card">
+            <span className="muted small">Pallet đã tạo</span>
+            <span className="stat-number">{formatNumber(totals.palletCount)}</span>
           </div>
           <div className="stat-card">
             <span className="muted small">Đã sản xuất</span>
@@ -433,72 +406,13 @@ export default async function ProductionDashboardPage({
             </div>
           </div>
 
-          <div className="table-wrap">
-            <table className="dashboard-table">
-              <thead>
-                <tr>
-                  <th>{mode === "wo" ? "WO" : "Itemcode"}</th>
-                  {mode === "wo" ? <th>Itemcode</th> : null}
-                  <th>Product name</th>
-                  <th>Customer</th>
-                  <th>Quan order</th>
-                  <th>Đã sản xuất</th>
-                  <th>Đã scan</th>
-                  <th>Đã nhập kho</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.length ? (
-                  visibleRows.map((row) => (
-                    <tr key={row.key}>
-                      <td>
-                        <strong>{row.label}</strong>
-                        <WarningMark show={row.warning} />
-                      </td>
-                      {mode === "wo" ? <td>{row.itemcode}</td> : null}
-                      <td>{row.productName}</td>
-                      <td>{row.customer}</td>
-                      <td>{formatNumber(row.orderQuantity)}</td>
-                      <td>
-                        <QuantityProgress total={row.orderQuantity} value={row.producedQuantity} />
-                      </td>
-                      <td>
-                        <QuantityProgress total={row.orderQuantity} value={row.scannedQuantity} />
-                      </td>
-                      <td>
-                        <QuantityProgress total={row.orderQuantity} value={row.warehouseQuantity} />
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="dashboard-empty" colSpan={mode === "wo" ? 8 : 7}>
-                      Không có dữ liệu pallet trong khoảng ngày đã chọn.
-                    </td>
-                  </tr>
-                )}
-
-                {visibleRows.length ? (
-                  <tr className="dashboard-total-row">
-                    <td className="dashboard-total-label">TOTAL</td>
-                    {mode === "wo" ? <td>—</td> : null}
-                    <td>—</td>
-                    <td>—</td>
-                    <td>{formatNumber(totals.orderQuantity)}</td>
-                    <td>
-                      <QuantityProgress total={totals.orderQuantity} value={totals.producedQuantity} />
-                    </td>
-                    <td>
-                      <QuantityProgress total={totals.orderQuantity} value={totals.scannedQuantity} />
-                    </td>
-                    <td>
-                      <QuantityProgress total={totals.orderQuantity} value={totals.warehouseQuantity} />
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
+          <DashboardTableClient
+            endDate={endDate}
+            mode={mode}
+            rows={visibleRows}
+            startDate={startDate}
+            totals={totals}
+          />
         </section>
       </div>
     </PageShell>
