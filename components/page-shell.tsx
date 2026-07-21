@@ -38,53 +38,41 @@ export function PageShell({
     if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
     return module.permissions.some((permission) => hasPermission(profile, permission));
   });
+  const userInitial = profile.full_name.trim().charAt(0).toUpperCase() || "U";
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
+        <div className="topbar-brand-area">
           <Link className="brand" href={profile.role === "admin" ? "/admin" : "/dashboard"}>
             SVN Warehouse
           </Link>
-          <p className="muted topbar-subtitle">{title}</p>
+          <p className="muted topbar-subtitle" title={title}>{title}</p>
         </div>
 
-        <div className="topbar-user">
-          {visibleModules.length ? (
-            <nav
-              aria-label="Điều hướng module"
-              style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}
-            >
-              {visibleModules.map((module) => (
-                <Link
-                  aria-label={module.label}
-                  href={module.path}
-                  key={module.path}
-                  title={module.label}
-                  style={{
-                    alignItems: "center",
-                    background: "rgba(255,255,255,0.72)",
-                    border: "1px solid rgba(148,163,184,0.45)",
-                    borderRadius: "0.7rem",
-                    display: "inline-flex",
-                    fontSize: "1.25rem",
-                    height: "2.5rem",
-                    justifyContent: "center",
-                    lineHeight: 1,
-                    textDecoration: "none",
-                    width: "2.5rem",
-                  }}
-                >
-                  <span aria-hidden="true">{module.icon}</span>
-                </Link>
-              ))}
-            </nav>
-          ) : null}
+        {visibleModules.length ? (
+          <nav aria-label="Điều hướng module" className="topbar-nav">
+            {visibleModules.map((module) => (
+              <Link
+                aria-label={module.label}
+                className="topbar-module-link"
+                href={module.path}
+                key={module.path}
+                title={module.label}
+              >
+                <span aria-hidden="true" className="topbar-module-icon">{module.icon}</span>
+                <span className="topbar-module-label">{module.label}</span>
+              </Link>
+            ))}
+          </nav>
+        ) : null}
 
-          <div>
-            <strong>{profile.full_name}</strong>
+        <div className="topbar-account">
+          <div className="topbar-identity" title={profile.full_name}>
+            <span aria-hidden="true" className="topbar-avatar">{userInitial}</span>
+            <strong className="topbar-user-name">{profile.full_name}</strong>
           </div>
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <div className="topbar-actions">
             <ChangePasswordDialog />
             <LogoutButton />
           </div>
