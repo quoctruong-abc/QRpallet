@@ -50,7 +50,9 @@ function getCurrentWorkingDay() {
 }
 
 function formatDateLabel(value: string) {
-  return new Date(`${value}T00:00:00+07:00`).toLocaleDateString("vi-VN");
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
 }
 
 function summarizeValues(values: Set<string>) {
@@ -306,6 +308,42 @@ export default async function ProductionDashboardPage({
         .dashboard-summary-grid .stat-card { min-width: 0; }
         .dashboard-table-header { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 16px; }
         .dashboard-table-header p { margin-bottom: 0; }
+
+        .dashboard-table-panel { width: 100%; max-width: 100%; overflow: hidden; }
+        .dashboard-table-panel .table-wrap { width: 100%; max-width: 100%; overflow-x: auto; }
+        .dashboard-table-panel .dashboard-table {
+          width: 100%;
+          min-width: 1080px;
+          margin: 0 auto;
+        }
+        .dashboard-table-panel .dashboard-table th,
+        .dashboard-table-panel .dashboard-table td {
+          padding: 10px 8px;
+        }
+        .dashboard-table-panel .quantity-progress {
+          width: 108px;
+          min-width: 108px;
+          gap: 3px;
+        }
+        .dashboard-table-panel .quantity-progress-label strong { font-size: .78rem; }
+        .dashboard-table-panel .quantity-progress-label span,
+        .dashboard-table-panel .quantity-progress small { font-size: .64rem; }
+        .dashboard-table-panel .quantity-progress-track { height: 6px; }
+        .dashboard-table-panel .dashboard-detail-button {
+          width: 36px;
+          min-width: 36px;
+          height: 36px;
+          min-height: 36px;
+          padding: 0;
+          border-radius: 50%;
+          font-size: 0;
+        }
+        .dashboard-table-panel .dashboard-detail-button::before {
+          content: "👁";
+          font-size: 1rem;
+          line-height: 1;
+        }
+
         @media (max-width: 1050px) {
           .dashboard-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         }
@@ -382,7 +420,7 @@ export default async function ProductionDashboardPage({
           </div>
         </div>
 
-        <section className="panel">
+        <section className="panel dashboard-table-panel">
           <div className="dashboard-table-header">
             <div>
               <p className="eyebrow">{periodLabel}</p>
