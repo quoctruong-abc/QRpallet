@@ -5,6 +5,7 @@ import {
   POSITION_PERMISSIONS,
   POSITION_ROUTES,
 } from "@/lib/routes";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { PermissionKey, Position, Profile } from "@/lib/types";
 
 function matchesProtectedPage(pathname: string) {
@@ -97,7 +98,10 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  const { data: mappingRow, error: mappingError } = await supabase
+  // Mapping and permissions are administrative data. Read them with the
+  // service-role client so RLS cannot silently hide granted access.
+  const adminClient = createAdminClient();
+  const { data: mappingRow, error: mappingError } = await adminClient
     .from("position_page_access")
     .select("is_enabled")
     .eq("position", position)
@@ -114,21 +118,27 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (profile.role === "admin") {
-    const required = PAGE_PERMISSIONS[protectedPage];
-    const adminPermissions = POSITION_PERMISSIONS[position];
-    if (required.some((permission) => adminPermissions.includes(permission))) return response;
-  } else {
-    const { data: permissionRows } = await supabase
-      .from("user_permissions")
-      .select("permission_key")
-      .eq("user_id", profile.id);
-    const granted = new Set(
-      (permissionRows ?? []).map((row) => row.permission_key as PermissionKey),
-    );
-    if (PAGE_PERMISSIONS[protectedPage].some((permission) => granted.has(permission))) {
-      return response;
-    }
+  const { data: permissionRows, error: permissionError } = await adminClient
+    .from("user_permissions")
+    .select("permission_key")
+    .eq("user_id", profile.id);
+
+  if (permissionError) {
+    console.error("proxy permission lookup failed", {
+      userId: profile.id,
+      message: permissionError.message,
+    });
+  }
+
+  const granted = new Set<PermissionKey>(
+    profile.role === "admin" ? POSITION_PERMISSIONS[position] : [],
+  );
+  for (const row of permissionRows ?? []) {
+    granted.add(row.permission_key as PermissionKey);
+  }
+
+  if (PAGE_PERMISSIONS[protectedPage].some((permission) => granted.has(permission))) {
+    return response;
   }
 
   const url = request.nextUrl.clone();
