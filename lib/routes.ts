@@ -1,11 +1,13 @@
 import type { PermissionKey, Position } from "@/lib/types";
 
 export const POSITION_ROUTES: Record<Position, string[]> = {
-  planning: ["/planning-inject"],
-  production: ["/pallet-label"],
+  planning: ["/planning-inject", "/warehouse-receipt"],
+  production: ["/pallet-label", "/warehouse-receipt"],
   warehouse: ["/scan-qr", "/warehouse-receipt"],
 };
 
+// These pages require an active account and position mapping, but do not
+// require a separate user-level permission.
 export const AUTHENTICATED_SHARED_ROUTES = ["/warehouse-receipt"] as const;
 
 export const POSITION_LABELS: Record<Position, string> = {
