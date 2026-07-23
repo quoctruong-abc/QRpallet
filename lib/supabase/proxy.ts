@@ -1,10 +1,21 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { PAGE_PERMISSIONS, POSITION_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
+import {
+  AUTHENTICATED_SHARED_ROUTES,
+  PAGE_PERMISSIONS,
+  POSITION_PERMISSIONS,
+  POSITION_ROUTES,
+} from "@/lib/routes";
 import type { PermissionKey, Position, Profile } from "@/lib/types";
 
 function matchesProtectedPage(pathname: string) {
   return Object.keys(PAGE_PERMISSIONS).find(
+    (path) => pathname === path || pathname.startsWith(`${path}/`),
+  );
+}
+
+function matchesAuthenticatedSharedPage(pathname: string) {
+  return AUTHENTICATED_SHARED_ROUTES.some(
     (path) => pathname === path || pathname.startsWith(`${path}/`),
   );
 }
@@ -82,6 +93,8 @@ export async function updateSession(request: NextRequest) {
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
+
+  if (matchesAuthenticatedSharedPage(pathname)) return response;
 
   const protectedPage = matchesProtectedPage(pathname);
   if (!protectedPage || profile.role === "superadmin") return response;

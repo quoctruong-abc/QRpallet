@@ -11,6 +11,7 @@ const modules: Array<{
   icon: string;
   permissions: PermissionKey[];
   adminOnly?: boolean;
+  publicAuthenticated?: boolean;
 }> = [
   {
     path: "/production-dashboard",
@@ -22,7 +23,13 @@ const modules: Array<{
   { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload"] },
   { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create"] },
   { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permissions: ["scan.standard"] },
-  { path: "/warehouse-receipt", label: "Xem phiếu nhập kho", icon: "📦", permissions: ["receipt.view"] },
+  {
+    path: "/warehouse-receipt",
+    label: "Xem phiếu nhập kho",
+    icon: "📦",
+    permissions: [],
+    publicAuthenticated: true,
+  },
 ];
 
 export function PageShell({
@@ -36,6 +43,7 @@ export function PageShell({
 }) {
   const visibleModules = modules.filter((module) => {
     if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
+    if (module.publicAuthenticated) return true;
     return module.permissions.some((permission) => hasPermission(profile, permission));
   });
   const userInitial = profile.full_name.trim().charAt(0).toUpperCase() || "U";

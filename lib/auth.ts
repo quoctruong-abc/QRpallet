@@ -95,12 +95,18 @@ export type ApiAuthorization =
   | { ok: true; profile: Profile }
   | { ok: false; status: 401 | 403; error: string };
 
-export async function authorizePermission(permission: PermissionKey): Promise<ApiAuthorization> {
+export async function authorizeProfile(): Promise<ApiAuthorization> {
   const profile = await getCurrentProfile();
   if (!profile) return { ok: false, status: 401, error: "Phiên đăng nhập đã hết hạn." };
   if (!profile.is_active) return { ok: false, status: 403, error: "Tài khoản đã bị khóa." };
-  if (!hasPermission(profile, permission)) {
+  return { ok: true, profile };
+}
+
+export async function authorizePermission(permission: PermissionKey): Promise<ApiAuthorization> {
+  const authorization = await authorizeProfile();
+  if (!authorization.ok) return authorization;
+  if (!hasPermission(authorization.profile, permission)) {
     return { ok: false, status: 403, error: "Bạn không có quyền thực hiện chức năng này." };
   }
-  return { ok: true, profile };
+  return authorization;
 }
