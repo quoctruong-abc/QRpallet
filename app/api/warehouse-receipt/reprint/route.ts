@@ -1,4 +1,4 @@
-import { authorizeProfile } from "@/lib/auth";
+import { authorizePermission } from "@/lib/auth";
 import { createPdfPrintPage } from "@/lib/pdf-print-page";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createReceiptPdf, safeReceiptFilename, type ReceiptPalletRow } from "@/lib/warehouse-receipt/pdf";
@@ -46,7 +46,7 @@ async function createReceiptPdfResponse(receiptId: string) {
 }
 
 export async function GET(request: Request) {
-  const authorization = await authorizeProfile();
+  const authorization = await authorizePermission("receipt.view");
   if (!authorization.ok) {
     return Response.json(
       { success: false, error: authorization.error },
@@ -69,7 +69,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authorization = await authorizeProfile();
+  const authorization = await authorizePermission("receipt.view");
   if (!authorization.ok) {
     return Response.json(
       { success: false, error: authorization.error },
