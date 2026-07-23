@@ -5,10 +5,18 @@ import { requireRole } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Position } from "@/lib/types";
 
+export type PositionMappingActionState = {
+  error: string;
+  success: string;
+};
+
 const validPositions: Position[] = ["planning", "production", "warehouse"];
 const validPaths = ["/planning-inject", "/pallet-label", "/scan-qr", "/warehouse-receipt"] as const;
 
-export async function updatePositionPageAccess(formData: FormData) {
+export async function updatePositionPageAccess(
+  _previousState: PositionMappingActionState,
+  formData: FormData,
+): Promise<PositionMappingActionState> {
   const actor = await requireRole("superadmin");
   const adminClient = createAdminClient();
 
@@ -17,8 +25,6 @@ export async function updatePositionPageAccess(formData: FormData) {
       position,
       path,
       is_enabled: formData.getAll(`position:${position}`).map(String).includes(path),
-      updated_by: actor.id,
-      updated_at: new Date().toISOString(),
     })),
   );
 
@@ -27,10 +33,18 @@ export async function updatePositionPageAccess(formData: FormData) {
     .upsert(rows, { onConflict: "position,path" });
 
   if (error) {
-    throw new Error(`Không thể cập nhật quyền truy cập trang: ${error.message}`);
+    return {
+      error: `Không thể lưu position mapping: ${error.message}`,
+      success: "",
+    };
   }
 
   revalidatePath("/superadmin");
   revalidatePath("/admin");
   revalidatePath("/dashboard");
+
+  return {
+    error: "",
+    success: `Đã lưu position mapping cho ${validPositions.length} bộ phận bởi ${actor.full_name}.`,
+  };
 }
