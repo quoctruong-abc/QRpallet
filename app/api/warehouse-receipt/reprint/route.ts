@@ -1,22 +1,9 @@
 import { authorizeProfile } from "@/lib/auth";
+import { createPdfPrintPage } from "@/lib/pdf-print-page";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createReceiptPdf, safeReceiptFilename, type ReceiptPalletRow } from "@/lib/warehouse-receipt/pdf";
 
-export async function POST(request: Request) {
-  const authorization = await authorizeProfile();
-  if (!authorization.ok) {
-    return Response.json(
-      { success: false, error: authorization.error },
-      { status: authorization.status },
-    );
-  }
-
-  const body = await request.json().catch(() => null) as { receiptId?: string } | null;
-  const receiptId = body?.receiptId?.trim();
-  if (!receiptId) return Response.json({ success: false, error: "Thiếu mã phiếu." }, { status: 400 });
-
-  // Authentication is enforced above. Use the server-only admin client for
-  // read-only cross-department access and PDF regeneration regardless of RLS.
+async function createReceiptPdfResponse(receiptId: string) {
   const supabase = createAdminClient();
   const { data: receipt, error: receiptError } = await supabase
     .from("wh_receipt")
@@ -51,8 +38,50 @@ export async function POST(request: Request) {
   return new Response(Buffer.from(pdfBytes), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${safeReceiptFilename(receipt.receipt_id)}.pdf"`,
+      "Content-Disposition": `inline; filename="${safeReceiptFilename(receipt.receipt_id)}.pdf"`,
+      "Cache-Control": "no-store, no-cache, must-revalidate",
       "X-Receipt-Id": receipt.receipt_id,
     },
   });
+}
+
+export async function GET(request: Request) {
+  const authorization = await authorizeProfile();
+  if (!authorization.ok) {
+    return Response.json(
+      { success: false, error: authorization.error },
+      { status: authorization.status },
+    );
+  }
+
+  const url = new URL(request.url);
+  const receiptId = url.searchParams.get("receiptId")?.trim();
+  if (!receiptId) {
+    return Response.json({ success: false, error: "Thiếu mã phiếu." }, { status: 400 });
+  }
+
+  if (url.searchParams.get("raw") === "1") {
+    return createReceiptPdfResponse(receiptId);
+  }
+
+  const rawPdfUrl = `/api/warehouse-receipt/reprint?receiptId=${encodeURIComponent(receiptId)}&raw=1`;
+  return createPdfPrintPage(rawPdfUrl, `In phiếu nhập kho ${receiptId}`);
+}
+
+export async function POST(request: Request) {
+  const authorization = await authorizeProfile();
+  if (!authorization.ok) {
+    return Response.json(
+      { success: false, error: authorization.error },
+      { status: authorization.status },
+    );
+  }
+
+  const body = await request.json().catch(() => null) as { receiptId?: string } | null;
+  const receiptId = body?.receiptId?.trim();
+  if (!receiptId) {
+    return Response.json({ success: false, error: "Thiếu mã phiếu." }, { status: 400 });
+  }
+
+  return createReceiptPdfResponse(receiptId);
 }
