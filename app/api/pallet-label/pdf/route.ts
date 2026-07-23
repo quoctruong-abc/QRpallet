@@ -73,8 +73,8 @@ const LABEL_PREFIX = {
 // A4 landscape có kích thước 297 x 210 mm.
 const LABEL_LAYOUT = {
   palletId: { x: 18, y: 160, size: 20, bold: false, maxWidth: 185 },
-  itemcode: { x: 18, y: 115, size: 20, bold: false, maxWidth: 150 },
-  wo: { x: 18, y: 100, size: 20, bold: false, maxWidth: 150 },
+  itemcode: { x: 18, y: 100, size: 25, bold: true, maxWidth: 150 },
+  wo: { x: 18, y: 115, size: 20, bold: false, maxWidth: 150 },
   productName: { x: 18, y: 57, size: 25, bold: true, maxWidth: 270 },
   customer: { x: 18, y: 40, size: 92, bold: true, maxWidth: 185 },
   machine: { x: 18, y: 130, size: 20, bold: false, maxWidth: 100 },

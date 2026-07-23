@@ -1,25 +1,35 @@
-# QRpallet
+# QRpallet — SVN Warehouse
 
-Hệ thống quản lý kế hoạch sản xuất, tem pallet QR và nhập kho nội bộ.
+Hệ thống quản lý kế hoạch sản xuất, tạo tem pallet QR, scan nhập kho và theo dõi lịch sử pallet nội bộ.
 
-README này là tài liệu tham chiếu chính cho kiến trúc, nghiệp vụ, phân quyền, database và cách vận hành dự án. Khi thay đổi workflow, permission, RPC hoặc cấu trúc bảng, cần cập nhật README trong cùng đợt thay đổi.
+> **Baseline nghiệp vụ tạm chốt: 21/07/2026**  
+> README này là tài liệu tham chiếu chính cho logic nghiệp vụ, trạng thái pallet, phân quyền, database, PWA và quy trình deploy. Khi thay đổi workflow, permission, RPC hoặc cấu trúc bảng, phải cập nhật README trong cùng đợt thay đổi.
 
 ---
 
-## 1. Tổng quan
+## 1. Phạm vi hệ thống
 
-Luồng nghiệp vụ hiện tại:
+Luồng nghiệp vụ hiện hành:
 
 ```text
 Planning Inject
 → Production tạo và in tem pallet
 → Warehouse scan QR
-→ Warehouse xác nhận và tạo phiếu nhập kho
+→ Warehouse xác nhận danh sách scan
+→ Hệ thống tạo phiếu nhập kho
 → Pallet chuyển sang WHdone
-→ Warehouse xem lịch sử, chi tiết và in lại phiếu
+→ Xem lịch sử, chi tiết và in lại phiếu
 ```
 
-Phạm vi hiện tại kết thúc tại `WHdone`. Hệ thống chưa quản lý tồn kho thực tế, xuất kho hoặc điều chỉnh tồn sau nhập kho.
+Phạm vi hiện tại kết thúc tại `WHdone`.
+
+Hệ thống **chưa quản lý**:
+
+- tồn kho thực tế sau nhập kho;
+- xuất kho;
+- điều chỉnh tồn;
+- hủy hoặc đảo phiếu đã hoàn tất;
+- operation khi mất mạng.
 
 ---
 
@@ -27,34 +37,68 @@ Phạm vi hiện tại kết thúc tại `WHdone`. Hệ thống chưa quản lý
 
 - Next.js 16 App Router
 - TypeScript
-- Tailwind/CSS ứng dụng
+- React
+- CSS ứng dụng
 - Supabase Auth
 - Supabase PostgreSQL
-- PostgreSQL RPC cho nghiệp vụ transaction
-- `pdf-lib`, `fontkit`, `qrcode` cho PDF tem và phiếu nhập kho
-- Deploy trên Vercel
+- PostgreSQL RPC cho transaction nghiệp vụ
+- `pdf-lib`, `@pdf-lib/fontkit`, `qrcode` cho PDF
+- `read-excel-file` cho import planning
+- Vercel để deploy frontend và backend
+- PWA dạng cài lên màn hình chính, bắt buộc online
 
-Nguyên tắc:
+### Nguyên tắc kiến trúc
 
-- Client không cập nhật trực tiếp trạng thái pallet.
+- Client không tự cập nhật trạng thái pallet trực tiếp.
 - API phải xác thực user và permission ở server.
-- Nghiệp vụ nhiều bước thực hiện trong RPC và cùng transaction.
-- Pallet chỉ có một version đang hoạt động với `effect_to is null`.
-- Không sửa hoặc đảo trạng thái pallet sau khi đã `WHdone`.
+- Nghiệp vụ nhiều bước được xử lý bằng RPC/transaction trong database.
+- Mỗi `pallet_id` chỉ có một version đang hoạt động với `effect_to is null`.
+- Pallet đã `WHdone` không được sửa, xóa hoặc trả lại Production.
+- `SUPABASE_SERVICE_ROLE_KEY` chỉ được sử dụng ở server.
+- Không cache API hoặc dữ liệu operation.
 
 ---
 
-## 3. Cài đặt và chạy local
+## 3. Branch và quy tắc phát triển
 
-### 3.1 Yêu cầu
+| Branch | Mục đích |
+|---|---|
+| `main` | Production |
+| `dev` | Phát triển và kiểm thử |
+
+### Quy tắc bắt buộc
+
+- Chỉ sửa code trên nhánh `dev`.
+- Không commit trực tiếp vào `main`.
+- Chỉ merge lên production sau khi build và kiểm thử nghiệp vụ thành công.
+
+```bash
+git checkout dev
+git pull origin dev
+npm run build
+```
+
+Sau khi kiểm thử:
+
+```bash
+git add .
+git commit -m "mô tả thay đổi"
+git push origin dev
+```
+
+---
+
+## 4. Cài đặt và chạy local
+
+### 4.1 Yêu cầu
 
 - Node.js phù hợp với Next.js 16
 - npm
-- Supabase project
+- Supabase project đã chạy đủ migration
 
-### 3.2 Biến môi trường
+### 4.2 Biến môi trường
 
-Tạo `.env.local`:
+Tạo file `.env.local`:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
@@ -64,7 +108,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 Không commit `.env.local` hoặc service-role key lên GitHub.
 
-### 3.3 Chạy development
+### 4.3 Chạy development
 
 ```bash
 npm install
@@ -77,35 +121,14 @@ Mở:
 http://localhost:3000
 ```
 
-### 3.4 Kiểm tra build
+### 4.4 Chạy production local
 
 ```bash
 npm run build
 npm start
 ```
 
----
-
-## 4. Branch và deploy
-
-Khuyến nghị:
-
-- `main`: production
-- `dev`: phát triển và kiểm thử
-- `demo`: môi trường trình diễn nếu cần
-
-Quy trình cơ bản:
-
-```bash
-git checkout dev
-git pull origin dev
-npm run build
-git add .
-git commit -m "mô tả thay đổi"
-git push origin dev
-```
-
-Chỉ merge lên production sau khi build và kiểm thử nghiệp vụ thành công.
+Khi truy cập bằng điện thoại trong cùng mạng nội bộ, dùng địa chỉ `Network` do Next.js hiển thị. Camera web cần HTTPS khi deploy chính thức.
 
 ---
 
@@ -116,24 +139,22 @@ Chỉ merge lên production sau khi build và kiểm thử nghiệp vụ thành 
 | Role | Quy tắc |
 |---|---|
 | `superadmin` | Toàn quyền, bypass permission |
-| `admin` | Permission được superadmin chọn trong `user_permissions` |
-| `user` | Permission được admin hoặc superadmin cấp |
-
-Admin không còn tự động nhận toàn bộ quyền theo position.
+| `admin` | Quản trị trong phạm vi được cấu hình và có thể xem Dashboard sản xuất |
+| `user` | Chỉ sử dụng chức năng được cấp permission |
 
 ### 5.2 Position
 
-| Position | Phạm vi quản lý |
+| Position | Phạm vi |
 |---|---|
 | `planning` | Kế hoạch sản xuất |
-| `production` | Tạo và quản lý pallet Production |
-| `warehouse` | Scan, tạo và xem phiếu nhập kho |
+| `production` | Tạo và quản lý pallet |
+| `warehouse` | Scan và lịch sử nhập kho |
 
-Position vẫn được dùng để:
+Position được dùng để:
 
-- giới hạn admin chỉ quản lý user cùng position;
-- xác định page mapping;
-- phân nhóm vận hành.
+- phân nhóm vận hành;
+- giới hạn phạm vi quản lý user;
+- xác định page mapping mặc định.
 
 ### 5.3 Permission hiện hành
 
@@ -144,9 +165,9 @@ Position vẫn được dùng để:
 | `pallet.create` | Tạo pallet, in tem, tìm kiếm, in lại và gộp pallet |
 | `pallet.edit` | Sửa hoặc xóa pallet Production |
 | `scan.standard` | Scan QR, hủy scan, xác nhận và tạo phiếu nhập kho |
-| `receipt.view` | Truy cập module lịch sử phiếu, xem chi tiết và in lại |
+| `receipt.view` | Xem lịch sử, chi tiết và in lại phiếu nhập kho |
 
-Hai permission cũ không còn sử dụng:
+Permission cũ không còn dùng:
 
 ```text
 receipt.create
@@ -155,13 +176,17 @@ receipt.edit
 
 ### 5.4 Page mapping mặc định
 
-| Position | Trang |
+| Position | Route |
 |---|---|
 | Planning | `/planning-inject` |
 | Production | `/pallet-label` |
 | Warehouse | `/scan-qr`, `/warehouse-receipt` |
 
-Superadmin có thể thay đổi mapping trên trang Admin.
+Dashboard sản xuất là trang riêng cho `admin` và `superadmin`:
+
+```text
+/production-dashboard
+```
 
 ---
 
@@ -179,15 +204,15 @@ Bảng chính:
 planning_inject
 ```
 
-Chức năng:
+### Chức năng
 
-- Upload file Excel từ sheet dữ liệu quy định.
+- Upload file Excel theo sheet dữ liệu quy định.
 - Replace kế hoạch hiện tại.
 - Hiển thị kế hoạch theo máy.
-- Đổi máy khi có `planning.change`.
+- Đổi máy khi user có `planning.change`.
 - Bỏ qua WO trống hoặc WO bằng `0` khi đưa sang module pallet.
 
-Các trường chính:
+### Trường dữ liệu chính
 
 ```text
 machine
@@ -204,7 +229,7 @@ package
 quanorder
 ```
 
-API chính:
+### API chính
 
 | API | Permission |
 |---|---|
@@ -224,18 +249,27 @@ Route:
 Bảng chính:
 
 ```text
-pallet_data
+planning_inject
 item_pallet_config
+pallet_data
 ```
 
-### 7.1 Tạo pallet
+### 7.1 Danh sách kế hoạch
+
+- Chỉ lấy dòng có máy, itemcode và WO hợp lệ.
+- WO trống hoặc bằng `0` không được hiển thị để tạo pallet.
+- Kế hoạch được nhóm theo máy.
+- Giao diện hiển thị WO theo dạng ngắn gọn như `1WO`, `2WO`.
+- Có tìm kiếm theo WO và itemcode.
+- Hiển thị tiến độ đã tạo pallet và đã nhập kho.
+
+### 7.2 Tạo pallet
 
 Điều kiện:
 
-- WO không trống.
-- WO khác `0`.
-- Quantity là số nguyên lớn hơn 0.
-- User có `pallet.create`.
+- user có `pallet.create`;
+- WO hợp lệ;
+- quantity là số nguyên lớn hơn `0`.
 
 Pallet mới:
 
@@ -249,57 +283,37 @@ ID pallet:
 ```text
 WO-001
 WO-002
+WO-003
 ...
 ```
 
-ID được sinh tại database và khóa transaction theo WO để tránh trùng số.
+ID được sinh tại database trong transaction để tránh trùng số khi nhiều user tạo cùng lúc.
 
-### 7.2 Working day
+### 7.3 Cấu hình quantity mỗi pallet
 
-Mỗi pallet có:
-
-```text
-working_day date
-```
-
-Working day tính theo múi giờ:
+Bảng:
 
 ```text
-Asia/Ho_Chi_Minh
+item_pallet_config
 ```
 
-Ca làm việc:
+Trường chính:
 
 ```text
-06:00 hôm nay → trước 06:00 hôm sau
+itemcode
+quantity_per_pallet
 ```
 
-Ví dụ:
-
-- Tạo lúc `2026-07-21 05:59 +07` → `working_day = 2026-07-20`
-- Tạo lúc `2026-07-21 06:00 +07` → `working_day = 2026-07-21`
-
-Công thức:
-
-```sql
-(
-  timezone('Asia/Ho_Chi_Minh', created_at)
-  - interval '6 hours'
-)::date
-```
-
-Khi sửa pallet và tạo version mới, `working_day` được giữ từ version gốc, không tính lại theo thời điểm sửa.
-
-### 7.3 PDF tem pallet
+### 7.4 PDF tem pallet
 
 - Khổ A4 theo template.
 - QR chứa `pallet_id`.
 - Font Roboto TTF để hỗ trợ tiếng Việt.
 - Dùng `pdf-lib`, `fontkit` và `qrcode`.
 
-### 7.4 Sửa pallet
+### 7.5 Sửa pallet
 
-Chỉ được sửa khi:
+Chỉ sửa khi:
 
 ```text
 status = production
@@ -313,48 +327,81 @@ Bắt buộc nhập:
 
 Versioning:
 
-1. Dòng hiện tại được đóng bằng `effect_to`.
+1. Đóng dòng hiện tại bằng `effect_to`.
 2. Tạo dòng mới với cùng `pallet_id`.
-3. `old_data_refer` trỏ về ID vật lý của dòng cũ.
-4. Dòng mới có:
+3. `old_data_refer` trỏ về dòng cũ.
+4. Dòng mới giữ nguyên `working_day` của version gốc.
+5. Cập nhật:
 
 ```text
 has_been_edited = true
 edit_count = edit_count cũ + 1
 ```
 
-RPC:
+RPC hiện hành:
 
 ```text
 edit_pallet_quantity_tracked
 ```
 
-### 7.5 Xóa pallet
+### 7.6 Xóa pallet
 
-Chỉ được xóa khi pallet còn active và `status = production`.
+Chỉ xóa khi pallet còn active và `status = production`.
 
 Xóa là versioned soft delete:
 
 - đóng dòng active bằng `effect_to`;
-- tạo dòng tombstone không active;
-- `old_data_refer` trỏ về dòng bị xóa;
+- tạo dấu vết version;
+- lưu `old_data_refer`;
 - bắt buộc nhập lý do.
 
-RPC:
+RPC hiện hành:
 
 ```text
 delete_pallet_record_tracked
 ```
 
-### 7.6 Gộp pallet
+### 7.7 Gộp pallet
 
-- Chỉ áp dụng cho pallet đang `production`.
-- Có thể gộp theo WO và số lượng.
+- Chỉ gộp pallet đang `production`.
+- Gộp theo WO và quantity.
 - Dấu vết pallet nguồn được lưu trong `note`.
 
 ---
 
-## 8. Module 3 — Scan QR và tạo phiếu nhập kho
+## 8. Working day
+
+Toàn bộ nghiệp vụ pallet dùng múi giờ:
+
+```text
+Asia/Ho_Chi_Minh
+```
+
+Ngày làm việc được xác định theo mốc `06:00`:
+
+```text
+06:00 hôm nay → trước 06:00 hôm sau
+```
+
+Ví dụ:
+
+- Tạo lúc `05:59 ngày 21/07/2026` → `working_day = 20/07/2026`.
+- Tạo lúc `06:00 ngày 21/07/2026` → `working_day = 21/07/2026`.
+
+Công thức database:
+
+```sql
+(
+  timezone('Asia/Ho_Chi_Minh', created_at)
+  - interval '6 hours'
+)::date
+```
+
+Khi sửa pallet, version mới giữ `working_day` của version trước; không tính lại theo thời điểm sửa.
+
+---
+
+## 9. Module 3 — Scan QR và tạo phiếu nhập kho
 
 Route:
 
@@ -368,16 +415,13 @@ Permission:
 scan.standard
 ```
 
-Workflow trạng thái:
+### 9.1 Quyền xem danh sách scan
 
-```text
-production
-→ pendingWH
-→ processingWH
-→ WHdone
-```
+- User thường chỉ thấy pallet do chính tài khoản đó scan.
+- `admin` và `superadmin` thấy toàn bộ pallet đang `pendingWH`.
+- Khi xác nhận, hệ thống tạo phiếu nhập kho trực tiếp trong module này.
 
-### 8.1 Scan pallet
+### 9.2 Scan pallet
 
 Điều kiện:
 
@@ -390,7 +434,7 @@ status = production
 Kết quả:
 
 ```text
-status = pendingWH
+production → pendingWH
 scanned_by = auth.uid()
 scanned_at = now()
 ```
@@ -401,15 +445,13 @@ RPC:
 scan_pallet_to_pending
 ```
 
-### 8.2 Hủy pallet vừa scan
+### 9.3 Hủy pallet vừa scan
 
 Chỉ hủy khi:
 
 ```text
 status = pendingWH
 ```
-
-User thường chỉ hủy pallet do chính mình scan; superadmin/admin theo rule RPC có thể được phép tùy cấu hình hiện hành.
 
 Kết quả:
 
@@ -420,13 +462,13 @@ scanned_by = null
 scanned_at = null
 ```
 
-Chi tiết lần scan và lần hủy được ghi vào:
+Lịch sử được ghi vào:
 
 ```text
 pallet_change_history
 ```
 
-Các trường lịch sử chính:
+Các trường chính:
 
 ```text
 pallet_data_id
@@ -438,64 +480,33 @@ cancelled_by
 cancelled_at
 ```
 
-Không còn dùng các cột legacy:
-
-```text
-return_at
-return_by
-return_from
-returned_at
-returned_by
-returned_from
-```
-
 RPC:
 
 ```text
 cancel_pending_pallet
 ```
 
-### 8.3 Xác nhận danh sách scan
+### 9.4 Xác nhận và tạo phiếu
 
-Khi xác nhận:
-
-```text
-pendingWH → processingWH
-```
-
-Hệ thống khóa và kiểm tra toàn bộ pallet trước khi update.
-
-### 8.4 Tạo phiếu nhập kho
-
-Sau khi xác nhận danh sách, module Scan tạo phiếu nhập kho và chuyển pallet:
+Khi user xác nhận danh sách:
 
 ```text
-processingWH → WHdone
+pendingWH → processingWH → WHdone
 ```
 
-Phiếu được ghi vào:
+Hệ thống phải:
 
-```text
-wh_receipt
-```
+1. Khóa và kiểm tra toàn bộ pallet.
+2. Đảm bảo pallet vẫn thuộc đúng user hoặc đúng phạm vi admin.
+3. Tạo một phiếu nhập kho.
+4. Gắn số phiếu vào từng pallet.
+5. Chuyển pallet sang `WHdone` trong cùng nghiệp vụ transaction.
 
-Pallet được liên kết qua:
-
-```text
-pallet_data.wh_receipt
-```
-
-Sau `WHdone`:
-
-- không sửa pallet;
-- không xóa pallet;
-- không trả về Production;
-- không hủy phiếu để đảo dữ liệu;
-- chỉ xem và in lại.
+Sau khi thành công, module Scan xóa danh sách local và hiển thị số phiếu vừa tạo.
 
 ---
 
-## 9. Module 4 — Lịch sử phiếu nhập kho
+## 10. Module 4 — Lịch sử phiếu nhập kho
 
 Route:
 
@@ -509,14 +520,14 @@ Permission:
 receipt.view
 ```
 
-Position Warehouse được map vào module này. Admin Warehouse vẫn cần được superadmin cấp permission `receipt.view`.
+Module này **chỉ dùng để xem lịch sử và in lại**, không tạo phiếu mới.
 
-Chức năng:
+### Chức năng
 
 - Hiển thị phiếu 7 ngày gần nhất.
 - Tìm theo ngày phiếu.
-- In lại PDF.
 - Xem chi tiết pallet của từng phiếu.
+- In lại PDF.
 
 Chi tiết phiếu hiển thị:
 
@@ -529,45 +540,72 @@ customer
 quantity
 ```
 
-API:
-
-| API | Chức năng |
-|---|---|
-| `/api/warehouse-receipt/list` | Danh sách phiếu |
-| `/api/warehouse-receipt/detail` | Danh sách pallet của phiếu |
-| `/api/warehouse-receipt/reprint` | In lại PDF |
-
-### 9.1 Receipt day
-
-`wh_receipt.receipt_date` dùng cùng rule working day:
-
-```text
-06:00 hôm nay → trước 06:00 hôm sau
-```
-
-Ví dụ:
-
-- Tạo phiếu lúc `05:30 ngày 21/07` → `receipt_date = 20/07`
-- Tạo lúc `06:00 ngày 21/07` → `receipt_date = 21/07`
-
-Số phiếu chạy theo `receipt_date`:
+Số phiếu:
 
 ```text
 WH-DDMMYY-001
 WH-DDMMYY-002
+...
 ```
 
-Phiếu tạo trước 06:00 tiếp tục chuỗi số của working day hôm trước.
+`receipt_date` dùng cùng rule working day, mốc `06:00`.
+
+Sau `WHdone`:
+
+- không sửa pallet;
+- không xóa pallet;
+- không return về Production;
+- không hủy phiếu để đảo trạng thái;
+- chỉ xem và in lại.
 
 ---
 
-## 10. Trạng thái pallet
+## 11. Dashboard sản xuất
+
+Route:
+
+```text
+/production-dashboard
+```
+
+Quyền truy cập:
+
+```text
+admin
+superadmin
+```
+
+### Chức năng
+
+- Tìm theo một ngày hoặc khoảng ngày làm việc.
+- Tổng hợp theo WO hoặc itemcode.
+- Hiển thị:
+  - Quan order;
+  - số pallet đã tạo;
+  - quantity đã sản xuất;
+  - quantity đã scan;
+  - quantity đã nhập kho;
+  - progress theo order.
+- Mở chi tiết từng pallet bằng icon.
+- Hiển thị dấu `!` nếu pallet đã từng sửa hoặc return.
+- Nhấn dấu `!` để xem lịch sử thay đổi.
+
+### Lịch sử pallet
+
+- Lịch sử edit được dựng từ version chain trong `pallet_data` và `old_data_refer`.
+- Lịch sử return lấy từ `pallet_change_history`.
+- Người thao tác được đổi từ user ID sang `full_name`, `username` hoặc `employee_code` trong bảng `profiles`.
+- Việc đọc profile cho dashboard dùng service-role ở server sau khi đã xác thực quyền admin.
+
+---
+
+## 12. Trạng thái pallet
 
 | Status | Ý nghĩa |
 |---|---|
 | `production` | Pallet thuộc Production |
-| `pendingWH` | Đã scan, chưa xác nhận danh sách |
-| `processingWH` | Đã xác nhận scan, đang tạo phiếu |
+| `pendingWH` | Đã scan, chờ xác nhận |
+| `processingWH` | Đang tạo phiếu nhập kho |
 | `WHdone` | Đã hoàn tất nhập kho |
 
 Luồng hợp lệ:
@@ -579,7 +617,7 @@ pendingWH → processingWH
 processingWH → WHdone
 ```
 
-Không có luồng nghiệp vụ:
+Luồng không được phép:
 
 ```text
 WHdone → production
@@ -587,11 +625,22 @@ WHdone → production
 
 ---
 
-## 11. Các bảng database chính
+## 13. Database chính
 
 ### `profiles`
 
-Thông tin tài khoản, role, position và trạng thái hoạt động.
+Thông tin tài khoản:
+
+```text
+id
+username
+email
+full_name
+employee_code
+role
+position
+is_active
+```
 
 ### `permissions`
 
@@ -611,7 +660,7 @@ Kế hoạch sản xuất được import.
 
 ### `item_pallet_config`
 
-Số lượng chuẩn trên mỗi pallet theo item.
+Cấu hình quantity chuẩn trên mỗi pallet theo item.
 
 ### `pallet_data`
 
@@ -647,9 +696,9 @@ working_day
 
 ### `pallet_change_history`
 
-Hiện dùng cho sự kiện `scan_return`.
+Hiện dùng để lưu sự kiện `scan_return`.
 
-Lịch sử sửa/xóa pallet được theo dõi bằng version trong `pallet_data` và `old_data_refer`.
+Lịch sử sửa/xóa pallet được theo dõi bằng version trong `pallet_data`.
 
 ### `wh_receipt`
 
@@ -667,7 +716,7 @@ created_at
 
 ---
 
-## 12. Supabase SQL
+## 14. Supabase migration
 
 Thư mục:
 
@@ -675,80 +724,210 @@ Thư mục:
 supabase/
 ```
 
-Hiện tại database production vẫn sử dụng chuỗi migration lịch sử. Không chạy lại các migration đã áp dụng.
+Quy tắc:
 
-Các migration gần đây:
+- Chỉ chạy migration mới chưa áp dụng.
+- Chạy theo thứ tự số file.
+- Đọc nội dung file trước khi chạy.
+- Không chạy lại migration đã áp dụng trên production.
+- Không chạy file clean-install hoặc file có lệnh drop trên production.
+- Backup trước migration thay đổi cấu trúc lớn.
+- Khi thay đổi RPC đang được API sử dụng, phải giữ đúng tên và signature hoặc cập nhật API trong cùng commit.
+
+Các nhóm migration quan trọng hiện tại:
+
+- phân quyền và page access;
+- scan owner và tạo phiếu trực tiếp;
+- pallet versioning;
+- edit/return flags;
+- scan return history;
+- loại bỏ legacy return trigger;
+- working day pallet;
+- working day phiếu nhập kho.
+
+---
+
+## 15. PWA — cài lên màn hình chính
+
+Ứng dụng hỗ trợ cài lên Android, iPhone/iPad và desktop dưới dạng standalone.
+
+### Thành phần
 
 ```text
-008_pallet_data_versioning.sql
-009_edit_flags_and_scan_return_history.sql
-010_remove_legacy_return_triggers.sql
-011_receipt_view_permission.sql
-012_assign_admin_permissions.sql
-013_pallet_working_day.sql
-014_wh_receipt_working_day.sql
+app/manifest.ts
+app/pwa/icon/[size]/route.tsx
+app/layout.tsx
 ```
 
-Lưu ý:
+Manifest:
 
-- Chỉ chạy file migration mới chưa áp dụng.
-- Đọc nội dung file trước khi chạy.
-- Không chạy `000_clean_install_full_schema.sql` trên production vì file này có thể drop và tạo lại bảng.
-- Tạo backup trước các migration thay đổi cấu trúc lớn.
-- Kế hoạch gom migration thành bộ consolidated đang tạm hoãn; database hiện tại giữ nguyên.
-
----
-
-## 13. Navigation và đăng xuất
-
-Header hiển thị icon theo permission:
-
-| Module | Permission |
-|---|---|
-| Planning | `planning.upload` |
-| Pallet | `pallet.create` |
-| Scan QR | `scan.standard` |
-| Phiếu nhập kho | `receipt.view` |
-
-Đăng xuất:
-
-1. POST `/auth/signout`.
-2. Xóa session Supabase local.
-3. Redirect về `/login`.
-4. Response dùng `Cache-Control: no-store` để tránh quay lại trang đã đăng nhập từ cache.
-
----
-
-## 14. Kiểm thử tối thiểu trước deploy
-
-```bash
-npm run build
+```text
+name = SVN Warehouse
+start_url = /dashboard
+display = standalone
+scope = /
 ```
 
-Checklist:
+Icon được sinh động dưới dạng PNG:
 
-1. Đăng nhập các role/position.
-2. Superadmin cấp và thu hồi permission admin.
-3. Navigation chỉ hiện module được cấp quyền.
-4. Import planning.
-5. Tạo pallet và PDF.
-6. Kiểm tra `working_day` trước/sau 06:00.
-7. Sửa pallet và kiểm tra version, `edit_count`.
-8. Xóa pallet Production.
-9. Scan QR và hủy scan.
-10. Kiểm tra `pallet_change_history` khi hủy scan.
-11. Xác nhận và tạo phiếu.
-12. Kiểm tra `receipt_date` trước/sau 06:00.
-13. Xem danh sách phiếu.
-14. Xem chi tiết pallet của phiếu.
-15. In lại PDF.
-16. Đăng xuất và kiểm tra session đã xóa.
+```text
+/pwa/icon/180
+/pwa/icon/192
+/pwa/icon/512
+```
+
+### Nguyên tắc bắt buộc online
+
+Dự án **không có service worker** và **không có offline cache**.
+
+Không triển khai:
+
+- cache trang operation;
+- cache API;
+- scan offline;
+- background sync;
+- hàng đợi thao tác khi mất mạng.
+
+Khi mất mạng, operation phải thất bại rõ ràng và không được tự lưu để gửi lại sau.
+
+### Cài ứng dụng
+
+Android Chrome:
+
+```text
+Menu → Cài đặt ứng dụng / Thêm vào màn hình chính
+```
+
+iPhone Safari:
+
+```text
+Chia sẻ → Thêm vào Màn hình chính
+```
+
+PWA cần deploy qua HTTPS để hoạt động đúng trên thiết bị thật.
 
 ---
 
-## 15. Các lỗi thường gặp
+## 16. Camera QR
 
-### Thiếu Supabase service-role key
+Trang scan dùng camera sau với `facingMode: environment`.
+
+Yêu cầu:
+
+- HTTPS trên production;
+- user cấp quyền camera;
+- trình duyệt hỗ trợ `getUserMedia`;
+- có kết nối internet.
+
+Thư viện scan hiện được tải từ CDN `unpkg`. Nếu mạng nội bộ chặn CDN, camera có thể không khởi tạo dù ứng dụng vẫn mở được.
+
+---
+
+## 17. Deploy Vercel
+
+### Biến môi trường cần cấu hình
+
+```env
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SERVICE_ROLE_KEY
+```
+
+Sau khi thay đổi env, phải redeploy hoặc restart môi trường.
+
+### Checklist deploy
+
+1. Đang ở nhánh `dev`.
+2. `git pull origin dev`.
+3. `npm install` nếu dependency thay đổi.
+4. `npm run build` thành công.
+5. Kiểm thử local hoặc Preview Deployment.
+6. Kiểm tra Supabase migration đã áp dụng.
+7. Kiểm tra manifest và icon PWA.
+8. Kiểm thử nghiệp vụ chính.
+9. Chỉ sau đó mới merge/deploy production.
+
+---
+
+## 18. Kiểm thử nghiệp vụ tối thiểu
+
+### Tài khoản và permission
+
+1. Đăng nhập `superadmin`, `admin`, `user`.
+2. Kiểm tra tài khoản inactive.
+3. Cấp và thu hồi permission.
+4. Navigation chỉ hiện module được phép.
+5. Dashboard chỉ hiện cho admin/superadmin.
+
+### Planning
+
+6. Import planning.
+7. Replace dữ liệu cũ.
+8. Đổi máy.
+9. Kiểm tra WO trống hoặc `0` không vào module pallet.
+
+### Production
+
+10. Tạo pallet và kiểm tra ID không trùng.
+11. In PDF tem.
+12. Kiểm tra quantity mặc định theo item.
+13. Sửa pallet và kiểm tra version, lý do, `edit_count`.
+14. Xóa pallet Production.
+15. Gộp pallet.
+16. Kiểm tra không sửa/xóa được pallet ngoài `production`.
+
+### Working day
+
+17. Tạo pallet trước `06:00`.
+18. Tạo pallet từ `06:00` trở đi.
+19. Sửa pallet và xác nhận `working_day` không đổi.
+
+### Warehouse
+
+20. User A scan và chỉ thấy danh sách của User A.
+21. User B không thấy danh sách của User A.
+22. Admin thấy toàn bộ danh sách scan.
+23. Hủy scan và kiểm tra pallet về `production`.
+24. Kiểm tra `has_been_return` và `pallet_change_history`.
+25. Xác nhận danh sách và tạo phiếu.
+26. Kiểm tra pallet chuyển `WHdone`.
+27. Kiểm tra không thể return hoặc sửa pallet `WHdone`.
+
+### Phiếu nhập kho
+
+28. Xem danh sách 7 ngày.
+29. Tìm theo ngày.
+30. Xem chi tiết pallet.
+31. In lại PDF.
+32. Kiểm tra `receipt_date` trước/sau `06:00`.
+
+### Dashboard
+
+33. Tìm theo ngày và khoảng ngày.
+34. Đổi giữa tổng hợp WO và item.
+35. Kiểm tra số pallet và progress.
+36. Mở chi tiết pallet.
+37. Kiểm tra dấu `!` cho pallet edit/return.
+38. Kiểm tra tên người thao tác, không hiển thị raw user ID khi profile hợp lệ.
+
+### PWA
+
+39. Mở `/manifest.webmanifest`.
+40. Mở `/pwa/icon/192` và `/pwa/icon/512`.
+41. Cài app lên màn hình chính.
+42. Mở app dạng standalone.
+43. Tắt mạng và xác nhận operation không thể tiếp tục.
+
+### Session
+
+44. Đăng xuất.
+45. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
+
+---
+
+## 19. Lỗi thường gặp
+
+### Thiếu service-role key
 
 ```text
 Missing Supabase admin environment variables
@@ -759,8 +938,6 @@ Kiểm tra:
 ```env
 SUPABASE_SERVICE_ROLE_KEY
 ```
-
-Sau khi sửa env cần restart server hoặc redeploy Vercel.
 
 ### PDF không tìm thấy font
 
@@ -774,11 +951,11 @@ Kiểm tra file font trong:
 assets/fonts/
 ```
 
-và đường dẫn dùng `process.cwd()`.
+Đường dẫn phải dùng `process.cwd()`.
 
 ### Unknown font format
 
-Đảm bảo dùng font TTF hợp lệ và đăng ký `fontkit` trước khi embed custom font.
+Đảm bảo file là TTF hợp lệ và đã đăng ký `fontkit` trước khi embed.
 
 ### Trigger tham chiếu cột return cũ
 
@@ -786,11 +963,7 @@ và đường dẫn dùng `process.cwd()`.
 record "new" has no field "returned_at"
 ```
 
-Chạy migration dọn legacy trigger:
-
-```text
-010_remove_legacy_return_triggers.sql
-```
+Kiểm tra migration loại bỏ legacy return trigger.
 
 ### Permission key không tồn tại
 
@@ -798,16 +971,33 @@ Chạy migration dọn legacy trigger:
 violates foreign key constraint user_permissions_permission_key_fkey
 ```
 
-Permission phải được tạo trong bảng `permissions` trước khi insert vào `user_permissions`.
+Permission phải tồn tại trong bảng `permissions` trước khi insert vào `user_permissions`.
+
+### PWA icon trả lỗi 500
+
+```text
+Expected <div> to have explicit display
+```
+
+Mọi `<div>` có nhiều node con trong `ImageResponse` phải có một trong các giá trị:
+
+```text
+display: flex
+display: contents
+display: none
+```
 
 ---
 
-## 16. Nguyên tắc phát triển tiếp theo
+## 20. Nguyên tắc cho thay đổi sau baseline
 
 - Không chỉnh trực tiếp pallet `WHdone`.
-- Không tái sử dụng permission cũ `receipt.create` hoặc `receipt.edit`.
-- Admin permission phải lấy từ `user_permissions`.
-- Mọi logic ngày vận hành dùng giờ Việt Nam và mốc 06:00.
-- Khi thêm field versioned, phải bảo đảm RPC edit sao chép field đó sang version mới.
-- Khi đổi RPC, giữ tên/signature nếu API hiện tại đang phụ thuộc, hoặc cập nhật API trong cùng commit.
+- Không thêm đường chuyển trạng thái ngoài workflow đã chốt nếu chưa review nghiệp vụ.
+- Không tái sử dụng `receipt.create` hoặc `receipt.edit`.
+- Mọi logic ngày vận hành dùng giờ Việt Nam và mốc `06:00`.
+- Khi thêm field versioned, RPC edit phải sao chép field đó sang version mới.
+- Khi đổi RPC, phải cập nhật API và tài liệu trong cùng commit.
+- Không thêm offline cache cho operation nếu chưa có thiết kế chống trùng và đồng bộ transaction.
+- Không sử dụng service-role key ở client.
+- Luôn sửa trên `dev` và kiểm thử trước khi merge production.
 - Luôn cập nhật README khi thay đổi nghiệp vụ hoặc database.

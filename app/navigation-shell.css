@@ -1,0 +1,339 @@
+/* Global route loading */
+.route-progress {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 3000;
+  height: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.route-progress-active {
+  opacity: 1;
+}
+
+.route-progress-bar {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #155eef, #7f56d9, #155eef);
+  box-shadow: 0 0 12px rgba(21, 94, 239, 0.55);
+  animation: route-progress-move 0.85s ease-in-out infinite;
+}
+
+@keyframes route-progress-move {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(290%); }
+}
+
+.route-loading-page {
+  min-height: 55vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 18px;
+}
+
+.route-loading-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow);
+}
+
+.route-loading-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.route-loading-spinner {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 3px solid #dbe7ff;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: route-loading-spin 0.72s linear infinite;
+}
+
+@keyframes route-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Responsive application header */
+.topbar {
+  min-height: 76px;
+  display: grid;
+  grid-template-columns: minmax(175px, auto) minmax(0, 1fr) auto;
+  grid-template-areas: "brand navigation account";
+  align-items: center;
+  gap: 18px;
+  padding: 12px clamp(18px, 3vw, 44px);
+  border-bottom: 1px solid rgba(228, 231, 236, 0.92);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 4px 18px rgba(16, 24, 40, 0.04);
+  backdrop-filter: blur(14px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.topbar-brand-area {
+  grid-area: brand;
+  min-width: 0;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+}
+
+.brand::before {
+  content: "SVN";
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: white;
+  background: linear-gradient(135deg, #155eef, #6938ef);
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  box-shadow: 0 6px 14px rgba(21, 94, 239, 0.22);
+}
+
+.topbar-subtitle {
+  margin: 3px 0 0 42px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-nav {
+  grid-area: navigation;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.topbar-module-link {
+  min-width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding: 0 11px;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.9);
+  color: #344054;
+  font-weight: 750;
+  transition: 0.16s ease;
+}
+
+.topbar-module-link:hover {
+  border-color: #84adff;
+  background: #eff4ff;
+  color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.topbar-module-icon {
+  font-size: 1.16rem;
+  line-height: 1;
+}
+
+.topbar-module-label {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.topbar-account {
+  grid-area: account;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.topbar-identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-avatar {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid #c7d7fe;
+  border-radius: 50%;
+  color: var(--primary);
+  background: #eff4ff;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.topbar-user-name {
+  max-width: 160px;
+  overflow: hidden;
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.topbar-actions form {
+  margin: 0;
+}
+
+.topbar-actions .button {
+  min-height: 36px;
+  padding: 7px 11px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .topbar-module-label {
+    display: none;
+  }
+
+  .topbar-module-link {
+    width: 42px;
+    padding: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand account"
+      "navigation navigation";
+    gap: 10px 14px;
+    padding-block: 10px;
+  }
+
+  .topbar-nav {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 2px 0 3px;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "brand"
+      "navigation"
+      "account";
+    gap: 9px;
+    padding: 9px 10px 10px;
+  }
+
+  .brand {
+    font-size: 0.98rem;
+  }
+
+  .brand::before {
+    width: 31px;
+    height: 31px;
+    border-radius: 9px;
+    font-size: 0.62rem;
+  }
+
+  .topbar-subtitle {
+    margin-left: 39px;
+    font-size: 0.73rem;
+  }
+
+  .topbar-nav {
+    margin-inline: -2px;
+    padding-bottom: 4px;
+  }
+
+  .topbar-module-link {
+    width: 39px;
+    min-width: 39px;
+    height: 39px;
+    border-radius: 11px;
+  }
+
+  .topbar-module-icon {
+    font-size: 1.08rem;
+  }
+
+  .topbar-account {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .topbar-avatar {
+    width: 32px;
+    height: 32px;
+  }
+
+  .topbar-user-name {
+    max-width: 120px;
+    font-size: 0.8rem;
+  }
+
+  .topbar-actions {
+    gap: 5px;
+  }
+
+  .topbar-actions .button {
+    min-height: 33px;
+    padding: 6px 8px;
+    border-radius: 9px;
+    font-size: 0.75rem;
+  }
+
+  .route-loading-card {
+    width: min(100%, 330px);
+    padding: 16px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-progress-bar,
+  .route-loading-spinner {
+    animation-duration: 1.6s;
+  }
+
+  .topbar-module-link {
+    transition: none;
+  }
+}
