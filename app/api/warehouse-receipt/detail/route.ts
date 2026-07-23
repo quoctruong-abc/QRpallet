@@ -1,5 +1,5 @@
 import { authorizeProfile } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(request: Request) {
   const authorization = await authorizeProfile();
@@ -19,7 +19,9 @@ export async function GET(request: Request) {
     );
   }
 
-  const supabase = await createClient();
+  // Authentication is enforced above. Use the server-only admin client for
+  // read-only cross-department access so pallet RLS does not hide receipt rows.
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("pallet_data")
     .select("pallet_id,wo,itemcode,product_name,customer,quantity")
