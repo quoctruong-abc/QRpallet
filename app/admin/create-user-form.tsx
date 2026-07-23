@@ -25,7 +25,7 @@ export function CreateUserForm({
   }, [state.success]);
 
   return (
-    <form action={formAction} className="form-grid" ref={formRef}>
+    <form action={formAction} className="form-grid admin-create-form" ref={formRef}>
       <label>
         Họ và tên
         <input disabled={pending} name="full_name" required placeholder="Nguyễn Văn A" />
@@ -81,7 +81,7 @@ export function CreateUserForm({
         )}
       </label>
 
-      <div className="form-full" aria-live="polite">
+      <div className="form-full admin-form-footer" aria-live="polite">
         <p className="muted small">Tài khoản user mới mặc định chưa có permission nào.</p>
         {pending ? <p className="alert">Đang tạo tài khoản, vui lòng không đóng trang...</p> : null}
         {!pending && state.error ? <p className="alert alert-error">{state.error}</p> : null}
