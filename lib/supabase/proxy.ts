@@ -15,7 +15,7 @@ function matchesProtectedPage(pathname: string) {
 }
 
 function matchesAuthenticatedSharedPage(pathname: string) {
-  return AUTHENTICATED_SHARED_ROUTES.some(
+  return AUTHENTICATED_SHARED_ROUTES.find(
     (path) => pathname === path || pathname.startsWith(`${path}/`),
   );
 }
@@ -94,10 +94,11 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (matchesAuthenticatedSharedPage(pathname)) return response;
-
+  const sharedPage = matchesAuthenticatedSharedPage(pathname);
   const protectedPage = matchesProtectedPage(pathname);
-  if (!protectedPage || profile.role === "superadmin") return response;
+  const mappedPage = sharedPage ?? protectedPage;
+
+  if (!mappedPage || profile.role === "superadmin") return response;
 
   const position = profile.position as Position | null;
   if (!position) {
@@ -110,18 +111,23 @@ export async function updateSession(request: NextRequest) {
     .from("position_page_access")
     .select("is_enabled")
     .eq("position", position)
-    .eq("path", protectedPage)
+    .eq("path", mappedPage)
     .maybeSingle();
 
-  const positionMapped = mappingError
-    ? POSITION_ROUTES[position]?.includes(protectedPage)
-    : Boolean(mappingRow?.is_enabled);
+  const positionMapped = mappingError || !mappingRow
+    ? POSITION_ROUTES[position]?.includes(mappedPage)
+    : Boolean(mappingRow.is_enabled);
 
   if (!positionMapped) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
+
+  // Shared pages only require position mapping. No user-level permission is needed.
+  if (sharedPage) return response;
+
+  if (!protectedPage) return response;
 
   if (profile.role === "admin") {
     const required = PAGE_PERMISSIONS[protectedPage];
