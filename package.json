@@ -14,6 +14,7 @@
     "@supabase/supabase-js": "latest",
     "next": "latest",
     "pdf-lib": "^1.17.1",
+    "qr-scanner": "^1.4.2",
     "qrcode": "^1.5.4",
     "react": "latest",
     "react-dom": "latest",
