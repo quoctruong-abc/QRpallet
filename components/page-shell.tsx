@@ -29,7 +29,7 @@ const modules: Array<{
     path: "/warehouse-receipt",
     label: "Xem phiếu nhập kho",
     icon: "📦",
-    permissions: [],
+    permissions: ["receipt.view"],
     positionMapped: true,
   },
 ];
@@ -63,8 +63,9 @@ export async function PageShell({
   const receiptModuleMapped = await isReceiptModuleMapped(profile);
   const visibleModules = modules.filter((module) => {
     if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
-    if (module.positionMapped) return receiptModuleMapped;
-    return module.permissions.some((permission) => hasPermission(profile, permission));
+    const permitted = module.permissions.some((permission) => hasPermission(profile, permission));
+    if (module.positionMapped) return receiptModuleMapped && permitted;
+    return permitted;
   });
   const userInitial = profile.full_name.trim().charAt(0).toUpperCase() || "U";
 
