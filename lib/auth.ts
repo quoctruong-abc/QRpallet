@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
+import { POSITION_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { POSITION_ROUTES } from "@/lib/routes";
 import type { AppRole, PermissionKey, Position, Profile } from "@/lib/types";
 
 type LegacyPosition = Position | "pallet" | "scanner";
@@ -13,11 +14,24 @@ function normalizePosition(position: LegacyPosition): Position {
 
 async function loadPermissions(profile: Profile): Promise<PermissionKey[]> {
   if (profile.role === "superadmin") return [];
-  const supabase = await createClient();
-  const { data } = await supabase
+
+  // Permissions are managed by admins and may be protected by RLS. Read them
+  // with the server-only service-role client after the signed-in user has been
+  // identified, so granted permissions are not silently returned as an empty list.
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
     .from("user_permissions")
     .select("permission_key")
     .eq("user_id", profile.id);
+
+  if (error) {
+    console.error("loadPermissions failed", {
+      userId: profile.id,
+      message: error.message,
+    });
+    return [];
+  }
+
   return (data ?? []).map((row) => row.permission_key as PermissionKey);
 }
 
@@ -57,8 +71,23 @@ export function hasPosition(profile: Profile, position: LegacyPosition) {
 
 export function hasPermission(profile: Profile, permission: PermissionKey) {
   if (profile.role === "superadmin") return true;
-  if (profile.role === "admin" && permission === "receipt.view") return true;
+
+  // Department admins receive the standard permissions of their position.
+  // Extra permissions granted by Super Admin remain available through
+  // profile.permissions below.
+  if (
+    profile.role === "admin"
+    && profile.position
+    && POSITION_PERMISSIONS[profile.position].includes(permission)
+  ) {
+    return true;
+  }
+
   return profile.permissions?.includes(permission) ?? false;
+}
+
+export function hasAnyPermission(profile: Profile, permissions: PermissionKey[]) {
+  return permissions.some((permission) => hasPermission(profile, permission));
 }
 
 export function canAccessPath(profile: Profile, pathname: string) {
@@ -89,6 +118,12 @@ export async function requirePosition(position: LegacyPosition): Promise<Profile
 export async function requirePermission(permission: PermissionKey): Promise<Profile> {
   const profile = await requireProfile();
   if (!hasPermission(profile, permission)) redirect("/dashboard");
+  return profile;
+}
+
+export async function requireAnyPermission(permissions: PermissionKey[]): Promise<Profile> {
+  const profile = await requireProfile();
+  if (!hasAnyPermission(profile, permissions)) redirect("/dashboard");
   return profile;
 }
 
