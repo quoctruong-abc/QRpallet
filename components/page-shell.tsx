@@ -13,7 +13,6 @@ const modules: Array<{
   icon: string;
   permissions: PermissionKey[];
   adminOnly?: boolean;
-  positionMapped?: boolean;
 }> = [
   {
     path: "/production-dashboard",
@@ -22,33 +21,37 @@ const modules: Array<{
     permissions: [],
     adminOnly: true,
   },
-  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload"] },
-  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create"] },
+  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload", "planning.change"] },
+  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create", "pallet.edit"] },
   { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permissions: ["scan.standard"] },
   {
     path: "/warehouse-receipt",
     label: "Xem phiếu nhập kho",
     icon: "📦",
     permissions: ["receipt.view"],
-    positionMapped: true,
   },
 ];
 
-async function isReceiptModuleMapped(profile: Profile) {
-  if (profile.role === "superadmin") return true;
-  if (!profile.position) return false;
+async function loadMappedPaths(profile: Profile) {
+  if (profile.role === "superadmin") {
+    return new Set(modules.map((module) => module.path));
+  }
+  if (!profile.position) return new Set<string>();
 
-  const fallback = POSITION_ROUTES[profile.position].includes("/warehouse-receipt");
+  const fallback = new Set(POSITION_ROUTES[profile.position]);
   const adminClient = createAdminClient();
   const { data, error } = await adminClient
     .from("position_page_access")
-    .select("is_enabled")
-    .eq("position", profile.position)
-    .eq("path", "/warehouse-receipt")
-    .maybeSingle();
+    .select("path,is_enabled")
+    .eq("position", profile.position);
 
   if (error || !data) return fallback;
-  return Boolean(data.is_enabled);
+
+  const mapped = new Set<string>();
+  for (const row of data) {
+    if (row.is_enabled) mapped.add(String(row.path));
+  }
+  return mapped;
 }
 
 export async function PageShell({
@@ -60,12 +63,12 @@ export async function PageShell({
   title: string;
   children: ReactNode;
 }) {
-  const receiptModuleMapped = await isReceiptModuleMapped(profile);
+  const mappedPaths = await loadMappedPaths(profile);
   const visibleModules = modules.filter((module) => {
     if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
+    const mapped = profile.role === "superadmin" || mappedPaths.has(module.path);
     const permitted = module.permissions.some((permission) => hasPermission(profile, permission));
-    if (module.positionMapped) return receiptModuleMapped && permitted;
-    return permitted;
+    return mapped && permitted;
   });
   const userInitial = profile.full_name.trim().charAt(0).toUpperCase() || "U";
 
