@@ -41,27 +41,32 @@ export function UserPermissionEditor({
   return (
     <Fragment>
       {permissions.map((permission) => (
-        <td key={permission.key}>
-          <input
-            aria-label={`${username} - ${permission.label}`}
-            checked={permission.roleGranted || selected.includes(permission.key)}
-            disabled={pending || permission.roleGranted}
-            onChange={(event) => togglePermission(permission.key, event.target.checked)}
-            readOnly={permission.roleGranted}
-            type="checkbox"
-          />
+        <td data-label={permission.label} key={permission.key} className="admin-permission-cell">
+          <label className="admin-checkbox-label">
+            <span className="admin-mobile-permission-label">{permission.label}</span>
+            <input
+              aria-label={`${username} - ${permission.label}`}
+              className="admin-checkbox"
+              checked={permission.roleGranted || selected.includes(permission.key)}
+              disabled={pending || permission.roleGranted}
+              onChange={(event) => togglePermission(permission.key, event.target.checked)}
+              readOnly={permission.roleGranted}
+              type="checkbox"
+            />
+            {permission.roleGranted ? <small>Theo role</small> : null}
+          </label>
         </td>
       ))}
-      <td>
-        <form action={formAction} style={{ minWidth: "170px" }}>
+      <td data-label="Lưu quyền" className="admin-save-cell">
+        <form action={formAction} className="admin-permission-save">
           <input name="user_id" type="hidden" value={userId} />
           {selected.map((permission) => (
             <input key={permission} name="permissions" type="hidden" value={permission} />
           ))}
           <button className="button button-small button-primary" disabled={pending} type="submit">
-            {pending ? "Đang lưu..." : "Lưu"}
+            {pending ? "Đang lưu..." : "Lưu quyền"}
           </button>
-          <div aria-live="polite" style={{ marginTop: "0.45rem" }}>
+          <div aria-live="polite" className="admin-inline-feedback">
             {pending ? <span className="muted small">Đang xử lý...</span> : null}
             {!pending && state.error ? <span className="alert alert-error small">{state.error}</span> : null}
             {!pending && state.success ? <span className="alert alert-success small">{state.success}</span> : null}
