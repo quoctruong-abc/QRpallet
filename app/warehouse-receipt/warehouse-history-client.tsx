@@ -21,17 +21,6 @@ type ReceiptPalletRow = {
   quantity: number | string | null;
 };
 
-function downloadPdf(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${filename}.pdf`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 export function WarehouseHistoryClient() {
   const [receiptDate, setReceiptDate] = useState("");
   const [receipts, setReceipts] = useState<ReceiptRow[]>([]);
@@ -80,28 +69,25 @@ export function WarehouseHistoryClient() {
     }
   }
 
-  async function reprintReceipt(receiptId: string) {
+  function reprintReceipt(receiptId: string) {
     setWorking("reprint");
     setActiveReceiptId(receiptId);
     setNotice(null);
-    try {
-      const response = await fetch("/api/warehouse-receipt/reprint", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ receiptId }),
-      });
-      if (!response.ok) {
-        const result = await response.json().catch(() => null);
-        throw new Error(result?.error || "Không thể in lại phiếu.");
-      }
-      downloadPdf(await response.blob(), receiptId);
-      setNotice({ type: "success", text: `Đã tải lại phiếu ${receiptId}.` });
-    } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể in lại phiếu." });
-    } finally {
-      setWorking(null);
-      setActiveReceiptId(null);
+
+    const printWindow = window.open(
+      `/api/warehouse-receipt/reprint?receiptId=${encodeURIComponent(receiptId)}`,
+      "_blank",
+    );
+
+    if (!printWindow) {
+      setNotice({ type: "error", text: "Trình duyệt đã chặn cửa sổ in. Vui lòng cho phép pop-up rồi thử lại." });
+    } else {
+      printWindow.opener = null;
+      setNotice({ type: "success", text: `Đã mở phiếu ${receiptId} và chuẩn bị hộp thoại in.` });
     }
+
+    setWorking(null);
+    setActiveReceiptId(null);
   }
 
   useEffect(() => { void loadReceipts(""); }, []);
