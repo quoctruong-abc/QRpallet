@@ -65,6 +65,16 @@ function cleanQrValue(value: string) {
   }
 }
 
+function prepareReceiptPrintWindow() {
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) return null;
+
+  printWindow.document.open();
+  printWindow.document.write(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Đang tạo phiếu nhập kho</title><style>html,body{height:100%;margin:0;font-family:Arial,sans-serif;background:#eef2f7;color:#172033}body{display:grid;place-items:center;padding:20px}.card{padding:24px 28px;border-radius:16px;background:#fff;box-shadow:0 14px 40px rgba(16,24,40,.12);text-align:center}.spinner{width:34px;height:34px;margin:0 auto 14px;border:4px solid #dbe7ff;border-top-color:#155eef;border-radius:50%;animation:spin .75s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}p{margin:0;color:#667085}</style></head><body><div class="card"><div class="spinner"></div><strong>Đang tạo phiếu nhập kho</strong><p>PDF và hộp thoại in sẽ tự mở sau khi hoàn tất.</p></div></body></html>`);
+  printWindow.document.close();
+  return printWindow;
+}
+
 export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPallet[]; isAdmin: boolean }) {
   const router = useRouter();
   const scannerRef = useRef<ScannerInstance | null>(null);
@@ -172,6 +182,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
   async function confirmAll() {
     if (!rows.length) return;
+    const printWindow = prepareReceiptPrintWindow();
     setConfirming(true);
     try {
       const response = await fetch("/api/scan-qr/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ palletIds: rows.map((row) => row.pallet_id) }) });
@@ -180,11 +191,20 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         throw new Error(result?.error || "Không thể tạo phiếu nhập kho.");
       }
       const receiptId = result.receiptId as string;
+      if (printWindow && !printWindow.closed) {
+        printWindow.location.href = `/api/warehouse-receipt/reprint?receiptId=${encodeURIComponent(receiptId)}`;
+      }
       setRows([]);
       setConfirmOpen(false);
-      setNotice({ type: "success", text: `Tạo phiếu nhập kho thành công. Số phiếu: ${receiptId}` });
+      setNotice({
+        type: "success",
+        text: printWindow
+          ? `Tạo phiếu ${receiptId} thành công và đang mở hộp thoại in.`
+          : `Tạo phiếu ${receiptId} thành công. Trình duyệt đã chặn cửa sổ in; có thể in lại tại module Xem phiếu nhập kho.`,
+      });
       router.refresh();
     } catch (error) {
+      printWindow?.close();
       setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể tạo phiếu nhập kho." });
       setConfirmOpen(false);
     } finally {
@@ -206,7 +226,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       </div>
       {cameraOpen ? <div className="camera-overlay"><div id="qr-camera-reader" className="camera-reader" /><div className="camera-topbar"><strong>Quét QR pallet</strong><button type="button" onClick={closeCamera}>✕</button></div><div className="camera-guide"><span /><p>Đưa QR vào giữa khung</p></div>{notice ? <div className={`camera-notice camera-notice-${notice.type}`}><span className={notice.type === "loading" ? "camera-spinner" : ""}>{notice.type === "success" ? "✓" : notice.type === "error" ? "!" : ""}</span><p>{notice.text}</p></div> : null}</div> : null}
       {cancelRow ? <div className="modal-backdrop" onMouseDown={() => !cancelling && setCancelRow(null)}><div className="modal-card scan-cancel-modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">HỦY PALLET</p><h2>Trả pallet về production?</h2></div><button type="button" className="modal-close" disabled={cancelling} onClick={() => setCancelRow(null)}>×</button></div><p className="muted">Pallet <strong>{cancelRow.pallet_id}</strong> sẽ bị loại khỏi danh sách và chuyển về <strong>production</strong>.</p><div className="modal-actions"><button className="button button-secondary" disabled={cancelling} onClick={() => setCancelRow(null)}>Không</button><button className="button button-danger" disabled={cancelling} onClick={cancelPallet}>{cancelling ? "Đang hủy..." : "Có, hủy pallet"}</button></div></div></div> : null}
-      {confirmOpen ? <div className="modal-backdrop" onMouseDown={() => !confirming && setConfirmOpen(false)}><div className="modal-card scan-confirm-modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">TẠO PHIẾU NHẬP KHO</p><h2>Xác nhận tạo phiếu?</h2></div><button type="button" className="modal-close" disabled={confirming} onClick={() => setConfirmOpen(false)}>×</button></div><div className="scan-summary-wrap"><table className="scan-summary-table"><thead><tr><th>Itemcode</th><th>Tên sản phẩm</th><th>KH</th><th>Số pallet</th><th>Tổng SL</th></tr></thead><tbody>{summary.map((row) => <tr key={`${row.itemcode}-${row.product_name}-${row.customer}`}><td><strong>{row.itemcode}</strong></td><td>{row.product_name}</td><td>{row.customer}</td><td>{row.palletCount}</td><td><strong>{row.totalQuantity.toLocaleString("vi-VN")}</strong></td></tr>)}</tbody></table></div><p className="muted">Sau khi xác nhận, hệ thống tạo phiếu nhập kho và chuyển pallet sang WHdone. PDF chỉ in lại tại module 4.</p><div className="modal-actions"><button className="button button-secondary" disabled={confirming} onClick={() => setConfirmOpen(false)}>Quay lại</button><button className="button button-primary" disabled={confirming} onClick={confirmAll}>{confirming ? "Đang tạo phiếu..." : "Xác nhận tạo phiếu"}</button></div></div></div> : null}
+      {confirmOpen ? <div className="modal-backdrop" onMouseDown={() => !confirming && setConfirmOpen(false)}><div className="modal-card scan-confirm-modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">TẠO PHIẾU NHẬP KHO</p><h2>Xác nhận tạo phiếu?</h2></div><button type="button" className="modal-close" disabled={confirming} onClick={() => setConfirmOpen(false)}>×</button></div><div className="scan-summary-wrap"><table className="scan-summary-table"><thead><tr><th>Itemcode</th><th>Tên sản phẩm</th><th>KH</th><th>Số pallet</th><th>Tổng SL</th></tr></thead><tbody>{summary.map((row) => <tr key={`${row.itemcode}-${row.product_name}-${row.customer}`}><td><strong>{row.itemcode}</strong></td><td>{row.product_name}</td><td>{row.customer}</td><td>{row.palletCount}</td><td><strong>{row.totalQuantity.toLocaleString("vi-VN")}</strong></td></tr>)}</tbody></table></div><p className="muted">Sau khi xác nhận, hệ thống tạo phiếu, chuyển pallet sang WHdone và tự mở hộp thoại in. Phiếu vẫn có thể in lại tại module Xem phiếu nhập kho.</p><div className="modal-actions"><button className="button button-secondary" disabled={confirming} onClick={() => setConfirmOpen(false)}>Quay lại</button><button className="button button-primary" disabled={confirming} onClick={confirmAll}>{confirming ? "Đang tạo phiếu..." : "Xác nhận tạo phiếu"}</button></div></div></div> : null}
     </section>
   );
 }
