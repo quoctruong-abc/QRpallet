@@ -64,11 +64,6 @@ export function hasRole(profile: Profile, roles: AppRole | AppRole[]) {
   return (Array.isArray(roles) ? roles : [roles]).includes(profile.role);
 }
 
-export function hasPosition(profile: Profile, position: LegacyPosition) {
-  const normalized = normalizePosition(position);
-  return profile.role === "superadmin" || profile.position === normalized;
-}
-
 export function hasPermission(profile: Profile, permission: PermissionKey) {
   if (profile.role === "superadmin") return true;
 
@@ -88,6 +83,18 @@ export function hasPermission(profile: Profile, permission: PermissionKey) {
 
 export function hasAnyPermission(profile: Profile, permissions: PermissionKey[]) {
   return permissions.some((permission) => hasPermission(profile, permission));
+}
+
+export function hasPosition(profile: Profile, position: LegacyPosition) {
+  const normalized = normalizePosition(position);
+  if (profile.role === "superadmin" || profile.position === normalized) return true;
+
+  // Page mapping may intentionally expose a module to another position. In
+  // that case the matching granted permission is the second access layer;
+  // proxy.ts still enforces whether that position is mapped to the page.
+  return POSITION_PERMISSIONS[normalized].some((permission) =>
+    hasPermission(profile, permission),
+  );
 }
 
 export function canAccessPath(profile: Profile, pathname: string) {
