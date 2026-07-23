@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { hasPermission } from "@/lib/auth";
+import { POSITION_ROUTES } from "@/lib/routes";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { PermissionKey, Profile } from "@/lib/types";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
 import { LogoutButton } from "@/components/logout-button";
@@ -11,7 +13,6 @@ const modules: Array<{
   icon: string;
   permissions: PermissionKey[];
   adminOnly?: boolean;
-  publicAuthenticated?: boolean;
 }> = [
   {
     path: "/production-dashboard",
@@ -20,19 +21,40 @@ const modules: Array<{
     permissions: [],
     adminOnly: true,
   },
-  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload"] },
-  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create"] },
+  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload", "planning.change"] },
+  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create", "pallet.edit"] },
   { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permissions: ["scan.standard"] },
   {
     path: "/warehouse-receipt",
     label: "Xem phiếu nhập kho",
     icon: "📦",
-    permissions: [],
-    publicAuthenticated: true,
+    permissions: ["receipt.view"],
   },
 ];
 
-export function PageShell({
+async function loadMappedPaths(profile: Profile) {
+  if (profile.role === "superadmin") {
+    return new Set(modules.map((module) => module.path));
+  }
+  if (!profile.position) return new Set<string>();
+
+  const fallback = new Set(POSITION_ROUTES[profile.position]);
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
+    .from("position_page_access")
+    .select("path,is_enabled")
+    .eq("position", profile.position);
+
+  if (error || !data) return fallback;
+
+  const mapped = new Set<string>();
+  for (const row of data) {
+    if (row.is_enabled) mapped.add(String(row.path));
+  }
+  return mapped;
+}
+
+export async function PageShell({
   profile,
   title,
   children,
@@ -41,10 +63,12 @@ export function PageShell({
   title: string;
   children: ReactNode;
 }) {
+  const mappedPaths = await loadMappedPaths(profile);
   const visibleModules = modules.filter((module) => {
     if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
-    if (module.publicAuthenticated) return true;
-    return module.permissions.some((permission) => hasPermission(profile, permission));
+    const mapped = profile.role === "superadmin" || mappedPaths.has(module.path);
+    const permitted = module.permissions.some((permission) => hasPermission(profile, permission));
+    return mapped && permitted;
   });
   const userInitial = profile.full_name.trim().charAt(0).toUpperCase() || "U";
 

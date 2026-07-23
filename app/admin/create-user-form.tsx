@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import type { AppRole, Position } from "@/lib/types";
 import { createEmployee, type AdminActionState } from "./actions";
 
@@ -15,21 +15,29 @@ export function CreateUserForm({
 }) {
   const [state, formAction, pending] = useActionState(createEmployee, initialState);
   const [role, setRole] = useState<AppRole>("user");
+  const formRef = useRef<HTMLFormElement | null>(null);
   const isSuperadmin = actorRole === "superadmin";
 
+  useEffect(() => {
+    if (!state.success) return;
+    formRef.current?.reset();
+    setRole("user");
+  }, [state.success]);
+
   return (
-    <form action={formAction} className="form-grid">
+    <form action={formAction} className="form-grid admin-create-form" ref={formRef}>
       <label>
         Họ và tên
-        <input name="full_name" required placeholder="Nguyễn Văn A" />
+        <input disabled={pending} name="full_name" required placeholder="Nguyễn Văn A" />
       </label>
       <label>
         Mã nhân viên
-        <input name="employee_code" placeholder="SVN001" />
+        <input disabled={pending} name="employee_code" placeholder="SVN001" />
       </label>
       <label>
         Tên đăng nhập
         <input
+          disabled={pending}
           name="username"
           required
           minLength={3}
@@ -41,15 +49,15 @@ export function CreateUserForm({
       </label>
       <label>
         Mật khẩu tạm
-        <input name="password" required type="password" minLength={8} placeholder="Tối thiểu 8 ký tự" />
+        <input disabled={pending} name="password" required type="password" minLength={8} placeholder="Tối thiểu 8 ký tự" />
       </label>
       <label>
         Role
         <select
+          disabled={pending || !isSuperadmin}
           name="role"
           value={isSuperadmin ? role : "user"}
           onChange={(event) => setRole(event.target.value as AppRole)}
-          disabled={!isSuperadmin}
         >
           <option value="user">User</option>
           {isSuperadmin ? <option value="admin">Admin</option> : null}
@@ -60,7 +68,7 @@ export function CreateUserForm({
       <label>
         Position
         {isSuperadmin ? (
-          <select name="position" disabled={role === "superadmin"} required={role !== "superadmin"} defaultValue="warehouse">
+          <select name="position" disabled={pending || role === "superadmin"} required={role !== "superadmin"} defaultValue="warehouse">
             <option value="planning">Planning</option>
             <option value="production">Production</option>
             <option value="warehouse">Warehouse</option>
@@ -73,12 +81,13 @@ export function CreateUserForm({
         )}
       </label>
 
-      <div className="form-full">
+      <div className="form-full admin-form-footer" aria-live="polite">
         <p className="muted small">Tài khoản user mới mặc định chưa có permission nào.</p>
-        {state.error ? <p className="alert alert-error">{state.error}</p> : null}
-        {state.success ? <p className="alert alert-success">{state.success}</p> : null}
+        {pending ? <p className="alert">Đang tạo tài khoản, vui lòng không đóng trang...</p> : null}
+        {!pending && state.error ? <p className="alert alert-error">{state.error}</p> : null}
+        {!pending && state.success ? <p className="alert alert-success">{state.success}</p> : null}
         <button className="button button-primary" disabled={pending} type="submit">
-          {pending ? "Đang tạo..." : "Tạo tài khoản"}
+          {pending ? "Đang tạo tài khoản..." : "Tạo tài khoản"}
         </button>
       </div>
     </form>

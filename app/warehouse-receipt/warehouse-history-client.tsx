@@ -10,6 +10,7 @@ type ReceiptRow = {
   status: "active" | "cancelled";
   created_at: string;
   cancelled_at: string | null;
+  creator_name: string;
 };
 
 type ReceiptPalletRow = {
@@ -108,8 +109,8 @@ export function WarehouseHistoryClient() {
       {notice ? <div className={`alert ${notice.type === "error" ? "alert-error" : "alert-success"}`}>{notice.text}</div> : null}
 
       <div className="scan-table-card">
-        {!receipts.length ? <div className="scan-empty">Không có phiếu nhập kho phù hợp.</div> : <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Số phiếu</th><th>Ngày</th><th>Tổng pallet</th><th>Tổng số lượng</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>
-          {receipts.map((receipt) => <tr key={receipt.receipt_id}><td><strong>{receipt.receipt_id}</strong></td><td>{receipt.receipt_date}</td><td>{Number(receipt.total_pallet).toLocaleString("vi-VN")}</td><td>{Number(receipt.total_quantity).toLocaleString("vi-VN")}</td><td>{receipt.status === "cancelled" ? "Đã hủy" : "Hoạt động"}</td><td><div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}><button className="button button-primary" type="button" disabled={working === "detail"} onClick={() => loadReceiptDetail(receipt.receipt_id)}>{working === "detail" && activeReceiptId === receipt.receipt_id ? "Đang tải..." : "Xem chi tiết"}</button><button className="button button-secondary" type="button" disabled={working === "reprint"} onClick={() => reprintReceipt(receipt.receipt_id)}>{working === "reprint" && activeReceiptId === receipt.receipt_id ? "Đang in..." : "In lại"}</button></div></td></tr>)}
+        {!receipts.length ? <div className="scan-empty">Không có phiếu nhập kho phù hợp.</div> : <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Số phiếu</th><th>Ngày</th><th>Người tạo phiếu</th><th>Tổng pallet</th><th>Tổng số lượng</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>
+          {receipts.map((receipt) => <tr key={receipt.receipt_id}><td><strong>{receipt.receipt_id}</strong></td><td>{receipt.receipt_date}</td><td>{receipt.creator_name || "—"}</td><td>{Number(receipt.total_pallet).toLocaleString("vi-VN")}</td><td>{Number(receipt.total_quantity).toLocaleString("vi-VN")}</td><td>{receipt.status === "cancelled" ? "Đã hủy" : "Hoạt động"}</td><td><div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}><button className="button button-primary" type="button" disabled={working === "detail"} onClick={() => loadReceiptDetail(receipt.receipt_id)}>{working === "detail" && activeReceiptId === receipt.receipt_id ? "Đang tải..." : "Xem chi tiết"}</button><button className="button button-secondary" type="button" disabled={working === "reprint"} onClick={() => reprintReceipt(receipt.receipt_id)}>{working === "reprint" && activeReceiptId === receipt.receipt_id ? "Đang in..." : "In lại"}</button></div></td></tr>)}
         </tbody></table></div>}
       </div>
 
