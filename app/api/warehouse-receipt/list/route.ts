@@ -1,4 +1,4 @@
-import { authorizeProfile } from "@/lib/auth";
+import { authorizePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type ReceiptRecord = {
@@ -24,7 +24,7 @@ function getCreatorId(receipt: ReceiptRecord) {
 }
 
 export async function GET(request: Request) {
-  const authorization = await authorizeProfile();
+  const authorization = await authorizePermission("receipt.view");
   if (!authorization.ok) {
     return Response.json(
       { success: false, error: authorization.error },
@@ -38,8 +38,6 @@ export async function GET(request: Request) {
   since.setDate(since.getDate() - 6);
   const sinceText = since.toISOString().slice(0, 10);
 
-  // The endpoint is authenticated above. Use the server-only admin client for
-  // read-only cross-department access so table RLS does not restrict normal users.
   const supabase = createAdminClient();
   let query = supabase
     .from("wh_receipt")
