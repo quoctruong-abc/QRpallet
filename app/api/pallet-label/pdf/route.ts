@@ -7,6 +7,7 @@ import { PDFDocument, rgb } from "pdf-lib";
 import QRCode from "qrcode";
 
 import { authorizePermission } from "@/lib/auth";
+import { createPdfPrintPage } from "@/lib/pdf-print-page";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -95,6 +96,11 @@ export async function GET(request: Request) {
     const palletId = requestUrl.searchParams.get("palletId")?.trim();
     if (!palletId) {
       return NextResponse.json({ error: "Thiếu palletId." }, { status: 400 });
+    }
+
+    if (requestUrl.searchParams.get("raw") !== "1") {
+      const rawPdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(palletId)}&raw=1`;
+      return createPdfPrintPage(rawPdfUrl, `In tem pallet ${palletId}`);
     }
 
     const supabase = await createClient();
