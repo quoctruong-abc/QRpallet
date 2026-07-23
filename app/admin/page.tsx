@@ -16,6 +16,7 @@ const pages = [
   { path: "/planning-inject", label: "Planning Inject" },
   { path: "/pallet-label", label: "Xuất tem pallet" },
   { path: "/scan-qr", label: "Scan QR" },
+  { path: "/warehouse-receipt", label: "Xem phiếu nhập kho" },
 ] as const;
 
 const allPermissions: Array<{ key: PermissionKey; label: string }> = [
@@ -79,7 +80,7 @@ export default async function AdminPage() {
           <h1>Quản trị phân quyền hệ thống</h1>
           <p className="muted">
             {isSuperadmin
-              ? "Quản lý toàn bộ tài khoản, position mapping và permission của admin/user. Trang xem phiếu nhập kho được chia sẻ cho mọi tài khoản đang hoạt động."
+              ? "Quản lý toàn bộ tài khoản, position mapping và permission của admin/user. Trang xem phiếu nhập kho được quản lý theo position mapping và không cần permission riêng từng user."
               : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}.`}
           </p>
         </div>
@@ -131,7 +132,7 @@ export default async function AdminPage() {
             <h2>Quyền của từng tài khoản</h2>
             <p className="muted small">
               {isSuperadmin
-                ? "Superadmin có thể cấp từng quyền cho cả admin và user. Quyền xem phiếu nhập kho không cần cấp riêng."
+                ? "Superadmin có thể cấp từng quyền cho cả admin và user. Quyền xem phiếu nhập kho được quản lý tại position mapping, không cấp riêng theo user."
                 : `Chỉ hiển thị user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"} và các quyền thuộc position này.`}
             </p>
           </div>
