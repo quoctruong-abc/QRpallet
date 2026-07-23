@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { hasPermission } from "@/lib/auth";
+import { POSITION_ROUTES } from "@/lib/routes";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { PermissionKey, Profile } from "@/lib/types";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
 import { LogoutButton } from "@/components/logout-button";
@@ -11,7 +13,7 @@ const modules: Array<{
   icon: string;
   permissions: PermissionKey[];
   adminOnly?: boolean;
-  publicAuthenticated?: boolean;
+  positionMapped?: boolean;
 }> = [
   {
     path: "/production-dashboard",
@@ -28,11 +30,28 @@ const modules: Array<{
     label: "Xem phiếu nhập kho",
     icon: "📦",
     permissions: [],
-    publicAuthenticated: true,
+    positionMapped: true,
   },
 ];
 
-export function PageShell({
+async function isReceiptModuleMapped(profile: Profile) {
+  if (profile.role === "superadmin") return true;
+  if (!profile.position) return false;
+
+  const fallback = POSITION_ROUTES[profile.position].includes("/warehouse-receipt");
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
+    .from("position_page_access")
+    .select("is_enabled")
+    .eq("position", profile.position)
+    .eq("path", "/warehouse-receipt")
+    .maybeSingle();
+
+  if (error || !data) return fallback;
+  return Boolean(data.is_enabled);
+}
+
+export async function PageShell({
   profile,
   title,
   children,
@@ -41,9 +60,10 @@ export function PageShell({
   title: string;
   children: ReactNode;
 }) {
+  const receiptModuleMapped = await isReceiptModuleMapped(profile);
   const visibleModules = modules.filter((module) => {
     if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
-    if (module.publicAuthenticated) return true;
+    if (module.positionMapped) return receiptModuleMapped;
     return module.permissions.some((permission) => hasPermission(profile, permission));
   });
   const userInitial = profile.full_name.trim().charAt(0).toUpperCase() || "U";
