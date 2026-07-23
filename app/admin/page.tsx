@@ -3,12 +3,12 @@ import { requireAdmin } from "@/lib/auth";
 import { POSITION_LABELS, POSITION_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { PermissionKey, Position, PositionPageMapping, Profile } from "@/lib/types";
-import { updatePositionPageAccess } from "@/app/superadmin/actions";
 import { CreateUserForm } from "./create-user-form";
+import { PositionMappingForm } from "./position-mapping-form";
+import { UserPermissionEditor } from "./user-permission-editor";
 import {
   resetEmployeePassword,
   toggleEmployeeStatus,
-  updateUserPermissions,
 } from "./actions";
 
 const positions: Position[] = ["planning", "production", "warehouse"];
@@ -73,6 +73,14 @@ export default async function AdminPage() {
         Boolean(profile.position && POSITION_PERMISSIONS[profile.position].includes(permission.key)),
       );
 
+  const mappingPositions = positions.map((position) => ({
+    position,
+    label: POSITION_LABELS[position],
+    enabledPaths: pages
+      .filter((page) => mappingEnabled(mappingRows, position, page.path))
+      .map((page) => page.path),
+  }));
+
   return (
     <PageShell profile={profile} title="Admin dashboard">
       <div className="hero-row">
@@ -103,14 +111,11 @@ export default async function AdminPage() {
 
           <section className="panel">
             <div className="section-heading"><div><p className="eyebrow">POSITION PAGE MAPPING</p><h2>Position nào được vào trang nào</h2></div></div>
-            <form action={updatePositionPageAccess}>
-              <div className="table-wrap"><table>
-                <thead><tr><th>Position</th>{pages.map((page) => <th key={page.path}>{page.label}</th>)}</tr></thead>
-                <tbody>{positions.map((position) => <tr key={position}><td><strong>{POSITION_LABELS[position]}</strong></td>{pages.map((page) => <td key={page.path}><input aria-label={`${POSITION_LABELS[position]} - ${page.label}`} defaultChecked={mappingEnabled(mappingRows, position, page.path)} name={`position:${position}`} type="checkbox" value={page.path} /></td>)}</tr>)}</tbody>
-              </table></div>
-              {mappingResult.error ? <p className="alert alert-error">Chưa đọc được position_page_access: {mappingResult.error.message}</p> : null}
-              <div style={{ marginTop: "1rem" }}><button className="button button-primary" type="submit">Lưu position mapping</button></div>
-            </form>
+            {mappingResult.error ? <p className="alert alert-error">Chưa đọc được position_page_access: {mappingResult.error.message}</p> : null}
+            <PositionMappingForm
+              pages={pages.map((page) => ({ ...page }))}
+              positions={mappingPositions}
+            />
           </section>
         </>
       ) : null}
@@ -138,6 +143,7 @@ export default async function AdminPage() {
             </p>
           </div>
         </div>
+        {permissionResult.error ? <p className="alert alert-error">Không thể đọc quyền user: {permissionResult.error.message}</p> : null}
         <div className="table-wrap"><table>
           <thead><tr><th>Tài khoản</th><th>Role</th><th>Position</th>{visiblePermissions.map((permission) => <th key={permission.key}>{permission.label}</th>)}<th>Lưu</th><th>Quản lý</th></tr></thead>
           <tbody>{users.map((user) => {
@@ -147,28 +153,26 @@ export default async function AdminPage() {
               <td><strong>{user.full_name}</strong><span className="table-subtext">{user.username}</span></td>
               <td><span className="badge">{user.role}</span></td>
               <td>{user.position ? POSITION_LABELS[user.position] : "Toàn quyền"}</td>
-              {visiblePermissions.map((permission) => {
-                const roleGranted = user.role === "admin" && permission.key === "receipt.view";
-                return (
-                  <td key={permission.key}>
-                    {roleGranted ? (
-                      <input aria-label={`${user.username} - ${permission.label} - theo role`} checked disabled readOnly type="checkbox" />
-                    ) : canEditPermissions ? (
-                      <input
-                        aria-label={`${user.username} - ${permission.label}`}
-                        defaultChecked={granted.has(permission.key)}
-                        form={`permissions-${user.id}`}
-                        name="permissions"
-                        type="checkbox"
-                        value={permission.key}
-                      />
-                    ) : (
+              {canEditPermissions ? (
+                <UserPermissionEditor
+                  granted={Array.from(granted)}
+                  permissions={visiblePermissions.map((permission) => ({
+                    ...permission,
+                    roleGranted: user.role === "admin" && permission.key === "receipt.view",
+                  }))}
+                  userId={user.id}
+                  username={user.username}
+                />
+              ) : (
+                <>
+                  {visiblePermissions.map((permission) => (
+                    <td key={permission.key}>
                       <input checked disabled readOnly type="checkbox" />
-                    )}
-                  </td>
-                );
-              })}
-              <td>{canEditPermissions ? <form action={updateUserPermissions} id={`permissions-${user.id}`}><input name="user_id" type="hidden" value={user.id} /><button className="button button-small button-primary" type="submit">Lưu</button></form> : <span className="muted small">Theo role</span>}</td>
+                    </td>
+                  ))}
+                  <td><span className="muted small">Theo role</span></td>
+                </>
+              )}
               <td><div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", minWidth: "190px" }}>
                 {isSuperadmin ? <form action={resetEmployeePassword} style={{ display: "flex", gap: "0.5rem" }}><input name="user_id" type="hidden" value={user.id} /><input name="password" minLength={8} placeholder="Mật khẩu mới" required type="password" /><button className="button button-small button-secondary" type="submit">Đặt lại</button></form> : null}
                 {user.id === profile.id ? <span className="muted small">Tài khoản hiện tại</span> : <form action={toggleEmployeeStatus}><input name="user_id" type="hidden" value={user.id} /><input name="next_status" type="hidden" value={String(!user.is_active)} /><button className="button button-small button-secondary" type="submit">{user.is_active ? "Khóa tài khoản" : "Mở khóa tài khoản"}</button></form>}
