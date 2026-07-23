@@ -1,7 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import {
-  AUTHENTICATED_SHARED_ROUTES,
   PAGE_PERMISSIONS,
   POSITION_PERMISSIONS,
   POSITION_ROUTES,
@@ -10,12 +9,6 @@ import type { PermissionKey, Position, Profile } from "@/lib/types";
 
 function matchesProtectedPage(pathname: string) {
   return Object.keys(PAGE_PERMISSIONS).find(
-    (path) => pathname === path || pathname.startsWith(`${path}/`),
-  );
-}
-
-function matchesAuthenticatedSharedPage(pathname: string) {
-  return AUTHENTICATED_SHARED_ROUTES.find(
     (path) => pathname === path || pathname.startsWith(`${path}/`),
   );
 }
@@ -94,11 +87,8 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  const sharedPage = matchesAuthenticatedSharedPage(pathname);
   const protectedPage = matchesProtectedPage(pathname);
-  const mappedPage = sharedPage ?? protectedPage;
-
-  if (!mappedPage || profile.role === "superadmin") return response;
+  if (!protectedPage || profile.role === "superadmin") return response;
 
   const position = profile.position as Position | null;
   if (!position) {
@@ -111,11 +101,11 @@ export async function updateSession(request: NextRequest) {
     .from("position_page_access")
     .select("is_enabled")
     .eq("position", position)
-    .eq("path", mappedPage)
+    .eq("path", protectedPage)
     .maybeSingle();
 
   const positionMapped = mappingError || !mappingRow
-    ? POSITION_ROUTES[position]?.includes(mappedPage)
+    ? POSITION_ROUTES[position]?.includes(protectedPage)
     : Boolean(mappingRow.is_enabled);
 
   if (!positionMapped) {
@@ -123,11 +113,6 @@ export async function updateSession(request: NextRequest) {
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
-
-  // Shared pages only require position mapping. No user-level permission is needed.
-  if (sharedPage) return response;
-
-  if (!protectedPage) return response;
 
   if (profile.role === "admin") {
     const required = PAGE_PERMISSIONS[protectedPage];
