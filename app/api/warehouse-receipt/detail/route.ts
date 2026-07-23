@@ -1,8 +1,8 @@
-import { authorizePermission } from "@/lib/auth";
+import { authorizeProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
-  const authorization = await authorizePermission("receipt.view");
+  const authorization = await authorizeProfile();
   if (!authorization.ok) {
     return Response.json(
       { success: false, error: authorization.error },
