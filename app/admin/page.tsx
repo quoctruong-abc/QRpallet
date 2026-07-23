@@ -83,104 +83,145 @@ export default async function AdminPage() {
 
   return (
     <PageShell profile={profile} title="Admin dashboard">
-      <div className="hero-row">
-        <div>
-          <p className="eyebrow">{isSuperadmin ? "SUPERADMIN CONTROL CENTER" : "ADMIN CONTROL CENTER"}</p>
-          <h1>Quản trị phân quyền hệ thống</h1>
-          <p className="muted">
-            {isSuperadmin
-              ? "Quản lý tài khoản, position mapping và permission. Mapping quyết định bộ phận được dùng module; admin được xem mặc định, user phải được cấp quyền riêng."
-              : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Admin được xem phiếu mặc định và có thể cấp quyền xem cho từng user.`}
-          </p>
-        </div>
-        <div className="stat-card">
-          <span className="stat-number">{users.length}</span>
-          <span className="muted">Tài khoản có thể quản lý</span>
-        </div>
-      </div>
-
-      {isSuperadmin ? (
-        <>
-          <section className="panel">
-            <div className="section-heading"><div><p className="eyebrow">ROLE RULES</p><h2>Quyền cố định theo role</h2></div></div>
-            <div className="table-wrap"><table>
-              <thead><tr><th>Role</th><th>Phạm vi</th><th>Tạo tài khoản</th><th>Quản lý tài khoản</th><th>Position mapping</th><th>Quyền nghiệp vụ</th></tr></thead>
-              <tbody>{roleRules.map((rule) => <tr key={rule.role}><td><span className="badge">{rule.role}</span></td><td>{rule.system}</td><td>{rule.create}</td><td>{rule.accounts}</td><td>{rule.mapping}</td><td>{rule.permissions}</td></tr>)}</tbody>
-            </table></div>
-          </section>
-
-          <section className="panel">
-            <div className="section-heading"><div><p className="eyebrow">POSITION PAGE MAPPING</p><h2>Position nào được vào trang nào</h2></div></div>
-            {mappingResult.error ? <p className="alert alert-error">Chưa đọc được position_page_access: {mappingResult.error.message}</p> : null}
-            <PositionMappingForm
-              pages={pages.map((page) => ({ ...page }))}
-              positions={mappingPositions}
-            />
-          </section>
-        </>
-      ) : null}
-
-      <section className="panel">
-        <div className="section-heading">
+      <div className="admin-page">
+        <div className="hero-row admin-hero">
           <div>
-            <p className="eyebrow">ACCOUNT MANAGEMENT</p>
-            <h2>Tạo tài khoản</h2>
-            {!isSuperadmin ? <p className="muted small">Admin chỉ tạo được user thuộc position của mình.</p> : null}
-          </div>
-        </div>
-        <CreateUserForm actorRole={profile.role} actorPosition={profile.position} />
-      </section>
-
-      <section className="panel">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">USER PERMISSION MATRIX</p>
-            <h2>Quyền của từng tài khoản</h2>
-            <p className="muted small">
+            <p className="eyebrow">{isSuperadmin ? "SUPERADMIN CONTROL CENTER" : "ADMIN CONTROL CENTER"}</p>
+            <h1>Quản trị phân quyền hệ thống</h1>
+            <p className="muted admin-intro">
               {isSuperadmin
-                ? "Superadmin có thể cấp quyền cho admin và user. Quyền xem phiếu của admin được bật cố định theo role; user phải được tick riêng."
-                : `Chỉ hiển thị user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Tick Xem phiếu nhập kho cho đúng người cần kiểm tra báo cáo.`}
+                ? "Quản lý tài khoản, position mapping và permission. Mapping quyết định bộ phận được dùng module; admin được xem mặc định, user phải được cấp quyền riêng."
+                : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Admin được xem phiếu mặc định và có thể cấp quyền xem cho từng user.`}
             </p>
           </div>
+          <div className="stat-card admin-stat-card">
+            <span className="stat-number">{users.length}</span>
+            <span className="muted">Tài khoản có thể quản lý</span>
+          </div>
         </div>
-        {permissionResult.error ? <p className="alert alert-error">Không thể đọc quyền user: {permissionResult.error.message}</p> : null}
-        <div className="table-wrap"><table>
-          <thead><tr><th>Tài khoản</th><th>Role</th><th>Position</th>{visiblePermissions.map((permission) => <th key={permission.key}>{permission.label}</th>)}<th>Lưu</th><th>Quản lý</th></tr></thead>
-          <tbody>{users.map((user) => {
-            const granted = permissionMap.get(user.id) ?? new Set<PermissionKey>();
-            const canEditPermissions = user.role !== "superadmin" && (isSuperadmin || user.role === "user");
-            return <tr key={user.id}>
-              <td><strong>{user.full_name}</strong><span className="table-subtext">{user.username}</span></td>
-              <td><span className="badge">{user.role}</span></td>
-              <td>{user.position ? POSITION_LABELS[user.position] : "Toàn quyền"}</td>
-              {canEditPermissions ? (
-                <UserPermissionEditor
-                  granted={Array.from(granted)}
-                  permissions={visiblePermissions.map((permission) => ({
-                    ...permission,
-                    roleGranted: user.role === "admin" && permission.key === "receipt.view",
-                  }))}
-                  userId={user.id}
-                  username={user.username}
-                />
-              ) : (
-                <>
-                  {visiblePermissions.map((permission) => (
-                    <td key={permission.key}>
-                      <input checked disabled readOnly type="checkbox" />
-                    </td>
-                  ))}
-                  <td><span className="muted small">Theo role</span></td>
-                </>
-              )}
-              <td><div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", minWidth: "190px" }}>
-                {isSuperadmin ? <form action={resetEmployeePassword} style={{ display: "flex", gap: "0.5rem" }}><input name="user_id" type="hidden" value={user.id} /><input name="password" minLength={8} placeholder="Mật khẩu mới" required type="password" /><button className="button button-small button-secondary" type="submit">Đặt lại</button></form> : null}
-                {user.id === profile.id ? <span className="muted small">Tài khoản hiện tại</span> : <form action={toggleEmployeeStatus}><input name="user_id" type="hidden" value={user.id} /><input name="next_status" type="hidden" value={String(!user.is_active)} /><button className="button button-small button-secondary" type="submit">{user.is_active ? "Khóa tài khoản" : "Mở khóa tài khoản"}</button></form>}
-              </div></td>
-            </tr>;
-          })}</tbody>
-        </table></div>
-      </section>
+
+        {isSuperadmin ? (
+          <>
+            <section className="panel admin-panel">
+              <div className="section-heading admin-section-heading">
+                <div><p className="eyebrow">ROLE RULES</p><h2>Quyền cố định theo role</h2></div>
+              </div>
+              <div className="table-wrap admin-table-wrap">
+                <table className="admin-role-table">
+                  <thead><tr><th>Role</th><th>Phạm vi</th><th>Tạo tài khoản</th><th>Quản lý tài khoản</th><th>Position mapping</th><th>Quyền nghiệp vụ</th></tr></thead>
+                  <tbody>{roleRules.map((rule) => <tr key={rule.role}>
+                    <td data-label="Role"><span className="badge">{rule.role}</span></td>
+                    <td data-label="Phạm vi">{rule.system}</td>
+                    <td data-label="Tạo tài khoản">{rule.create}</td>
+                    <td data-label="Quản lý tài khoản">{rule.accounts}</td>
+                    <td data-label="Position mapping">{rule.mapping}</td>
+                    <td data-label="Quyền nghiệp vụ">{rule.permissions}</td>
+                  </tr>)}</tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="panel admin-panel">
+              <div className="section-heading admin-section-heading">
+                <div><p className="eyebrow">POSITION PAGE MAPPING</p><h2>Position nào được vào trang nào</h2></div>
+              </div>
+              {mappingResult.error ? <p className="alert alert-error">Chưa đọc được position_page_access: {mappingResult.error.message}</p> : null}
+              <PositionMappingForm
+                pages={pages.map((page) => ({ ...page }))}
+                positions={mappingPositions}
+              />
+            </section>
+          </>
+        ) : null}
+
+        <section className="panel admin-panel">
+          <div className="section-heading admin-section-heading">
+            <div>
+              <p className="eyebrow">ACCOUNT MANAGEMENT</p>
+              <h2>Tạo tài khoản</h2>
+              {!isSuperadmin ? <p className="muted small">Admin chỉ tạo được user thuộc position của mình.</p> : null}
+            </div>
+          </div>
+          <CreateUserForm actorRole={profile.role} actorPosition={profile.position} />
+        </section>
+
+        <section className="panel admin-panel admin-users-panel">
+          <div className="section-heading admin-section-heading">
+            <div>
+              <p className="eyebrow">USER PERMISSION MATRIX</p>
+              <h2>Quyền của từng tài khoản</h2>
+              <p className="muted small">
+                {isSuperadmin
+                  ? "Superadmin có thể cấp quyền cho admin và user. Quyền xem phiếu của admin được bật cố định theo role; user phải được tick riêng."
+                  : `Chỉ hiển thị user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Tick Xem phiếu nhập kho cho đúng người cần kiểm tra báo cáo.`}
+              </p>
+            </div>
+          </div>
+          {permissionResult.error ? <p className="alert alert-error">Không thể đọc quyền user: {permissionResult.error.message}</p> : null}
+          <div className="table-wrap admin-table-wrap">
+            <table className="admin-user-table">
+              <thead><tr><th>Tài khoản</th><th>Role</th><th>Position</th>{visiblePermissions.map((permission) => <th key={permission.key}>{permission.label}</th>)}<th>Lưu</th><th>Quản lý</th></tr></thead>
+              <tbody>{users.map((user) => {
+                const granted = permissionMap.get(user.id) ?? new Set<PermissionKey>();
+                const canEditPermissions = user.role !== "superadmin" && (isSuperadmin || user.role === "user");
+                return <tr className={!user.is_active ? "admin-user-disabled" : undefined} key={user.id}>
+                  <td data-label="Tài khoản" className="admin-user-identity">
+                    <strong>{user.full_name}</strong>
+                    <span className="table-subtext">{user.username}</span>
+                    <span className={`admin-account-status ${user.is_active ? "is-active" : "is-locked"}`}>
+                      {user.is_active ? "Đang hoạt động" : "Đã khóa"}
+                    </span>
+                  </td>
+                  <td data-label="Role"><span className="badge">{user.role}</span></td>
+                  <td data-label="Position">{user.position ? POSITION_LABELS[user.position] : "Toàn quyền"}</td>
+                  {canEditPermissions ? (
+                    <UserPermissionEditor
+                      granted={Array.from(granted)}
+                      permissions={visiblePermissions.map((permission) => ({
+                        ...permission,
+                        roleGranted: user.role === "admin" && permission.key === "receipt.view",
+                      }))}
+                      userId={user.id}
+                      username={user.username}
+                    />
+                  ) : (
+                    <>
+                      {visiblePermissions.map((permission) => (
+                        <td data-label={permission.label} key={permission.key} className="admin-permission-cell">
+                          <input aria-label={`${user.username} - ${permission.label} - theo role`} checked disabled readOnly type="checkbox" />
+                        </td>
+                      ))}
+                      <td data-label="Lưu quyền"><span className="muted small">Theo role</span></td>
+                    </>
+                  )}
+                  <td data-label="Quản lý tài khoản">
+                    <div className="admin-account-actions">
+                      {isSuperadmin ? (
+                        <form action={resetEmployeePassword} className="admin-reset-form">
+                          <input name="user_id" type="hidden" value={user.id} />
+                          <input name="password" minLength={8} placeholder="Mật khẩu mới" required type="password" />
+                          <button className="button button-small button-secondary" type="submit">Đặt lại mật khẩu</button>
+                        </form>
+                      ) : null}
+                      {user.id === profile.id ? (
+                        <span className="muted small">Tài khoản hiện tại</span>
+                      ) : (
+                        <form action={toggleEmployeeStatus} className="admin-status-form">
+                          <input name="user_id" type="hidden" value={user.id} />
+                          <input name="next_status" type="hidden" value={String(!user.is_active)} />
+                          <button className={`button button-small ${user.is_active ? "button-secondary" : "button-primary"}`} type="submit">
+                            {user.is_active ? "Khóa tài khoản" : "Mở khóa tài khoản"}
+                          </button>
+                        </form>
+                      )}
+                    </div>
+                  </td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </PageShell>
   );
 }
