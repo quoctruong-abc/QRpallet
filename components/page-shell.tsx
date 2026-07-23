@@ -61,7 +61,6 @@ export function PageShell({
                 title={module.label}
               >
                 <span aria-hidden="true" className="topbar-module-icon">{module.icon}</span>
-                <span className="topbar-module-label">{module.label}</span>
               </Link>
             ))}
           </nav>
