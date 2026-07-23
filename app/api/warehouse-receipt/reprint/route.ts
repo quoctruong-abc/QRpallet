@@ -1,5 +1,5 @@
 import { authorizeProfile } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createReceiptPdf, safeReceiptFilename, type ReceiptPalletRow } from "@/lib/warehouse-receipt/pdf";
 
 export async function POST(request: Request) {
@@ -15,7 +15,9 @@ export async function POST(request: Request) {
   const receiptId = body?.receiptId?.trim();
   if (!receiptId) return Response.json({ success: false, error: "Thiếu mã phiếu." }, { status: 400 });
 
-  const supabase = await createClient();
+  // Authentication is enforced above. Use the server-only admin client for
+  // read-only cross-department access and PDF regeneration regardless of RLS.
+  const supabase = createAdminClient();
   const { data: receipt, error: receiptError } = await supabase
     .from("wh_receipt")
     .select("receipt_id,receipt_date,total_pallet,total_quantity,status")
