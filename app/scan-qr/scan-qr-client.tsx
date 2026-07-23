@@ -21,6 +21,7 @@ type ScannerInstance = {
   stop: () => Promise<void>;
   clear: () => void;
   scanFile: (file: File, showImage?: boolean) => Promise<string>;
+  getState?: () => number;
 };
 type ScannerConstructor = {
   new (
@@ -131,6 +132,7 @@ async function prepareIosVideo() {
 export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPallet[]; isAdmin: boolean }) {
   const router = useRouter();
   const scannerRef = useRef<ScannerInstance | null>(null);
+  const runningScannerRef = useRef<ScannerInstance | null>(null);
   const scanLockedRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [rows, setRows] = useState(initialRows);
@@ -163,6 +165,34 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     return Array.from(map.values());
   }, [rows]);
 
+  async function releaseScanner(scanner: ScannerInstance | null) {
+    if (!scanner) return;
+
+    let stateAllowsStop = runningScannerRef.current === scanner;
+    try {
+      const state = scanner.getState?.();
+      if (state !== undefined) stateAllowsStop = state === 2 || state === 3;
+    } catch {
+      stateAllowsStop = runningScannerRef.current === scanner;
+    }
+
+    if (runningScannerRef.current === scanner) runningScannerRef.current = null;
+
+    if (stateAllowsStop) {
+      try {
+        await scanner.stop();
+      } catch {
+        // iOS may stop the media track before html5-qrcode updates its internal state.
+      }
+    }
+
+    try {
+      scanner.clear();
+    } catch {
+      // The scanner container may already be removed or cleared.
+    }
+  }
+
   useEffect(() => {
     setIosMode(isIosDevice());
 
@@ -172,11 +202,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       scannerRef.current = null;
       scanLockedRef.current = false;
       setCameraOpen(false);
-      if (scanner) {
-        void scanner.stop().catch(() => undefined).finally(() => {
-          try { scanner.clear(); } catch { /* Camera may already be cleared by iOS. */ }
-        });
-      }
+      void releaseScanner(scanner);
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -184,19 +210,14 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       const scanner = scannerRef.current;
       scannerRef.current = null;
-      if (scanner) {
-        void scanner.stop().catch(() => undefined);
-      }
+      void releaseScanner(scanner);
     };
   }, []);
 
   async function closeCamera(clearNotice = true) {
     const scanner = scannerRef.current;
     scannerRef.current = null;
-    if (scanner) {
-      await scanner.stop().catch(() => undefined);
-      try { scanner.clear(); } catch { /* Scanner may already be cleared. */ }
-    }
+    await releaseScanner(scanner);
     scanLockedRef.current = false;
     setCameraOpen(false);
     if (clearNotice) setNotice(null);
@@ -214,8 +235,9 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
     try {
       await scanner.start(source, config, (decodedText) => void handleDetected(decodedText));
+      runningScannerRef.current = scanner;
     } catch (firstError) {
-      try { scanner.clear(); } catch { /* Ignore failed first camera cleanup. */ }
+      await releaseScanner(scanner);
       scanner = createScanner();
       scannerRef.current = scanner;
       try {
@@ -224,6 +246,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
           config,
           (decodedText) => void handleDetected(decodedText),
         );
+        runningScannerRef.current = scanner;
       } catch {
         throw firstError;
       }
@@ -260,15 +283,13 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
           },
           (decodedText) => void handleDetected(decodedText),
         );
+        runningScannerRef.current = scanner;
       }
       setNotice(null);
     } catch (error) {
       const scanner = scannerRef.current;
       scannerRef.current = null;
-      if (scanner) {
-        await scanner.stop().catch(() => undefined);
-        try { scanner.clear(); } catch { /* Ignore cleanup failure. */ }
-      }
+      await releaseScanner(scanner);
       setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể mở camera." });
     }
   }
@@ -282,22 +303,21 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     try {
       const runningScanner = scannerRef.current;
       scannerRef.current = null;
-      if (runningScanner) {
-        await runningScanner.stop().catch(() => undefined);
-        try { runningScanner.clear(); } catch { /* Ignore cleanup failure. */ }
-      }
+      await releaseScanner(runningScanner);
 
       await loadScannerScript();
       await waitForCameraContainer();
       const imageScanner = createScanner();
       scannerRef.current = imageScanner;
       const decodedText = await imageScanner.scanFile(file, false);
-      try { imageScanner.clear(); } catch { /* Ignore cleanup failure. */ }
+      await releaseScanner(imageScanner);
       scannerRef.current = null;
       setCameraOpen(false);
       await handleDetected(decodedText);
     } catch (error) {
+      const scanner = scannerRef.current;
       scannerRef.current = null;
+      await releaseScanner(scanner);
       setNotice({
         type: "error",
         text: error instanceof Error ? error.message : "Không đọc được QR trong ảnh.",
