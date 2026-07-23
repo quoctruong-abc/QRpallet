@@ -57,6 +57,7 @@ export function hasPosition(profile: Profile, position: LegacyPosition) {
 
 export function hasPermission(profile: Profile, permission: PermissionKey) {
   if (profile.role === "superadmin") return true;
+  if (profile.role === "admin" && permission === "receipt.view") return true;
   return profile.permissions?.includes(permission) ?? false;
 }
 
