@@ -33,9 +33,9 @@ export function PositionMappingForm({
   );
 
   return (
-    <form action={formAction}>
-      <div className="table-wrap">
-        <table>
+    <form action={formAction} className="admin-mapping-form">
+      <div className="table-wrap admin-table-wrap">
+        <table className="admin-mapping-table">
           <thead>
             <tr>
               <th>Position</th>
@@ -45,11 +45,12 @@ export function PositionMappingForm({
           <tbody>
             {positions.map((position) => (
               <tr key={position.position}>
-                <td><strong>{position.label}</strong></td>
+                <td data-label="Position" className="admin-mapping-position"><strong>{position.label}</strong></td>
                 {pages.map((page) => (
-                  <td key={page.path}>
+                  <td data-label={page.label} key={page.path} className="admin-permission-cell">
                     <input
                       aria-label={`${position.label} - ${page.label}`}
+                      className="admin-checkbox"
                       defaultChecked={position.enabledPaths.includes(page.path)}
                       disabled={pending}
                       name={`position:${position.position}`}
@@ -64,7 +65,7 @@ export function PositionMappingForm({
         </table>
       </div>
 
-      <div aria-live="polite" style={{ marginTop: "1rem" }}>
+      <div aria-live="polite" className="admin-form-actions">
         {pending ? <p className="alert">Đang lưu position mapping...</p> : null}
         {!pending && state.error ? <p className="alert alert-error">{state.error}</p> : null}
         {!pending && state.success ? <p className="alert alert-success">{state.success}</p> : null}
