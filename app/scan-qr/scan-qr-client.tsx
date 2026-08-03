@@ -31,7 +31,7 @@ type LiveScanItem = {
   text: string;
 };
 
-const MAX_LIVE_SCAN_ITEMS = 6;
+const MAX_LIVE_SCAN_ITEMS = 3;
 
 function cleanQrValue(value: string) {
   const trimmed = value.trim();
@@ -80,6 +80,9 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
   const scannedIdsRef = useRef(new Set(initialRows.map((row) => row.pallet_id)));
+  const cameraGuideRef = useRef<HTMLSpanElement | null>(null);
+  const captureEffectRef = useRef<HTMLDivElement | null>(null);
+  const captureTextRef = useRef<HTMLElement | null>(null);
   const [rows, setRows] = useState(initialRows);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
@@ -132,6 +135,30 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     setLiveScans((current) => current.map((scan) => (
       scan.palletId === palletId ? { ...scan, state, text } : scan
     )));
+  }
+
+  function triggerCaptureEffect(palletId: string) {
+    if (captureTextRef.current) captureTextRef.current.textContent = palletId;
+    if (typeof navigator.vibrate === "function") navigator.vibrate(55);
+
+    cameraGuideRef.current?.animate(
+      [
+        { borderColor: "rgba(255,255,255,.95)", boxShadow: "0 0 0 200vmax rgba(0,0,0,.34)", transform: "scale(1)" },
+        { borderColor: "#32d583", boxShadow: "0 0 0 200vmax rgba(2,122,72,.18), 0 0 0 8px rgba(50,213,131,.28)", transform: "scale(1.035)" },
+        { borderColor: "rgba(255,255,255,.95)", boxShadow: "0 0 0 200vmax rgba(0,0,0,.34)", transform: "scale(1)" },
+      ],
+      { duration: 420, easing: "ease-out" },
+    );
+
+    captureEffectRef.current?.animate(
+      [
+        { opacity: 0, transform: "scale(.72)", backgroundColor: "rgba(2,122,72,0)" },
+        { opacity: 1, transform: "scale(1.06)", backgroundColor: "rgba(2,122,72,.20)", offset: 0.32 },
+        { opacity: 1, transform: "scale(1)", backgroundColor: "rgba(2,122,72,.10)", offset: 0.58 },
+        { opacity: 0, transform: "scale(.96)", backgroundColor: "rgba(2,122,72,0)" },
+      ],
+      { duration: 720, easing: "cubic-bezier(.2,.8,.2,1)" },
+    );
   }
 
   useEffect(() => {
@@ -214,6 +241,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     if (!palletId || scannedIdsRef.current.has(palletId)) return;
 
     scannedIdsRef.current.add(palletId);
+    triggerCaptureEffect(palletId);
     addLiveScan({
       palletId,
       state: "loading",
@@ -370,7 +398,44 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
             <strong>Quét QR pallet liên tục</strong>
             <button type="button" onClick={() => closeCamera()}>✕</button>
           </div>
-          <div className="camera-guide"><span /><p>Đưa lần lượt các QR vào giữa khung</p></div>
+          <div className="camera-guide">
+            <span ref={cameraGuideRef} />
+            <p>Đưa lần lượt các QR vào giữa khung</p>
+          </div>
+
+          <div
+            ref={captureEffectRef}
+            aria-live="polite"
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 3,
+              display: "grid",
+              placeItems: "center",
+              pointerEvents: "none",
+              opacity: 0,
+            }}
+          >
+            <div
+              style={{
+                minWidth: "190px",
+                maxWidth: "calc(100% - 48px)",
+                display: "grid",
+                justifyItems: "center",
+                gap: "10px",
+                padding: "20px 24px",
+                border: "2px solid rgba(255,255,255,.92)",
+                borderRadius: "22px",
+                color: "white",
+                background: "rgba(2,122,72,.88)",
+                boxShadow: "0 16px 48px rgba(0,0,0,.34)",
+                textAlign: "center",
+              }}
+            >
+              <span style={{ fontSize: "2.35rem", lineHeight: 1 }}>✓</span>
+              <strong ref={captureTextRef} style={{ overflowWrap: "anywhere" }}>Đã bắt được pallet</strong>
+            </div>
+          </div>
 
           <div
             style={{
