@@ -99,11 +99,21 @@ function cameraErrorMessage(error: unknown) {
   return message || "Không thể mở camera live.";
 }
 
-function scanStateIcon(state: LiveScanState) {
-  if (state === "success") return "✓";
-  if (state === "error") return "!";
-  if (state === "duplicate") return "↻";
-  return "…";
+function palletStatusResult(status?: string) {
+  const normalized = status?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "pendingwh") return "Đã scan";
+  if (normalized === "processingwh") return "Đang nhập kho";
+  if (normalized === "whdone") return "Đã nhập kho";
+  if (normalized === "production") return "Chưa scan";
+  return status || null;
+}
+
+function scanStateFromPalletStatus(status?: string): LiveScanState {
+  const normalized = status?.trim().toLowerCase();
+  if (normalized === "whdone") return "success";
+  if (normalized === "pendingwh" || normalized === "processingwh") return "duplicate";
+  return "error";
 }
 
 function scanStateBackground(state: LiveScanState) {
@@ -141,7 +151,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     scanKey: `initial-${index}-${row.pallet_id}`,
     palletId: row.pallet_id,
     state: "success",
-    message: "Đã scan",
+    message: palletStatusResult(row.status) || "Đã scan",
     palletStatus: row.status,
     wo: row.wo,
     quantity: Number(row.quantity),
@@ -358,8 +368,8 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         addLiveScan({
           scanKey: nextScanKey(palletId),
           palletId,
-          state: "duplicate",
-          message: "Scan trùng - không gửi server",
+          state: scanStateFromPalletStatus(details.palletStatus) === "error" ? "duplicate" : scanStateFromPalletStatus(details.palletStatus),
+          message: palletStatusResult(details.palletStatus) || "Đã scan",
           ...details,
         });
       }
@@ -375,7 +385,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       scanKey,
       palletId,
       state: "loading",
-      message: "Đang gửi server",
+      message: "Đang kiểm tra",
       palletStatus: "Đang kiểm tra",
     });
 
@@ -396,9 +406,13 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
           duplicateLoggedAtRef.current.delete(palletId);
           palletDetailsRef.current.delete(palletId);
         }
+
+        const conciseResult = palletStatusResult(palletStatus)
+          || (apiResult?.code === "PALLET_NOT_FOUND" ? "Không tìm thấy" : "Không thể scan");
+
         updateLiveScan(scanKey, {
-          state: "error",
-          message: apiResult?.error || "Không thể xử lý pallet.",
+          state: palletStatus ? scanStateFromPalletStatus(palletStatus) : "error",
+          message: conciseResult,
           palletStatus: palletStatus || "Chưa xác nhận",
         });
         return;
@@ -414,15 +428,15 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       });
       updateLiveScan(scanKey, {
         state: "success",
-        message: "Đã cập nhật",
+        message: "Đã scan",
       });
-    } catch (error) {
+    } catch {
       scannedIdsRef.current.delete(palletId);
       duplicateLoggedAtRef.current.delete(palletId);
       palletDetailsRef.current.delete(palletId);
       updateLiveScan(scanKey, {
         state: "error",
-        message: error instanceof Error ? error.message : `Lỗi khi quét pallet ${palletId}.`,
+        message: "Mất kết nối",
         palletStatus: "Chưa xác nhận",
       });
     }
@@ -636,11 +650,11 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                 <table style={{ minWidth: "690px", width: "100%", color: "white", background: "transparent" }}>
                   <thead style={{ position: "sticky", top: 0, zIndex: 1, background: "rgba(15,23,42,.97)" }}>
                     <tr>
+                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>Kết quả scan</th>
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>ID pallet</th>
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>WO / Item</th>
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>SL</th>
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>Trạng thái pallet</th>
-                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>Kết quả scan</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -655,6 +669,24 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                               : "transparent",
                         }}
                       >
+                        <td title={scan.message} style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>
+                          <span style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            maxWidth: "150px",
+                            padding: "4px 8px",
+                            borderRadius: "999px",
+                            color: "white",
+                            background: scanStateBackground(scan.state),
+                            fontSize: ".72rem",
+                            fontWeight: 800,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}>
+                            {scan.message}
+                          </span>
+                        </td>
                         <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}><strong>{scan.palletId}</strong></td>
                         <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>
                           <span>{scan.wo || "—"}</span>
@@ -676,25 +708,6 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                             textOverflow: "ellipsis",
                           }}>
                             {scan.palletStatus || "—"}
-                          </span>
-                        </td>
-                        <td title={scan.message} style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>
-                          <span style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "5px",
-                            maxWidth: "185px",
-                            padding: "4px 7px",
-                            borderRadius: "999px",
-                            color: "white",
-                            background: scanStateBackground(scan.state),
-                            fontSize: ".72rem",
-                            fontWeight: 800,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}>
-                            {scanStateIcon(scan.state)} {scan.message}
                           </span>
                         </td>
                       </tr>
