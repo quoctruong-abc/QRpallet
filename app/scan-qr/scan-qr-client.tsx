@@ -109,18 +109,10 @@ function palletStatusResult(status?: string) {
   return status || null;
 }
 
-function scanStateFromPalletStatus(status?: string): LiveScanState {
-  const normalized = status?.trim().toLowerCase();
-  if (normalized === "whdone") return "success";
-  if (normalized === "pendingwh" || normalized === "processingwh") return "duplicate";
-  return "error";
-}
-
 function scanStateBackground(state: LiveScanState) {
-  if (state === "success") return "rgba(2,122,72,.94)";
-  if (state === "error") return "rgba(180,35,24,.94)";
+  if (state === "loading" || state === "success") return "rgba(2,122,72,.94)";
   if (state === "duplicate") return "rgba(181,71,8,.94)";
-  return "rgba(21,94,239,.94)";
+  return "rgba(180,35,24,.94)";
 }
 
 export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPallet[]; isAdmin: boolean }) {
@@ -150,7 +142,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   const [liveScans, setLiveScans] = useState<LiveScanItem[]>(() => initialRows.map((row, index) => ({
     scanKey: `initial-${index}-${row.pallet_id}`,
     palletId: row.pallet_id,
-    state: "success",
+    state: "error",
     message: palletStatusResult(row.status) || "Đã scan",
     palletStatus: row.status,
     wo: row.wo,
@@ -266,7 +258,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     label.style.left = `${Math.max(10, Math.min(minX, displayWidth - 180))}px`;
     label.style.top = `${Math.max(74, minY - 42)}px`;
     label.style.background = duplicate ? "rgba(181,71,8,.94)" : "rgba(2,122,72,.94)";
-    label.textContent = duplicate ? `↻ Đã scan: ${palletId}` : `✓ Đã nhận: ${palletId}`;
+    label.textContent = duplicate ? `↻ Scan trùng: ${palletId}` : `✓ Đã nhận: ${palletId}`;
 
     if (qrOutlineTimerRef.current !== null) window.clearTimeout(qrOutlineTimerRef.current);
     qrOutlineTimerRef.current = window.setTimeout(hideQrOutline, 520);
@@ -368,8 +360,8 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         addLiveScan({
           scanKey: nextScanKey(palletId),
           palletId,
-          state: scanStateFromPalletStatus(details.palletStatus) === "error" ? "duplicate" : scanStateFromPalletStatus(details.palletStatus),
-          message: palletStatusResult(details.palletStatus) || "Đã scan",
+          state: "duplicate",
+          message: "Scan trùng",
           ...details,
         });
       }
@@ -411,7 +403,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
           || (apiResult?.code === "PALLET_NOT_FOUND" ? "Không tìm thấy" : "Không thể scan");
 
         updateLiveScan(scanKey, {
-          state: palletStatus ? scanStateFromPalletStatus(palletStatus) : "error",
+          state: "error",
           message: conciseResult,
           palletStatus: palletStatus || "Chưa xác nhận",
         });
@@ -428,7 +420,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       });
       updateLiveScan(scanKey, {
         state: "success",
-        message: "Đã scan",
+        message: "Thành công",
       });
     } catch {
       scannedIdsRef.current.delete(palletId);
