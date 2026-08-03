@@ -54,6 +54,7 @@ type ScanApiResult = {
   pallet?: ScannedPallet;
 };
 
+const CAMERA_CAPTURE_DELAY_MS = 2000;
 const DUPLICATE_LOG_COOLDOWN_MS = 900;
 
 function cleanQrValue(value: string) {
@@ -117,6 +118,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
   const scanSequenceRef = useRef(0);
+  const nextCaptureAllowedAtRef = useRef(0);
   const scannedIdsRef = useRef(new Set(initialRows.map((row) => row.pallet_id)));
   const duplicateLoggedAtRef = useRef(new Map<string, number>());
   const palletDetailsRef = useRef(new Map<string, PalletDetails>(initialRows.map((row) => [
@@ -276,6 +278,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
   function closeCamera(clearNotice = true) {
     destroyScanner();
+    nextCaptureAllowedAtRef.current = 0;
     setCameraOpen(false);
     if (clearNotice) setNotice(null);
   }
@@ -284,6 +287,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     if (scannerRef.current) return;
 
     const ios = isIosDevice();
+    nextCaptureAllowedAtRef.current = 0;
     setCameraOpen(true);
     setNotice({ type: "loading", text: "Đang mở camera live..." });
 
@@ -340,6 +344,9 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     if (!palletId) return;
 
     const now = Date.now();
+    if (now < nextCaptureAllowedAtRef.current) return;
+    nextCaptureAllowedAtRef.current = now + CAMERA_CAPTURE_DELAY_MS;
+
     const alreadyScanned = scannedIdsRef.current.has(palletId);
     showQrOutline(result.cornerPoints, palletId, alreadyScanned);
 
@@ -468,6 +475,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       scannedIdsRef.current.clear();
       duplicateLoggedAtRef.current.clear();
       palletDetailsRef.current.clear();
+      nextCaptureAllowedAtRef.current = 0;
       hideQrOutline();
       setConfirmOpen(false);
       setNotice({ type: "success", text: `Tạo phiếu nhập kho thành công. Số phiếu: ${receiptId}` });
