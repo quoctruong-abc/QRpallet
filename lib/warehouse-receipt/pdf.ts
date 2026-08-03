@@ -101,9 +101,9 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
   const logo = await pdf.embedPng(Buffer.from(LOGO_PNG_BASE64, "base64"));
 
   const pageWidth = 841.89, pageHeight = 595.28, margin = 22, topY = pageHeight - 18;
-  const titleHeight = 58, infoHeight = 31, tableHeaderHeight = 54, rowHeight = 28, signatureHeight = 92, codeFooterHeight = 22;
+  const titleHeight = 50, infoHeight = 25, tableHeaderHeight = 30, rowHeight = 20, signatureHeight = 90, codeFooterHeight = 15;
   const footerHeight = signatureHeight + codeFooterHeight;
-  const columns = [28, 58, 72, 82, 144, 72, 62, 64, 73, 72, 70];
+  const columns = [20, 58, 55, 70, 244, 65, 45, 60, 73, 58, 40];
   const totalColumnsWidth = columns.reduce((sum, value) => sum + value, 0);
   const startX = margin + ((pageWidth - margin * 2) - totalColumnsWidth) / 2;
   const tableTop = topY - titleHeight - infoHeight;
