@@ -24,6 +24,14 @@ type SummaryRow = {
   palletCount: number;
   totalQuantity: number;
 };
+type LiveScanState = "loading" | "success" | "error";
+type LiveScanItem = {
+  palletId: string;
+  state: LiveScanState;
+  text: string;
+};
+
+const MAX_LIVE_SCAN_ITEMS = 6;
 
 function cleanQrValue(value: string) {
   const trimmed = value.trim();
@@ -52,7 +60,7 @@ function cameraErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "";
 
   if (name === "NotAllowedError" || /permission|denied|not allowed/i.test(message)) {
-    return "iPhone đang chặn quyền camera. Hãy mở Cài đặt > Safari > Camera và chọn Cho phép, sau đó mở lại ứng dụng.";
+    return "Thiết bị đang chặn quyền camera. Hãy cho phép camera rồi mở lại ứng dụng.";
   }
   if (name === "NotFoundError" || /not found|no camera/i.test(message)) {
     return "Không tìm thấy camera trên thiết bị.";
@@ -64,19 +72,18 @@ function cameraErrorMessage(error: unknown) {
     return "Không chọn được camera sau. Hãy đóng ứng dụng và mở lại.";
   }
 
-  return message || "Không thể mở camera. Bạn có thể dùng nút Chụp ảnh QR bên dưới.";
+  return message || "Không thể mở camera live.";
 }
 
 export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPallet[]; isAdmin: boolean }) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
-  const scanLockedRef = useRef(false);
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const scannedIdsRef = useRef(new Set(initialRows.map((row) => row.pallet_id)));
   const [rows, setRows] = useState(initialRows);
   const [cameraOpen, setCameraOpen] = useState(false);
-  const [iosMode, setIosMode] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const [liveScans, setLiveScans] = useState<LiveScanItem[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [cancelRow, setCancelRow] = useState<ScannedPallet | null>(null);
@@ -114,13 +121,23 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     }
   }
 
-  useEffect(() => {
-    setIosMode(isIosDevice());
+  function addLiveScan(item: LiveScanItem) {
+    setLiveScans((current) => [
+      ...current.filter((scan) => scan.palletId !== item.palletId),
+      item,
+    ].slice(-MAX_LIVE_SCAN_ITEMS));
+  }
 
+  function updateLiveScan(palletId: string, state: LiveScanState, text: string) {
+    setLiveScans((current) => current.map((scan) => (
+      scan.palletId === palletId ? { ...scan, state, text } : scan
+    )));
+  }
+
+  useEffect(() => {
     const handleVisibilityChange = () => {
       if (!document.hidden) return;
       destroyScanner();
-      scanLockedRef.current = false;
       setCameraOpen(false);
     };
 
@@ -133,7 +150,6 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
   function closeCamera(clearNotice = true) {
     destroyScanner();
-    scanLockedRef.current = false;
     setCameraOpen(false);
     if (clearNotice) setNotice(null);
   }
@@ -142,9 +158,8 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     if (scannerRef.current) return;
 
     const ios = isIosDevice();
-    setIosMode(ios);
     setCameraOpen(true);
-    setNotice({ type: "loading", text: "Đang mở camera..." });
+    setNotice({ type: "loading", text: "Đang mở camera live..." });
 
     try {
       await waitForVideoElement();
@@ -165,7 +180,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         (result) => void handleDetected(result.data),
         {
           preferredCamera: "environment",
-          maxScansPerSecond: ios ? 8 : 12,
+          maxScansPerSecond: ios ? 10 : 16,
           returnDetailedScanResult: true,
           highlightScanRegion: false,
           highlightCodeOutline: false,
@@ -194,34 +209,18 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     }
   }
 
-  async function handleImagePicked(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
-    destroyScanner();
-    setNotice({ type: "loading", text: "Đang đọc QR từ ảnh..." });
-
-    try {
-      const result = await QrScanner.scanImage(file, {
-        returnDetailedScanResult: true,
-        alsoTryWithoutScanRegion: true,
-      });
-      setCameraOpen(false);
-      await handleDetected(result.data);
-    } catch (error) {
-      setNotice({
-        type: "error",
-        text: error instanceof Error ? error.message : "Không đọc được QR trong ảnh.",
-      });
-    }
-  }
-
   async function handleDetected(decodedText: string) {
-    if (scanLockedRef.current) return;
-    scanLockedRef.current = true;
     const palletId = cleanQrValue(decodedText);
-    setNotice({ type: "loading", text: `Đã nhận ${palletId}. Đang lấy dữ liệu...` });
+    if (!palletId || scannedIdsRef.current.has(palletId)) return;
+
+    scannedIdsRef.current.add(palletId);
+    addLiveScan({
+      palletId,
+      state: "loading",
+      text: `${palletId} • Đang gửi lên server...`,
+    });
+
+    let receivedServerResponse = false;
 
     try {
       const response = await fetch("/api/scan-qr/scan", {
@@ -229,21 +228,25 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ palletId }),
       });
+      receivedServerResponse = true;
+
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || "Không thể xử lý pallet.");
 
       const pallet = result.pallet as ScannedPallet;
       setRows((current) => [pallet, ...current.filter((row) => row.pallet_id !== pallet.pallet_id)]);
-      setNotice({
-        type: "success",
-        text: `OK: ${pallet.pallet_id} • ${Number(pallet.quantity).toLocaleString("vi-VN")} pcs`,
-      });
+      updateLiveScan(
+        palletId,
+        "success",
+        `${pallet.pallet_id} • ${Number(pallet.quantity).toLocaleString("vi-VN")} pcs • Đã cập nhật`,
+      );
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Lỗi khi quét pallet." });
-    } finally {
-      window.setTimeout(() => {
-        scanLockedRef.current = false;
-      }, 1800);
+      if (!receivedServerResponse) scannedIdsRef.current.delete(palletId);
+      updateLiveScan(
+        palletId,
+        "error",
+        error instanceof Error ? error.message : `Lỗi khi quét pallet ${palletId}.`,
+      );
     }
   }
 
@@ -259,6 +262,8 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || "Không thể hủy pallet.");
       setRows((current) => current.filter((row) => row.pallet_id !== cancelRow.pallet_id));
+      setLiveScans((current) => current.filter((scan) => scan.palletId !== cancelRow.pallet_id));
+      scannedIdsRef.current.delete(cancelRow.pallet_id);
       setNotice({ type: "success", text: `Đã trả pallet ${cancelRow.pallet_id} về production.` });
       setCancelRow(null);
       router.refresh();
@@ -286,6 +291,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
       const receiptId = result.receiptId as string;
       setRows([]);
+      setLiveScans([]);
       setConfirmOpen(false);
       setNotice({ type: "success", text: `Tạo phiếu nhập kho thành công. Số phiếu: ${receiptId}` });
       router.refresh();
@@ -310,7 +316,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
       <div className="scan-actions">
         <button className="scan-main-button scan-camera-button" type="button" onClick={() => void openCamera()}>
-          ▣<span>Mở camera</span>
+          ▣<span>Mở camera live</span>
         </button>
         <button className="scan-main-button scan-confirm-button" type="button" disabled={!rows.length} onClick={() => setConfirmOpen(true)}>
           ✓<span>Tạo phiếu ({rows.length})</span>
@@ -350,15 +356,6 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         )}
       </div>
 
-      <input
-        ref={imageInputRef}
-        hidden
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={(event) => void handleImagePicked(event)}
-      />
-
       {cameraOpen ? (
         <div className="camera-overlay">
           <video
@@ -370,26 +367,54 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
             style={{ objectFit: "cover" }}
           />
           <div className="camera-topbar">
-            <strong>Quét QR pallet</strong>
+            <strong>Quét QR pallet liên tục</strong>
             <button type="button" onClick={() => closeCamera()}>✕</button>
           </div>
-          <div className="camera-guide"><span /><p>Đưa QR vào giữa khung</p></div>
-          <div style={{ position: "absolute", zIndex: 4, left: "50%", bottom: "max(94px, calc(env(safe-area-inset-bottom) + 82px))", transform: "translateX(-50%)", width: "min(310px, calc(100% - 28px))", display: "grid", gap: "8px" }}>
-            {notice?.type === "error" ? (
-              <button className="button button-primary" type="button" onClick={() => void openCamera()}>Thử mở lại camera</button>
+          <div className="camera-guide"><span /><p>Đưa lần lượt các QR vào giữa khung</p></div>
+
+          <div
+            style={{
+              position: "absolute",
+              zIndex: 4,
+              left: "50%",
+              bottom: "max(22px, env(safe-area-inset-bottom))",
+              transform: "translateX(-50%)",
+              width: "min(380px, calc(100% - 28px))",
+              display: "grid",
+              gap: "8px",
+            }}
+          >
+            {liveScans.map((scan) => (
+              <div
+                key={scan.palletId}
+                className={`camera-notice camera-notice-${scan.state}`}
+                style={{ position: "relative", left: "auto", right: "auto", bottom: "auto", width: "100%" }}
+              >
+                <span className={scan.state === "loading" ? "camera-spinner" : ""}>
+                  {scan.state === "success" ? "✓" : scan.state === "error" ? "!" : ""}
+                </span>
+                <p>{scan.text}</p>
+              </div>
+            ))}
+
+            {notice ? (
+              <div
+                className={`camera-notice camera-notice-${notice.type}`}
+                style={{ position: "relative", left: "auto", right: "auto", bottom: "auto", width: "100%" }}
+              >
+                <span className={notice.type === "loading" ? "camera-spinner" : ""}>
+                  {notice.type === "success" ? "✓" : notice.type === "error" ? "!" : ""}
+                </span>
+                <p>{notice.text}</p>
+              </div>
             ) : null}
-            {(iosMode || notice?.type === "error") ? (
-              <button className="button button-secondary" style={{ width: "100%", background: "rgba(255,255,255,.94)", boxShadow: "0 8px 24px rgba(0,0,0,.28)" }} type="button" onClick={() => imageInputRef.current?.click()}>
-                Chụp ảnh QR
+
+            {notice?.type === "error" ? (
+              <button className="button button-primary" type="button" onClick={() => void openCamera()}>
+                Thử mở lại camera
               </button>
             ) : null}
           </div>
-          {notice ? (
-            <div className={`camera-notice camera-notice-${notice.type}`}>
-              <span className={notice.type === "loading" ? "camera-spinner" : ""}>{notice.type === "success" ? "✓" : notice.type === "error" ? "!" : ""}</span>
-              <p>{notice.text}</p>
-            </div>
-          ) : null}
         </div>
       ) : null}
 
