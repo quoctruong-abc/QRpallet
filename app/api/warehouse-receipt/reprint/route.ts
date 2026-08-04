@@ -20,7 +20,7 @@ async function createReceiptPdfResponse(receiptId: string) {
 
   const { data: pallets, error: palletError } = await supabase
     .from("pallet_data")
-    .select("itemcode,customer,product_name,quantity")
+    .select("itemcode,customer,product_name,quantity,wo,working_day")
     .eq("wh_receipt", receiptId)
     .is("effect_to", null);
 

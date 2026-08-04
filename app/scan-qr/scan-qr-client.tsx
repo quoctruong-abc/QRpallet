@@ -24,6 +24,38 @@ type SummaryRow = {
   palletCount: number;
   totalQuantity: number;
 };
+type LiveScanState = "loading" | "success" | "error" | "duplicate";
+type LiveScanItem = {
+  scanKey: string;
+  palletId: string;
+  state: LiveScanState;
+  message: string;
+  palletStatus?: string;
+  wo?: string;
+  quantity?: number;
+  itemcode?: string;
+};
+type PalletDetails = {
+  palletStatus?: string;
+  wo?: string;
+  quantity?: number;
+  itemcode?: string;
+};
+type QrPoint = { x: number; y: number };
+type DetailedScanResult = {
+  data: string;
+  cornerPoints: QrPoint[];
+};
+type ScanApiResult = {
+  success?: boolean;
+  error?: string;
+  code?: string;
+  palletStatus?: string;
+  pallet?: ScannedPallet;
+};
+
+const CAMERA_CAPTURE_DELAY_MS = 2000;
+const DUPLICATE_LOG_COOLDOWN_MS = 900;
 
 function cleanQrValue(value: string) {
   const trimmed = value.trim();
@@ -52,7 +84,7 @@ function cameraErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "";
 
   if (name === "NotAllowedError" || /permission|denied|not allowed/i.test(message)) {
-    return "iPhone đang chặn quyền camera. Hãy mở Cài đặt > Safari > Camera và chọn Cho phép, sau đó mở lại ứng dụng.";
+    return "Thiết bị đang chặn quyền camera. Hãy cho phép camera rồi mở lại ứng dụng.";
   }
   if (name === "NotFoundError" || /not found|no camera/i.test(message)) {
     return "Không tìm thấy camera trên thiết bị.";
@@ -64,19 +96,59 @@ function cameraErrorMessage(error: unknown) {
     return "Không chọn được camera sau. Hãy đóng ứng dụng và mở lại.";
   }
 
-  return message || "Không thể mở camera. Bạn có thể dùng nút Chụp ảnh QR bên dưới.";
+  return message || "Không thể mở camera live.";
+}
+
+function palletStatusResult(status?: string) {
+  const normalized = status?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "pendingwh") return "Đã scan";
+  if (normalized === "processingwh") return "Đang nhập kho";
+  if (normalized === "whdone") return "Đã nhập kho";
+  if (normalized === "production") return "Chưa scan";
+  return status || null;
+}
+
+function scanStateBackground(state: LiveScanState) {
+  if (state === "loading" || state === "success") return "rgba(2,122,72,.94)";
+  if (state === "duplicate") return "rgba(181,71,8,.94)";
+  return "rgba(180,35,24,.94)";
 }
 
 export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPallet[]; isAdmin: boolean }) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
-  const scanLockedRef = useRef(false);
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const scanSequenceRef = useRef(0);
+  const nextCaptureAllowedAtRef = useRef(0);
+  const scannedIdsRef = useRef(new Set(initialRows.map((row) => row.pallet_id)));
+  const duplicateLoggedAtRef = useRef(new Map<string, number>());
+  const palletDetailsRef = useRef(new Map<string, PalletDetails>(initialRows.map((row) => [
+    row.pallet_id,
+    {
+      palletStatus: row.status,
+      wo: row.wo,
+      quantity: Number(row.quantity),
+      itemcode: row.itemcode,
+    },
+  ])));
+  const qrOutlineSvgRef = useRef<SVGSVGElement | null>(null);
+  const qrOutlinePolygonRef = useRef<SVGPolygonElement | null>(null);
+  const qrOutlineLabelRef = useRef<HTMLDivElement | null>(null);
+  const qrOutlineTimerRef = useRef<number | null>(null);
   const [rows, setRows] = useState(initialRows);
   const [cameraOpen, setCameraOpen] = useState(false);
-  const [iosMode, setIosMode] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const [liveScans, setLiveScans] = useState<LiveScanItem[]>(() => initialRows.map((row, index) => ({
+    scanKey: `initial-${index}-${row.pallet_id}`,
+    palletId: row.pallet_id,
+    state: "error",
+    message: palletStatusResult(row.status) || "Đã scan",
+    palletStatus: row.status,
+    wo: row.wo,
+    quantity: Number(row.quantity),
+    itemcode: row.itemcode,
+  })));
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [cancelRow, setCancelRow] = useState<ScannedPallet | null>(null);
@@ -103,7 +175,22 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     return Array.from(map.values());
   }, [rows]);
 
+  function nextScanKey(palletId: string) {
+    scanSequenceRef.current += 1;
+    return `${Date.now()}-${scanSequenceRef.current}-${palletId}`;
+  }
+
+  function hideQrOutline() {
+    if (qrOutlineTimerRef.current !== null) {
+      window.clearTimeout(qrOutlineTimerRef.current);
+      qrOutlineTimerRef.current = null;
+    }
+    if (qrOutlineSvgRef.current) qrOutlineSvgRef.current.style.display = "none";
+    if (qrOutlineLabelRef.current) qrOutlineLabelRef.current.style.display = "none";
+  }
+
   function destroyScanner() {
+    hideQrOutline();
     const scanner = scannerRef.current;
     scannerRef.current = null;
     if (!scanner) return;
@@ -114,13 +201,73 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     }
   }
 
-  useEffect(() => {
-    setIosMode(isIosDevice());
+  function addLiveScan(item: LiveScanItem) {
+    setLiveScans((current) => [item, ...current]);
+  }
 
+  function updateLiveScan(scanKey: string, patch: Partial<Omit<LiveScanItem, "scanKey" | "palletId">>) {
+    setLiveScans((current) => current.map((scan) => (
+      scan.scanKey === scanKey ? { ...scan, ...patch } : scan
+    )));
+  }
+
+  function updatePalletDetails(palletId: string, details: PalletDetails) {
+    const mergedDetails = {
+      ...palletDetailsRef.current.get(palletId),
+      ...details,
+    };
+    palletDetailsRef.current.set(palletId, mergedDetails);
+    setLiveScans((current) => current.map((scan) => (
+      scan.palletId === palletId ? { ...scan, ...mergedDetails } : scan
+    )));
+  }
+
+  function showQrOutline(cornerPoints: QrPoint[], palletId: string, duplicate: boolean) {
+    const video = videoRef.current;
+    const svg = qrOutlineSvgRef.current;
+    const polygon = qrOutlinePolygonRef.current;
+    const label = qrOutlineLabelRef.current;
+    if (!video || !svg || !polygon || !label || cornerPoints.length < 4) return;
+
+    const videoWidth = video.videoWidth;
+    const videoHeight = video.videoHeight;
+    const displayWidth = video.clientWidth;
+    const displayHeight = video.clientHeight;
+    if (!videoWidth || !videoHeight || !displayWidth || !displayHeight) return;
+
+    const scale = Math.max(displayWidth / videoWidth, displayHeight / videoHeight);
+    const offsetX = (displayWidth - videoWidth * scale) / 2;
+    const offsetY = (displayHeight - videoHeight * scale) / 2;
+    const projectedPoints = cornerPoints.map((point) => ({
+      x: offsetX + point.x * scale,
+      y: offsetY + point.y * scale,
+    }));
+
+    svg.setAttribute("viewBox", `0 0 ${displayWidth} ${displayHeight}`);
+    svg.style.display = "block";
+    polygon.setAttribute("points", projectedPoints.map((point) => `${point.x},${point.y}`).join(" "));
+
+    const stroke = duplicate ? "#fdb022" : "#32d583";
+    const fill = duplicate ? "rgba(253,176,34,.16)" : "rgba(50,213,131,.16)";
+    polygon.setAttribute("stroke", stroke);
+    polygon.setAttribute("fill", fill);
+
+    const minX = Math.min(...projectedPoints.map((point) => point.x));
+    const minY = Math.min(...projectedPoints.map((point) => point.y));
+    label.style.display = "block";
+    label.style.left = `${Math.max(10, Math.min(minX, displayWidth - 180))}px`;
+    label.style.top = `${Math.max(74, minY - 42)}px`;
+    label.style.background = duplicate ? "rgba(181,71,8,.94)" : "rgba(2,122,72,.94)";
+    label.textContent = duplicate ? `↻ Scan trùng: ${palletId}` : `✓ Đã nhận: ${palletId}`;
+
+    if (qrOutlineTimerRef.current !== null) window.clearTimeout(qrOutlineTimerRef.current);
+    qrOutlineTimerRef.current = window.setTimeout(hideQrOutline, 520);
+  }
+
+  useEffect(() => {
     const handleVisibilityChange = () => {
       if (!document.hidden) return;
       destroyScanner();
-      scanLockedRef.current = false;
       setCameraOpen(false);
     };
 
@@ -133,7 +280,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
   function closeCamera(clearNotice = true) {
     destroyScanner();
-    scanLockedRef.current = false;
+    nextCaptureAllowedAtRef.current = 0;
     setCameraOpen(false);
     if (clearNotice) setNotice(null);
   }
@@ -142,9 +289,9 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     if (scannerRef.current) return;
 
     const ios = isIosDevice();
-    setIosMode(ios);
+    nextCaptureAllowedAtRef.current = 0;
     setCameraOpen(true);
-    setNotice({ type: "loading", text: "Đang mở camera..." });
+    setNotice({ type: "loading", text: "Đang mở camera live..." });
 
     try {
       await waitForVideoElement();
@@ -162,10 +309,10 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
       const scanner = new QrScanner(
         video,
-        (result) => void handleDetected(result.data),
+        (result) => void handleDetected(result as DetailedScanResult),
         {
           preferredCamera: "environment",
-          maxScansPerSecond: ios ? 8 : 12,
+          maxScansPerSecond: ios ? 10 : 16,
           returnDetailedScanResult: true,
           highlightScanRegion: false,
           highlightCodeOutline: false,
@@ -194,34 +341,45 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     }
   }
 
-  async function handleImagePicked(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
+  async function handleDetected(result: DetailedScanResult) {
+    const palletId = cleanQrValue(result.data);
+    if (!palletId) return;
 
-    destroyScanner();
-    setNotice({ type: "loading", text: "Đang đọc QR từ ảnh..." });
+    const now = Date.now();
+    if (now < nextCaptureAllowedAtRef.current) return;
+    nextCaptureAllowedAtRef.current = now + CAMERA_CAPTURE_DELAY_MS;
 
-    try {
-      const result = await QrScanner.scanImage(file, {
-        returnDetailedScanResult: true,
-        alsoTryWithoutScanRegion: true,
-      });
-      setCameraOpen(false);
-      await handleDetected(result.data);
-    } catch (error) {
-      setNotice({
-        type: "error",
-        text: error instanceof Error ? error.message : "Không đọc được QR trong ảnh.",
-      });
+    const alreadyScanned = scannedIdsRef.current.has(palletId);
+    showQrOutline(result.cornerPoints, palletId, alreadyScanned);
+
+    if (alreadyScanned) {
+      const lastLoggedAt = duplicateLoggedAtRef.current.get(palletId) ?? 0;
+      if (now - lastLoggedAt >= DUPLICATE_LOG_COOLDOWN_MS) {
+        duplicateLoggedAtRef.current.set(palletId, now);
+        const details = palletDetailsRef.current.get(palletId) ?? {};
+        addLiveScan({
+          scanKey: nextScanKey(palletId),
+          palletId,
+          state: "duplicate",
+          message: "Scan trùng",
+          ...details,
+        });
+      }
+      return;
     }
-  }
 
-  async function handleDetected(decodedText: string) {
-    if (scanLockedRef.current) return;
-    scanLockedRef.current = true;
-    const palletId = cleanQrValue(decodedText);
-    setNotice({ type: "loading", text: `Đã nhận ${palletId}. Đang lấy dữ liệu...` });
+    scannedIdsRef.current.add(palletId);
+    palletDetailsRef.current.set(palletId, { palletStatus: "Đang kiểm tra" });
+    if (typeof navigator.vibrate === "function") navigator.vibrate(55);
+
+    const scanKey = nextScanKey(palletId);
+    addLiveScan({
+      scanKey,
+      palletId,
+      state: "loading",
+      message: "Đang kiểm tra",
+      palletStatus: "Đang kiểm tra",
+    });
 
     try {
       const response = await fetch("/api/scan-qr/scan", {
@@ -229,21 +387,50 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ palletId }),
       });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.error || "Không thể xử lý pallet.");
+      const apiResult = await response.json().catch(() => null) as ScanApiResult | null;
 
-      const pallet = result.pallet as ScannedPallet;
+      if (!response.ok || !apiResult?.success || !apiResult.pallet) {
+        const palletStatus = apiResult?.palletStatus;
+        if (palletStatus) {
+          updatePalletDetails(palletId, { palletStatus });
+        } else {
+          scannedIdsRef.current.delete(palletId);
+          duplicateLoggedAtRef.current.delete(palletId);
+          palletDetailsRef.current.delete(palletId);
+        }
+
+        const conciseResult = palletStatusResult(palletStatus)
+          || (apiResult?.code === "PALLET_NOT_FOUND" ? "Không tìm thấy" : "Không thể scan");
+
+        updateLiveScan(scanKey, {
+          state: "error",
+          message: conciseResult,
+          palletStatus: palletStatus || "Chưa xác nhận",
+        });
+        return;
+      }
+
+      const pallet = apiResult.pallet;
       setRows((current) => [pallet, ...current.filter((row) => row.pallet_id !== pallet.pallet_id)]);
-      setNotice({
-        type: "success",
-        text: `OK: ${pallet.pallet_id} • ${Number(pallet.quantity).toLocaleString("vi-VN")} pcs`,
+      updatePalletDetails(palletId, {
+        palletStatus: pallet.status,
+        wo: pallet.wo,
+        quantity: Number(pallet.quantity),
+        itemcode: pallet.itemcode,
       });
-    } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Lỗi khi quét pallet." });
-    } finally {
-      window.setTimeout(() => {
-        scanLockedRef.current = false;
-      }, 1800);
+      updateLiveScan(scanKey, {
+        state: "success",
+        message: "Thành công",
+      });
+    } catch {
+      scannedIdsRef.current.delete(palletId);
+      duplicateLoggedAtRef.current.delete(palletId);
+      palletDetailsRef.current.delete(palletId);
+      updateLiveScan(scanKey, {
+        state: "error",
+        message: "Mất kết nối",
+        palletStatus: "Chưa xác nhận",
+      });
     }
   }
 
@@ -259,6 +446,10 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || "Không thể hủy pallet.");
       setRows((current) => current.filter((row) => row.pallet_id !== cancelRow.pallet_id));
+      setLiveScans((current) => current.filter((scan) => scan.palletId !== cancelRow.pallet_id));
+      scannedIdsRef.current.delete(cancelRow.pallet_id);
+      duplicateLoggedAtRef.current.delete(cancelRow.pallet_id);
+      palletDetailsRef.current.delete(cancelRow.pallet_id);
       setNotice({ type: "success", text: `Đã trả pallet ${cancelRow.pallet_id} về production.` });
       setCancelRow(null);
       router.refresh();
@@ -286,6 +477,12 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
       const receiptId = result.receiptId as string;
       setRows([]);
+      setLiveScans([]);
+      scannedIdsRef.current.clear();
+      duplicateLoggedAtRef.current.clear();
+      palletDetailsRef.current.clear();
+      nextCaptureAllowedAtRef.current = 0;
+      hideQrOutline();
       setConfirmOpen(false);
       setNotice({ type: "success", text: `Tạo phiếu nhập kho thành công. Số phiếu: ${receiptId}` });
       router.refresh();
@@ -310,7 +507,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
       <div className="scan-actions">
         <button className="scan-main-button scan-camera-button" type="button" onClick={() => void openCamera()}>
-          ▣<span>Mở camera</span>
+          ▣<span>Mở camera live</span>
         </button>
         <button className="scan-main-button scan-confirm-button" type="button" disabled={!rows.length} onClick={() => setConfirmOpen(true)}>
           ✓<span>Tạo phiếu ({rows.length})</span>
@@ -350,15 +547,6 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         )}
       </div>
 
-      <input
-        ref={imageInputRef}
-        hidden
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={(event) => void handleImagePicked(event)}
-      />
-
       {cameraOpen ? (
         <div className="camera-overlay">
           <video
@@ -369,24 +557,167 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
             playsInline
             style={{ objectFit: "cover" }}
           />
+
+          <svg
+            ref={qrOutlineSvgRef}
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 3,
+              width: "100%",
+              height: "100%",
+              display: "none",
+              pointerEvents: "none",
+            }}
+          >
+            <polygon
+              ref={qrOutlinePolygonRef}
+              strokeWidth="7"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+
+          <div
+            ref={qrOutlineLabelRef}
+            aria-live="polite"
+            style={{
+              position: "absolute",
+              zIndex: 4,
+              display: "none",
+              maxWidth: "calc(100% - 20px)",
+              padding: "8px 12px",
+              border: "1px solid rgba(255,255,255,.8)",
+              borderRadius: "10px",
+              color: "white",
+              boxShadow: "0 8px 24px rgba(0,0,0,.3)",
+              fontSize: ".82rem",
+              fontWeight: 850,
+              overflowWrap: "anywhere",
+              pointerEvents: "none",
+            }}
+          />
+
           <div className="camera-topbar">
-            <strong>Quét QR pallet</strong>
+            <strong>Quét QR pallet liên tục</strong>
             <button type="button" onClick={() => closeCamera()}>✕</button>
           </div>
-          <div className="camera-guide"><span /><p>Đưa QR vào giữa khung</p></div>
-          <div style={{ position: "absolute", zIndex: 4, left: "50%", bottom: "max(94px, calc(env(safe-area-inset-bottom) + 82px))", transform: "translateX(-50%)", width: "min(310px, calc(100% - 28px))", display: "grid", gap: "8px" }}>
-            {notice?.type === "error" ? (
-              <button className="button button-primary" type="button" onClick={() => void openCamera()}>Thử mở lại camera</button>
-            ) : null}
-            {(iosMode || notice?.type === "error") ? (
-              <button className="button button-secondary" style={{ width: "100%", background: "rgba(255,255,255,.94)", boxShadow: "0 8px 24px rgba(0,0,0,.28)" }} type="button" onClick={() => imageInputRef.current?.click()}>
-                Chụp ảnh QR
-              </button>
-            ) : null}
+
+          <div className="camera-guide" style={{ top: "70px", bottom: "34vh" }}>
+            <span />
+            <p>Đưa lần lượt các QR vào giữa khung</p>
           </div>
+
+          <div
+            style={{
+              position: "absolute",
+              zIndex: 5,
+              left: "50%",
+              right: "auto",
+              bottom: "max(14px, env(safe-area-inset-bottom))",
+              transform: "translateX(-50%)",
+              width: "min(720px, calc(100% - 20px))",
+              height: "min(31vh, 250px)",
+              display: "grid",
+              gridTemplateRows: "auto minmax(0, 1fr)",
+              overflow: "hidden",
+              border: "1px solid rgba(255,255,255,.34)",
+              borderRadius: "16px",
+              color: "white",
+              background: "rgba(15,23,42,.88)",
+              boxShadow: "0 14px 42px rgba(0,0,0,.38)",
+              backdropFilter: "blur(12px)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,.18)" }}>
+              <strong style={{ fontSize: ".88rem" }}>Lịch sử scan trong phiên</strong>
+              <span style={{ fontSize: ".78rem", opacity: .82 }}>{liveScans.length} lượt • kéo để xem</span>
+            </div>
+
+            <div style={{ overflow: "auto", overscrollBehavior: "contain" }}>
+              {!liveScans.length ? (
+                <div style={{ padding: "20px 12px", textAlign: "center", opacity: .72 }}>Chưa có pallet nào.</div>
+              ) : (
+                <table style={{ minWidth: "690px", width: "100%", color: "white", background: "transparent" }}>
+                  <thead style={{ position: "sticky", top: 0, zIndex: 1, background: "rgba(15,23,42,.97)" }}>
+                    <tr>
+                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>Kết quả scan</th>
+                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>ID pallet</th>
+                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>WO / Item</th>
+                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>SL</th>
+                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>Trạng thái pallet</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liveScans.map((scan) => (
+                      <tr
+                        key={scan.scanKey}
+                        style={{
+                          background: scan.state === "error"
+                            ? "rgba(180,35,24,.16)"
+                            : scan.state === "duplicate"
+                              ? "rgba(181,71,8,.14)"
+                              : "transparent",
+                        }}
+                      >
+                        <td title={scan.message} style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>
+                          <span style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            maxWidth: "150px",
+                            padding: "4px 8px",
+                            borderRadius: "999px",
+                            color: "white",
+                            background: scanStateBackground(scan.state),
+                            fontSize: ".72rem",
+                            fontWeight: 800,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}>
+                            {scan.message}
+                          </span>
+                        </td>
+                        <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}><strong>{scan.palletId}</strong></td>
+                        <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>
+                          <span>{scan.wo || "—"}</span>
+                          <small style={{ display: "block", marginTop: "2px", opacity: .68 }}>{scan.itemcode || "—"}</small>
+                        </td>
+                        <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>{scan.quantity === undefined ? "—" : scan.quantity.toLocaleString("vi-VN")}</td>
+                        <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>
+                          <span style={{
+                            display: "inline-flex",
+                            maxWidth: "130px",
+                            padding: "4px 7px",
+                            borderRadius: "999px",
+                            color: "white",
+                            background: "rgba(71,84,103,.92)",
+                            fontSize: ".72rem",
+                            fontWeight: 800,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}>
+                            {scan.palletStatus || "—"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
           {notice ? (
-            <div className={`camera-notice camera-notice-${notice.type}`}>
-              <span className={notice.type === "loading" ? "camera-spinner" : ""}>{notice.type === "success" ? "✓" : notice.type === "error" ? "!" : ""}</span>
+            <div
+              className={`camera-notice camera-notice-${notice.type}`}
+              style={{ top: "82px", bottom: "auto", left: "14px", right: "14px", zIndex: 6 }}
+            >
+              <span className={notice.type === "loading" ? "camera-spinner" : ""}>
+                {notice.type === "success" ? "✓" : notice.type === "error" ? "!" : ""}
+              </span>
               <p>{notice.text}</p>
             </div>
           ) : null}

@@ -23,19 +23,31 @@ export async function POST(request: Request) {
   if (error) {
     const message = error.message || "Không thể xử lý pallet.";
     if (message.includes("PALLET_NOT_FOUND")) {
-      return NextResponse.json({ success: false, error: `Không tìm thấy pallet ${palletId}.` }, { status: 404 });
+      return NextResponse.json(
+        {
+          success: false,
+          code: "PALLET_NOT_FOUND",
+          error: `Không tìm thấy pallet ${palletId}.`,
+        },
+        { status: 404 },
+      );
     }
     if (message.includes("INVALID_STATUS:")) {
-      const status = message.split("INVALID_STATUS:")[1]?.split(/[\s\n]/)[0] || "không xác định";
-      const duplicate = status === "pendingWH" || status === "processingWH";
+      const palletStatus = message.split("INVALID_STATUS:")[1]?.split(/[\s\n]/)[0] || "không xác định";
+      const duplicate = palletStatus === "pendingWH" || palletStatus === "processingWH";
       return NextResponse.json({
         success: false,
+        code: "INVALID_STATUS",
+        palletStatus,
         error: duplicate
           ? `Pallet ${palletId} đã được quét hoặc đang xử lý kho.`
-          : `Pallet ${palletId} có trạng thái ${status}, chỉ nhận trạng thái production.`,
+          : `Pallet ${palletId} có trạng thái ${palletStatus}, chỉ nhận trạng thái production.`,
       }, { status: 409 });
     }
-    return NextResponse.json({ success: false, error: message }, { status: 400 });
+    return NextResponse.json(
+      { success: false, code: "SCAN_FAILED", error: message },
+      { status: 400 },
+    );
   }
 
   return NextResponse.json({ success: true, pallet: data });

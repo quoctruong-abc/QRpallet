@@ -27,6 +27,7 @@
     "@types/react-dom": "latest",
     "eslint": "latest",
     "eslint-config-next": "latest",
+    "supabase": "^2.111.0",
     "typescript": "latest"
   }
 }
