@@ -18,6 +18,9 @@ type FifoRow = {
 
 type PeriodMode = "day" | "range" | "all";
 
+const FIFO_PAGE_SIZE = 200;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 function readParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
@@ -27,20 +30,33 @@ function readParams(value: string | string[] | undefined) {
   return Array.isArray(value) ? value : [value];
 }
 
+function readPage(value: string | string[] | undefined) {
+  const parsed = Number.parseInt(readParam(value), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
 function isValidDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-function getCurrentWorkingDay() {
-  const shifted = new Date(Date.now() - 6 * 60 * 60 * 1000);
+function getDateInVietnam(shiftHours = 0) {
+  const source = new Date(Date.now() + shiftHours * 60 * 60 * 1000);
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Ho_Chi_Minh",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(shifted);
+  }).formatToParts(source);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
+}
+
+function getCurrentWorkingDay() {
+  return getDateInVietnam(-6);
+}
+
+function getVietnamToday() {
+  return getDateInVietnam();
 }
 
 function formatDate(value: string | null) {
@@ -60,6 +76,19 @@ function formatDateTime(value: string | null) {
   });
 }
 
+function dateToUtcMilliseconds(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return Number.NaN;
+  return Date.UTC(year, month - 1, day);
+}
+
+function calculateDelayDays(workingDay: string, today: string) {
+  const start = dateToUtcMilliseconds(workingDay);
+  const end = dateToUtcMilliseconds(today);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+  return Math.max(0, Math.floor((end - start) / MS_PER_DAY));
+}
+
 function stageLabel(status: string) {
   return status.toLowerCase() === "production" ? "Chờ Scan" : "Chờ nhập kho";
 }
@@ -72,6 +101,7 @@ export default async function CheckFifoPage({
   const profile = await requirePermission("dashboard.view");
   const params = await searchParams;
   const currentWorkingDay = getCurrentWorkingDay();
+  const vietnamToday = getVietnamToday();
   const submitted = readParam(params.filter_applied) === "1";
 
   const requestedPeriod = readParam(params.period);
@@ -93,43 +123,56 @@ export default async function CheckFifoPage({
   if (includeProduction) statuses.push("production");
   if (includeScan) statuses.push("pendingWH", "processingWH");
 
+  const page = readPage(params.page);
+  const offset = (page - 1) * FIFO_PAGE_SIZE;
   const rows: FifoRow[] = [];
+  let hasNextPage = false;
   let queryError = "";
 
   if (statuses.length > 0) {
     const supabase = await createClient();
-    const pageSize = 1000;
+    let query = supabase
+      .from("pallet_data")
+      .select("id,pallet_id,itemcode,product_name,customer,status,working_day,scanned_at")
+      .is("effect_to", null)
+      .in("status", statuses)
+      .order("working_day", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + FIFO_PAGE_SIZE);
 
-    for (let offset = 0; ; offset += pageSize) {
-      let query = supabase
-        .from("pallet_data")
-        .select("id,pallet_id,itemcode,product_name,customer,status,working_day,scanned_at")
-        .is("effect_to", null)
-        .in("status", statuses)
-        .order("working_day", { ascending: true })
-        .order("id", { ascending: true })
-        .range(offset, offset + pageSize - 1);
+    if (period === "day") {
+      query = query.eq("working_day", day);
+    } else if (period === "range") {
+      query = query.gte("working_day", from).lte("working_day", to);
+    }
 
-      if (period === "day") {
-        query = query.eq("working_day", day);
-      } else if (period === "range") {
-        query = query.gte("working_day", from).lte("working_day", to);
-      }
-
-      const { data, error } = await query;
-      if (error) {
-        queryError = error.message;
-        break;
-      }
-
+    const { data, error } = await query;
+    if (error) {
+      queryError = error.message;
+    } else {
       const pageRows = (data ?? []) as FifoRow[];
-      rows.push(...pageRows);
-      if (pageRows.length < pageSize) break;
+      hasNextPage = pageRows.length > FIFO_PAGE_SIZE;
+      rows.push(...pageRows.slice(0, FIFO_PAGE_SIZE));
     }
   }
 
   const productionCount = rows.filter((row) => row.status.toLowerCase() === "production").length;
   const scanCount = rows.length - productionCount;
+
+  const fifoPageHref = (targetPage: number) => {
+    const query = new URLSearchParams();
+    query.set("filter_applied", "1");
+    query.set("period", period);
+    if (period === "day") query.set("day", day);
+    if (period === "range") {
+      query.set("from", from);
+      query.set("to", to);
+    }
+    if (includeProduction) query.append("stage", "production");
+    if (includeScan) query.append("stage", "scan");
+    if (targetPage > 1) query.set("page", String(targetPage));
+    return `/production-dashboard/check-fifo?${query.toString()}`;
+  };
 
   return (
     <PageShell profile={profile} title="Dashboard sản xuất">
@@ -150,13 +193,16 @@ export default async function CheckFifoPage({
         .fifo-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
         .fifo-table-panel { overflow: hidden; }
         .fifo-table-panel .table-wrap { overflow-x: auto; }
-        .fifo-table { width: 100%; min-width: 980px; }
+        .fifo-table { width: 100%; min-width: 1060px; }
         .fifo-table th, .fifo-table td { padding: 11px 10px; vertical-align: top; }
         .fifo-pallet-cell { display: grid; gap: 6px; }
         .fifo-stage-badge { display: inline-flex; width: fit-content; padding: 4px 8px; border-radius: 999px; font-size: .7rem; font-weight: 900; }
         .fifo-stage-production { color: #175cd3; background: #eff8ff; }
         .fifo-stage-scan { color: #854a0e; background: #fffaeb; }
         .fifo-date-cell { white-space: nowrap; }
+        .fifo-delay { white-space: nowrap; font-weight: 900; }
+        .fifo-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
+        .fifo-pagination-actions { display: flex; gap: 8px; }
         .fifo-empty { padding: 38px 18px; color: var(--muted); text-align: center; }
         @media (max-width: 820px) {
           .fifo-period-options { grid-template-columns: 1fr; }
@@ -167,6 +213,9 @@ export default async function CheckFifoPage({
           .dashboard-view-tab { min-width: 0; flex: 1; }
           .fifo-range-inputs { grid-template-columns: 1fr; }
           .fifo-filter-actions .button { width: 100%; }
+          .fifo-pagination { align-items: stretch; flex-direction: column; }
+          .fifo-pagination-actions { width: 100%; }
+          .fifo-pagination-actions .button { flex: 1; }
         }
       `}</style>
 
@@ -203,7 +252,7 @@ export default async function CheckFifoPage({
 
               <label className="fifo-period-option">
                 <span><input defaultChecked={period === "all"} name="period" type="radio" value="all" /> Tất cả</span>
-                <small className="muted">Không giới hạn ngày sản xuất.</small>
+                <small className="muted">Không giới hạn ngày; tải tối đa {FIFO_PAGE_SIZE} pallet mỗi trang.</small>
               </label>
             </div>
           </div>
@@ -231,9 +280,9 @@ export default async function CheckFifoPage({
         {!includeProduction && !includeScan ? <section className="alert alert-error">Chọn ít nhất một process: Sản xuất hoặc Scan.</section> : null}
 
         <div className="fifo-summary">
-          <div className="stat-card"><span className="muted small">Tổng pallet đang chờ</span><span className="stat-number">{rows.length.toLocaleString("vi-VN")}</span></div>
-          <div className="stat-card"><span className="muted small">Chờ Scan</span><span className="stat-number">{productionCount.toLocaleString("vi-VN")}</span></div>
-          <div className="stat-card"><span className="muted small">Đã Scan · chờ nhập kho</span><span className="stat-number">{scanCount.toLocaleString("vi-VN")}</span></div>
+          <div className="stat-card"><span className="muted small">Pallet đang hiển thị</span><span className="stat-number">{rows.length.toLocaleString("vi-VN")}</span></div>
+          <div className="stat-card"><span className="muted small">Chờ Scan trên trang</span><span className="stat-number">{productionCount.toLocaleString("vi-VN")}</span></div>
+          <div className="stat-card"><span className="muted small">Chờ nhập kho trên trang</span><span className="stat-number">{scanCount.toLocaleString("vi-VN")}</span></div>
         </div>
 
         <section className="panel fifo-table-panel">
@@ -241,7 +290,7 @@ export default async function CheckFifoPage({
             <div>
               <p className="eyebrow">FIFO · CŨ NHẤT TRƯỚC</p>
               <h2>Pallet chưa đi tới process tiếp theo</h2>
-              <p className="muted small">Sắp xếp theo ngày sản xuất tăng dần; pallet cũ nhất nằm trên cùng.</p>
+              <p className="muted small">Sắp xếp theo ngày sản xuất tăng dần; mỗi lần chỉ tải tối đa {FIFO_PAGE_SIZE} pallet để tránh query lớn.</p>
             </div>
           </div>
 
@@ -251,6 +300,7 @@ export default async function CheckFifoPage({
                 <tr>
                   <th>Pallet ID</th>
                   <th>Ngày sản xuất</th>
+                  <th>Số ngày delay</th>
                   <th>Ngày scan</th>
                   <th>Item</th>
                   <th>Khách hàng</th>
@@ -260,6 +310,7 @@ export default async function CheckFifoPage({
               <tbody>
                 {rows.length ? rows.map((row) => {
                   const isProduction = row.status.toLowerCase() === "production";
+                  const delayDays = calculateDelayDays(row.working_day, vietnamToday);
                   return (
                     <tr key={row.id}>
                       <td>
@@ -271,6 +322,7 @@ export default async function CheckFifoPage({
                         </div>
                       </td>
                       <td className="fifo-date-cell">{formatDate(row.working_day)}</td>
+                      <td className="fifo-delay">{delayDays.toLocaleString("vi-VN")} ngày</td>
                       <td className="fifo-date-cell">{formatDateTime(row.scanned_at)}</td>
                       <td>{row.itemcode ?? "—"}</td>
                       <td>{row.customer ?? "—"}</td>
@@ -278,11 +330,21 @@ export default async function CheckFifoPage({
                     </tr>
                   );
                 }) : (
-                  <tr><td className="fifo-empty" colSpan={6}>Không có pallet phù hợp với điều kiện FIFO đã chọn.</td></tr>
+                  <tr><td className="fifo-empty" colSpan={7}>Không có pallet phù hợp với điều kiện FIFO đã chọn.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {(page > 1 || hasNextPage) ? (
+            <div className="fifo-pagination">
+              <span className="muted small">Trang {page} · tối đa {FIFO_PAGE_SIZE} pallet/trang</span>
+              <div className="fifo-pagination-actions">
+                {page > 1 ? <Link className="button button-secondary" href={fifoPageHref(page - 1)}>Trang trước</Link> : null}
+                {hasNextPage ? <Link className="button button-primary" href={fifoPageHref(page + 1)}>Trang sau</Link> : null}
+              </div>
+            </div>
+          ) : null}
         </section>
       </div>
     </PageShell>
