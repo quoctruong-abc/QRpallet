@@ -29,6 +29,41 @@ alter table public.user_permissions
     )
   );
 
+-- Admins may still manage user permissions inside their own position, but the
+-- Dashboard permission is reserved for Super Admin at the database layer too.
+drop policy if exists user_permissions_manage_scope on public.user_permissions;
+
+create policy user_permissions_manage_scope on public.user_permissions
+  to authenticated
+  using (
+    public.current_profile_role() = 'superadmin'
+    or (
+      public.current_profile_role() = 'admin'
+      and permission_key <> 'dashboard.view'
+      and exists (
+        select 1
+        from public.profiles target
+        where target.id = user_permissions.user_id
+          and target.role = 'user'
+          and target.position = public.current_profile_position()
+      )
+    )
+  )
+  with check (
+    public.current_profile_role() = 'superadmin'
+    or (
+      public.current_profile_role() = 'admin'
+      and permission_key <> 'dashboard.view'
+      and exists (
+        select 1
+        from public.profiles target
+        where target.id = user_permissions.user_id
+          and target.role = 'user'
+          and target.position = public.current_profile_position()
+      )
+    )
+  );
+
 create or replace function public.has_permission(p_permission text)
 returns boolean
 language sql
@@ -64,5 +99,6 @@ as $function$
 $function$;
 
 revoke all on function public.has_permission(text) from public;
+grant execute on function public.has_permission(text) to anon;
 grant execute on function public.has_permission(text) to authenticated;
 grant execute on function public.has_permission(text) to service_role;
