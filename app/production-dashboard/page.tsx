@@ -302,8 +302,8 @@ export default async function ProductionDashboardPage({
 
   const supabase = await createClient();
   const palletRows: PalletDashboardRow[] = [];
-  let queryError = "";
-  let summaryError = "";
+  let queryError = false;
+  let summaryError = false;
   const dashboardFields =
     "id,pallet_id,itemcode,product_name,customer,wo,quanorder,quantity,status,has_been_edited,has_been_return,working_day";
 
@@ -312,7 +312,14 @@ export default async function ProductionDashboardPage({
     p_to: endDate,
   });
 
-  if (summaryRpcError) summaryError = summaryRpcError.message;
+  if (summaryRpcError) {
+    summaryError = true;
+    console.error("Dashboard summary database error", {
+      startDate,
+      endDate,
+      message: summaryRpcError.message,
+    });
+  }
   const rangeSummary = normalizeRangeSummary(
     ((summaryData ?? []) as DashboardSummaryRpcRow[])[0],
   );
@@ -328,7 +335,12 @@ export default async function ProductionDashboardPage({
       .range(offset, offset + QUERY_BATCH_SIZE - 1);
 
     if (error) {
-      queryError = error.message;
+      queryError = true;
+      console.error("Dashboard active pallet query database error", {
+        pageStartDate,
+        pageEndDate,
+        message: error.message,
+      });
       break;
     }
 
@@ -337,10 +349,6 @@ export default async function ProductionDashboardPage({
     if (pageRows.length < QUERY_BATCH_SIZE) break;
   }
 
-  // Deleted pallets have no active version (effect_to is no longer null), so
-  // load only terminal delete versions for the seven-day table window instead
-  // of all historical versions. They remain visible for audit/warning but are
-  // excluded from pallet/production/scan/warehouse KPIs.
   if (!queryError) {
     for (let offset = 0; ; offset += QUERY_BATCH_SIZE) {
       const { data, error } = await supabase
@@ -354,7 +362,12 @@ export default async function ProductionDashboardPage({
         .range(offset, offset + QUERY_BATCH_SIZE - 1);
 
       if (error) {
-        queryError = error.message;
+        queryError = true;
+        console.error("Dashboard deleted pallet query database error", {
+          pageStartDate,
+          pageEndDate,
+          message: error.message,
+        });
         break;
       }
 
@@ -515,11 +528,8 @@ export default async function ProductionDashboardPage({
           </form>
         </div>
 
-        {summaryError ? (
-          <section className="alert alert-error">Không thể tải summary toàn khoảng: {summaryError}</section>
-        ) : null}
-        {queryError ? (
-          <section className="alert alert-error">Không thể tải dữ liệu bảng dashboard: {queryError}</section>
+        {summaryError || queryError ? (
+          <section className="alert alert-error">Không thể tải dữ liệu. Vui lòng thử lại.</section>
         ) : null}
 
         <div className="dashboard-summary-heading">
