@@ -234,6 +234,7 @@ export default async function CheckFifoPage({
         <div className="dashboard-view-tabs" aria-label="Dashboard tabs">
           <Link className="dashboard-view-tab" href="/production-dashboard">Dashboard</Link>
           <Link className="dashboard-view-tab dashboard-view-tab-active" href="/production-dashboard/check-fifo">Check FIFO</Link>
+          <Link className="dashboard-view-tab" href="/production-dashboard/check-item">Check item</Link>
         </div>
 
         <FifoFilterForm
