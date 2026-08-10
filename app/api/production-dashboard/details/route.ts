@@ -3,6 +3,8 @@ import { authorizePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
+const DATABASE_ERROR_MESSAGE = "Không thể tải dữ liệu. Vui lòng thử lại.";
+
 type PalletDetailRow = {
   id: number;
   pallet_id: string;
@@ -138,24 +140,28 @@ async function loadPalletDetails(url: URL) {
       query = mode === "item" ? query.eq("itemcode", key) : query.eq("wo", key);
 
       const { data, error } = await query;
-      if (error) return error.message;
+      if (error) {
+        console.error("Dashboard pallet detail database error", {
+          mode,
+          key,
+          startDate,
+          endDate,
+          isDeleted,
+          message: error.message,
+        });
+        return false;
+      }
 
       const pageRows = (data ?? []) as Omit<PalletDetailRow, "is_deleted">[];
       rows.push(...pageRows.map((row) => ({ ...row, is_deleted: isDeleted })));
       if (pageRows.length < pageSize) break;
     }
 
-    return "";
+    return true;
   }
 
-  const activeError = await appendRows(false);
-  if (activeError) {
-    return NextResponse.json({ success: false, error: activeError }, { status: 500 });
-  }
-
-  const deletedError = await appendRows(true);
-  if (deletedError) {
-    return NextResponse.json({ success: false, error: deletedError }, { status: 500 });
+  if (!(await appendRows(false)) || !(await appendRows(true))) {
+    return NextResponse.json({ success: false, error: DATABASE_ERROR_MESSAGE }, { status: 500 });
   }
 
   rows.sort(
@@ -192,15 +198,14 @@ async function loadPalletHistory(palletId: string) {
       .order("cancelled_at", { ascending: true }),
   ]);
 
-  if (versionResult.error) {
+  if (versionResult.error || returnResult.error) {
+    console.error("Dashboard pallet history database error", {
+      palletId,
+      versionError: versionResult.error?.message ?? null,
+      returnError: returnResult.error?.message ?? null,
+    });
     return NextResponse.json(
-      { success: false, error: versionResult.error.message },
-      { status: 500 },
-    );
-  }
-  if (returnResult.error) {
-    return NextResponse.json(
-      { success: false, error: returnResult.error.message },
+      { success: false, error: DATABASE_ERROR_MESSAGE },
       { status: 500 },
     );
   }
@@ -387,10 +392,7 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error("Production dashboard details failed", error);
     return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Không thể tải chi tiết dashboard.",
-      },
+      { success: false, error: DATABASE_ERROR_MESSAGE },
       { status: 500 },
     );
   }
