@@ -11,7 +11,10 @@ export type AdminActionState = { error: string; success: string };
 
 const validRoles: AppRole[] = ["superadmin", "admin", "user"];
 const validPositions: Position[] = ["planning", "production", "warehouse"];
-const validPermissions = new Set<PermissionKey>(Object.values(POSITION_PERMISSIONS).flat());
+const validPermissions = new Set<PermissionKey>([
+  ...Object.values(POSITION_PERMISSIONS).flat(),
+  "dashboard.view",
+]);
 
 function canManageTarget(
   actor: Awaited<ReturnType<typeof requireAdmin>>,
@@ -199,11 +202,11 @@ export async function updateUserPermissions(
   }
 
   const targetPosition = target.position as Position | null;
-  const allowed = actor.role === "superadmin"
-    ? requested.filter((permission) => validPermissions.has(permission))
-    : requested.filter((permission) =>
-        Boolean(targetPosition && POSITION_PERMISSIONS[targetPosition].includes(permission)),
-      );
+  const manageablePermissions = actor.role === "superadmin"
+    ? validPermissions
+    : new Set<PermissionKey>(targetPosition ? POSITION_PERMISSIONS[targetPosition] : []);
+
+  const allowed = requested.filter((permission) => manageablePermissions.has(permission));
 
   const { data: existingRows, error: existingError } = await adminClient
     .from("user_permissions")
@@ -219,7 +222,9 @@ export async function updateUserPermissions(
   );
   const allowedSet = new Set(allowed);
   const toAdd = allowed.filter((permission) => !existing.has(permission));
-  const toDelete = Array.from(existing).filter((permission) => !allowedSet.has(permission));
+  const toDelete = Array.from(existing).filter(
+    (permission) => manageablePermissions.has(permission) && !allowedSet.has(permission),
+  );
 
   if (toAdd.length > 0) {
     const { error: insertError } = await adminClient.from("user_permissions").insert(
