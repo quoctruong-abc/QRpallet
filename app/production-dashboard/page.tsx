@@ -297,6 +297,9 @@ export default async function ProductionDashboardPage({
     <PageShell profile={profile} title="Dashboard sản xuất">
       <style>{`
         .dashboard-page { display: grid; gap: 22px; }
+        .dashboard-view-tabs { display: inline-flex; gap: 6px; width: fit-content; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: #f2f4f7; }
+        .dashboard-view-tab { min-width: 140px; padding: 10px 16px; border-radius: 9px; color: #475467; font-weight: 850; text-align: center; }
+        .dashboard-view-tab-active { color: white; background: var(--primary); box-shadow: 0 4px 10px rgba(21,94,239,.2); }
         .dashboard-filter-grid { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(420px, 1.4fr); gap: 14px; }
         .dashboard-filter-card { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: white; }
         .dashboard-filter-card label { min-width: 180px; flex: 1 1 180px; }
@@ -352,12 +355,12 @@ export default async function ProductionDashboardPage({
           .dashboard-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         @media (max-width: 640px) {
+          .dashboard-view-tabs, .dashboard-tabs { width: 100%; }
+          .dashboard-view-tab, .dashboard-tab { flex: 1; min-width: 0; }
           .dashboard-filter-card { display: grid; }
           .dashboard-filter-card label, .dashboard-filter-card .button { width: 100%; }
           .dashboard-summary-grid { grid-template-columns: 1fr; }
           .dashboard-table-header { align-items: stretch; flex-direction: column; }
-          .dashboard-tabs { width: 100%; }
-          .dashboard-tab { flex: 1; min-width: 0; }
         }
       `}</style>
 
@@ -367,6 +370,11 @@ export default async function ProductionDashboardPage({
             <h1>Dashboard sản xuất</h1>
             <p className="muted">Theo dõi tiến độ tạo pallet, scan và nhập kho theo ngày làm việc.</p>
           </div>
+        </div>
+
+        <div className="dashboard-view-tabs" aria-label="Dashboard tabs">
+          <Link className="dashboard-view-tab dashboard-view-tab-active" href="/production-dashboard">Dashboard</Link>
+          <Link className="dashboard-view-tab" href="/production-dashboard/check-fifo">Check FIFO</Link>
         </div>
 
         <div className="dashboard-filter-grid">
