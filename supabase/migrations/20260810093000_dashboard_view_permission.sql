@@ -102,3 +102,18 @@ revoke all on function public.has_permission(text) from public;
 grant execute on function public.has_permission(text) to anon;
 grant execute on function public.has_permission(text) to authenticated;
 grant execute on function public.has_permission(text) to service_role;
+
+-- Dashboard users need SELECT access to pallet_data itself. Keep the existing
+-- operational permissions and add dashboard.view as another read-only gate.
+drop policy if exists pallet_data_select_authorized on public.pallet_data;
+
+create policy pallet_data_select_authorized on public.pallet_data
+  for select
+  to authenticated
+  using (
+    public.has_permission('pallet.create')
+    or public.has_permission('pallet.edit')
+    or public.has_permission('scan.standard')
+    or public.has_permission('receipt.view')
+    or public.has_permission('dashboard.view')
+  );
