@@ -111,7 +111,12 @@ begin
     raise exception 'INVALID_PALLET_ID';
   end if;
 
-  select count(distinct trim(x.pallet_id))::integer
+  p_pallet_ids := array(
+    select trim(x.pallet_id)
+    from unnest(p_pallet_ids) x(pallet_id)
+  );
+
+  select count(distinct x.pallet_id)::integer
     into v_distinct_count
   from unnest(p_pallet_ids) x(pallet_id);
 
@@ -123,7 +128,7 @@ begin
     select 1
     from unnest(p_pallet_ids) x(pallet_id)
     left join public.pallet_data p
-      on p.pallet_id = trim(x.pallet_id)
+      on p.pallet_id = x.pallet_id
      and p.effect_to is null
     where p.pallet_id is null
        or p.status <> 'pendingWH'
