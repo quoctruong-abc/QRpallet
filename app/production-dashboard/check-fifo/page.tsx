@@ -13,7 +13,6 @@ type FifoRow = {
   customer: string | null;
   status: string;
   working_day: string;
-  created_at: string;
   scanned_at: string | null;
 };
 
@@ -104,11 +103,11 @@ export default async function CheckFifoPage({
     for (let offset = 0; ; offset += pageSize) {
       let query = supabase
         .from("pallet_data")
-        .select("id,pallet_id,itemcode,product_name,customer,status,working_day,created_at,scanned_at")
+        .select("id,pallet_id,itemcode,product_name,customer,status,working_day,scanned_at")
         .is("effect_to", null)
         .in("status", statuses)
         .order("working_day", { ascending: true })
-        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
         .range(offset, offset + pageSize - 1);
 
       if (period === "day") {
@@ -158,7 +157,6 @@ export default async function CheckFifoPage({
         .fifo-stage-production { color: #175cd3; background: #eff8ff; }
         .fifo-stage-scan { color: #854a0e; background: #fffaeb; }
         .fifo-date-cell { white-space: nowrap; }
-        .fifo-date-cell small { display: block; margin-top: 3px; color: var(--muted); }
         .fifo-empty { padding: 38px 18px; color: var(--muted); text-align: center; }
         @media (max-width: 820px) {
           .fifo-period-options { grid-template-columns: 1fr; }
@@ -243,7 +241,7 @@ export default async function CheckFifoPage({
             <div>
               <p className="eyebrow">FIFO · CŨ NHẤT TRƯỚC</p>
               <h2>Pallet chưa đi tới process tiếp theo</h2>
-              <p className="muted small">Sắp xếp theo ngày sản xuất và thời gian tạo pallet tăng dần.</p>
+              <p className="muted small">Sắp xếp theo ngày sản xuất tăng dần; pallet cũ nhất nằm trên cùng.</p>
             </div>
           </div>
 
@@ -272,7 +270,7 @@ export default async function CheckFifoPage({
                           </span>
                         </div>
                       </td>
-                      <td className="fifo-date-cell">{formatDate(row.working_day)}<small>Tạo: {formatDateTime(row.created_at)}</small></td>
+                      <td className="fifo-date-cell">{formatDate(row.working_day)}</td>
                       <td className="fifo-date-cell">{formatDateTime(row.scanned_at)}</td>
                       <td>{row.itemcode ?? "—"}</td>
                       <td>{row.customer ?? "—"}</td>
