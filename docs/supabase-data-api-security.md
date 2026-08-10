@@ -33,6 +33,7 @@ cancel_pending_pallet(text)
 create_warehouse_receipt_from_scan(text[])
 dashboard_progress(text,text,date,date)
 dashboard_summary(date,date)
+dashboard_check_item(text)
 ```
 
 Trigger/event-trigger helpers such as `set_updated_at`, `set_pallet_working_day`, `set_wh_receipt_working_day`, `handle_new_auth_user`, `rls_auto_enable`, `vietnam_working_day` and `is_admin` are not callable directly by `authenticated` after the hardening migration.
