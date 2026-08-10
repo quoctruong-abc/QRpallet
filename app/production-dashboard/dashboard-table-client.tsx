@@ -37,11 +37,12 @@ type PalletDetail = {
   updated_at: string;
   scanned_at: string | null;
   wh_receipt: string | null;
+  is_deleted: boolean;
 };
 
 type PalletHistoryEvent = {
   id: string;
-  type: "edit" | "return";
+  type: "edit" | "return" | "delete";
   occurredAt: string;
   actor: string;
   title: string;
@@ -102,6 +103,8 @@ function statusLabel(status: string) {
       return "Đang xử lý nhập kho";
     case "whdone":
       return "Đã nhập kho";
+    case "deleted":
+      return "Đã xóa";
     default:
       return status || "—";
   }
@@ -117,6 +120,8 @@ function statusClass(status: string) {
       return "dashboard-status-processing";
     case "whdone":
       return "dashboard-status-done";
+    case "deleted":
+      return "dashboard-status-deleted";
     default:
       return "dashboard-status-default";
   }
@@ -246,6 +251,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
         .dashboard-status-scanned { color: #854a0e; background: #fffaeb; }
         .dashboard-status-processing { color: #5925dc; background: #f4f3ff; }
         .dashboard-status-done { color: #027a48; background: #ecfdf3; }
+        .dashboard-status-deleted { color: #b42318; background: #fef3f2; }
         .dashboard-status-default { color: #475467; background: #f2f4f7; }
         .dashboard-history-open-button { position: relative; min-width: 64px; }
         .dashboard-history-open-button .dashboard-history-alert { position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: #d92d20; font-size: .66rem; font-weight: 900; box-shadow: 0 2px 6px rgba(217,45,32,.3); }
@@ -272,7 +278,8 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
         .dashboard-history-heading time { color: var(--muted); font-size: .78rem; white-space: nowrap; }
         .dashboard-history-type { display: inline-flex; margin-bottom: 8px; padding: 4px 8px; border-radius: 999px; font-size: .7rem; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
         .dashboard-history-type-edit { color: #175cd3; background: #eff8ff; }
-        .dashboard-history-type-return { color: #b42318; background: #fef3f2; }
+        .dashboard-history-type-return { color: #854a0e; background: #fffaeb; }
+        .dashboard-history-type-delete { color: #b42318; background: #fef3f2; }
         .dashboard-history-card p { margin: 5px 0 0; line-height: 1.5; }
         .dashboard-history-actor { display: block; color: var(--muted); font-size: .82rem; }
         .dashboard-history-empty { margin-top: 14px; padding: 18px; border: 1px dashed #d0d5dd; border-radius: 14px; color: #667085; text-align: center; background: #fcfcfd; }
@@ -312,10 +319,10 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
                     <strong>{row.label}</strong>
                     {row.warning ? (
                       <button
-                        aria-label={`Có pallet thuộc ${row.label} đã chỉnh sửa hoặc return`}
+                        aria-label={`Có pallet thuộc ${row.label} đã chỉnh sửa, return hoặc xóa`}
                         className="dashboard-warning-button"
                         onClick={() => openDetails(row)}
-                        title="Có pallet đã chỉnh sửa hoặc return. Bấm để xem chi tiết."
+                        title="Có pallet đã chỉnh sửa, return hoặc xóa. Bấm để xem chi tiết."
                         type="button"
                       >
                         !
@@ -384,7 +391,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
             </div>
 
             <div className="dashboard-modal-summary">
-              <span>{selectedRow.palletCount.toLocaleString("vi-VN")} pallet</span>
+              <span>{selectedRow.palletCount.toLocaleString("vi-VN")} pallet active</span>
               <span>{selectedRow.producedQuantity.toLocaleString("vi-VN")} pcs đã sản xuất</span>
               <span>{selectedRow.scannedQuantity.toLocaleString("vi-VN")} pcs đã scan</span>
               <span>{selectedRow.warehouseQuantity.toLocaleString("vi-VN")} pcs đã nhập kho</span>
@@ -429,7 +436,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
                             type="button"
                           >
                             Xem
-                            {pallet.has_been_edited || pallet.has_been_return ? (
+                            {pallet.has_been_edited || pallet.has_been_return || pallet.is_deleted ? (
                               <span aria-hidden="true" className="dashboard-history-alert">!</span>
                             ) : null}
                           </button>
@@ -525,7 +532,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
                 </section>
 
                 <section className="dashboard-change-section">
-                  <p className="eyebrow">LỊCH SỬ CHỈNH SỬA / RETURN</p>
+                  <p className="eyebrow">LỊCH SỬ CHỈNH SỬA / RETURN / XÓA</p>
                   <h3>Dấu vết thay đổi</h3>
 
                   {history.length ? (
@@ -533,7 +540,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
                       {history.map((event) => (
                         <article className="dashboard-history-card" key={event.id}>
                           <span className={`dashboard-history-type dashboard-history-type-${event.type}`}>
-                            {event.type === "edit" ? "EDIT" : "RETURN"}
+                            {event.type === "edit" ? "EDIT" : event.type === "return" ? "RETURN" : "DELETE"}
                           </span>
                           <div className="dashboard-history-heading">
                             <div>
@@ -548,7 +555,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
                       ))}
                     </div>
                   ) : (
-                    <p className="dashboard-history-empty">Pallet chưa có chỉnh sửa hoặc return.</p>
+                    <p className="dashboard-history-empty">Pallet chưa có chỉnh sửa, return hoặc xóa.</p>
                   )}
                 </section>
               </>
