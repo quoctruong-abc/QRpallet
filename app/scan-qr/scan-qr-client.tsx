@@ -56,6 +56,8 @@ type ScanApiResult = {
 
 const CAMERA_CAPTURE_DELAY_MS = 2000;
 const DUPLICATE_LOG_COOLDOWN_MS = 900;
+const MAX_SCAN_PALLETS = 200;
+const SCAN_LIMIT_WARNING_AT = 150;
 
 function cleanQrValue(value: string) {
   const trimmed = value.trim();
@@ -153,6 +155,9 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   const [confirming, setConfirming] = useState(false);
   const [cancelRow, setCancelRow] = useState<ScannedPallet | null>(null);
   const [cancelling, setCancelling] = useState(false);
+
+  const showScanLimitIndicator = rows.length >= SCAN_LIMIT_WARNING_AT;
+  const scanLimitReached = rows.length >= MAX_SCAN_PALLETS;
 
   const summary = useMemo<SummaryRow[]>(() => {
     const map = new Map<string, SummaryRow>();
@@ -287,6 +292,10 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
   async function openCamera() {
     if (scannerRef.current) return;
+    if (scannedIdsRef.current.size >= MAX_SCAN_PALLETS) {
+      setNotice({ type: "error", text: "Đã đạt giới hạn tối đa 200 pallet. Hãy tạo phiếu trước khi scan thêm." });
+      return;
+    }
 
     const ios = isIosDevice();
     nextCaptureAllowedAtRef.current = 0;
@@ -350,9 +359,9 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     nextCaptureAllowedAtRef.current = now + CAMERA_CAPTURE_DELAY_MS;
 
     const alreadyScanned = scannedIdsRef.current.has(palletId);
-    showQrOutline(result.cornerPoints, palletId, alreadyScanned);
 
     if (alreadyScanned) {
+      showQrOutline(result.cornerPoints, palletId, true);
       const lastLoggedAt = duplicateLoggedAtRef.current.get(palletId) ?? 0;
       if (now - lastLoggedAt >= DUPLICATE_LOG_COOLDOWN_MS) {
         duplicateLoggedAtRef.current.set(palletId, now);
@@ -368,6 +377,19 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       return;
     }
 
+    if (scannedIdsRef.current.size >= MAX_SCAN_PALLETS) {
+      setNotice({ type: "error", text: "Đã đạt giới hạn tối đa 200 pallet. Hãy tạo phiếu trước khi scan thêm." });
+      addLiveScan({
+        scanKey: nextScanKey(palletId),
+        palletId,
+        state: "error",
+        message: "Đã đủ 200 pallet",
+        palletStatus: "Chưa scan",
+      });
+      return;
+    }
+
+    showQrOutline(result.cornerPoints, palletId, false);
     scannedIdsRef.current.add(palletId);
     palletDetailsRef.current.set(palletId, { palletStatus: "Đang kiểm tra" });
     if (typeof navigator.vibrate === "function") navigator.vibrate(55);
@@ -399,8 +421,16 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
           palletDetailsRef.current.delete(palletId);
         }
 
+        if (apiResult?.code === "MAX_SCAN_PALLETS") {
+          setNotice({ type: "error", text: "Đã đạt giới hạn tối đa 200 pallet. Hãy tạo phiếu trước khi scan thêm." });
+        }
+
         const conciseResult = palletStatusResult(palletStatus)
-          || (apiResult?.code === "PALLET_NOT_FOUND" ? "Không tìm thấy" : "Không thể scan");
+          || (apiResult?.code === "PALLET_NOT_FOUND"
+            ? "Không tìm thấy"
+            : apiResult?.code === "MAX_SCAN_PALLETS"
+              ? "Đã đủ 200 pallet"
+              : "Không thể scan");
 
         updateLiveScan(scanKey, {
           state: "error",
@@ -463,6 +493,12 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
   async function confirmAll() {
     if (!rows.length) return;
+    if (rows.length > MAX_SCAN_PALLETS) {
+      setNotice({ type: "error", text: "Mỗi phiếu chỉ được xác nhận tối đa 200 pallet." });
+      setConfirmOpen(false);
+      return;
+    }
+
     setConfirming(true);
     try {
       const response = await fetch("/api/scan-qr/confirm", {
@@ -500,19 +536,38 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         <div>
           <h1>Scan để nhập kho</h1>
           <p className="muted">
-            {isAdmin ? "Admin đang xem toàn bộ pallet đã scan" : "Chỉ hiển thị pallet do tài khoản này scan"}: <strong>{rows.length}</strong> pallet
+            {isAdmin ? "Admin đang xem tối đa 200 pallet đã scan gần nhất" : "Chỉ hiển thị pallet do tài khoản này scan"}: <strong>{rows.length}</strong> pallet
           </p>
         </div>
       </div>
 
       <div className="scan-actions">
-        <button className="scan-main-button scan-camera-button" type="button" onClick={() => void openCamera()}>
-          ▣<span>Mở camera live</span>
+        <button className="scan-main-button scan-camera-button" type="button" disabled={scanLimitReached} onClick={() => void openCamera()}>
+          ▣<span>{scanLimitReached ? "Đã đủ 200 pallet" : "Mở camera live"}</span>
         </button>
-        <button className="scan-main-button scan-confirm-button" type="button" disabled={!rows.length} onClick={() => setConfirmOpen(true)}>
+        <button className="scan-main-button scan-confirm-button" type="button" disabled={!rows.length || rows.length > MAX_SCAN_PALLETS} onClick={() => setConfirmOpen(true)}>
           ✓<span>Tạo phiếu ({rows.length})</span>
         </button>
       </div>
+
+      {showScanLimitIndicator ? (
+        <div
+          aria-live="polite"
+          role="status"
+          style={{
+            padding: "11px 14px",
+            border: `1px solid ${scanLimitReached ? "#fecdca" : "#fedf89"}`,
+            borderRadius: "12px",
+            color: scanLimitReached ? "#b42318" : "#93370d",
+            background: scanLimitReached ? "#fef3f2" : "#fffaeb",
+            fontWeight: 800,
+          }}
+        >
+          {scanLimitReached
+            ? `200/200 pallet · Đã đạt giới hạn. Hãy tạo phiếu trước khi scan thêm.`
+            : `${rows.length}/200 pallet · Còn ${MAX_SCAN_PALLETS - rows.length} pallet trước khi đạt giới hạn.`}
+        </div>
+      ) : null}
 
       {notice && !cameraOpen ? <div className={`scan-notice scan-notice-${notice.type}`}>{notice.text}</div> : null}
 
@@ -600,7 +655,10 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
           />
 
           <div className="camera-topbar">
-            <strong>Quét QR pallet liên tục</strong>
+            <strong>
+              Quét QR pallet liên tục
+              {showScanLimitIndicator ? ` · ${rows.length}/200` : ""}
+            </strong>
             <button type="button" onClick={() => closeCamera()}>✕</button>
           </div>
 
@@ -759,7 +817,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                 </tbody>
               </table>
             </div>
-            <p className="muted">Sau khi xác nhận, hệ thống tạo phiếu nhập kho và chuyển pallet sang WHdone. PDF chỉ in lại tại module Xem phiếu nhập kho.</p>
+            <p className="muted">Sau khi xác nhận, hệ thống tạo phiếu nhập kho và chuyển pallet sang WHdone. Mỗi phiếu tối đa 200 pallet. PDF chỉ in lại tại module Xem phiếu nhập kho.</p>
             <div className="modal-actions">
               <button className="button button-secondary" disabled={confirming} onClick={() => setConfirmOpen(false)}>Quay lại</button>
               <button className="button button-primary" disabled={confirming} onClick={() => void confirmAll()}>{confirming ? "Đang tạo phiếu..." : "Xác nhận tạo phiếu"}</button>
