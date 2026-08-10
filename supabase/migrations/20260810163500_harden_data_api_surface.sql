@@ -45,18 +45,17 @@ revoke execute on all functions in schema public from public, anon;
 revoke insert, update, delete on all tables in schema public from authenticated;
 revoke usage, select on all sequences in schema public from authenticated;
 
--- These two audit/receipt tables are server-only in the current application.
--- Dashboard/receipt APIs authorize first and then query them with service-role.
-revoke select on table public.pallet_change_history from authenticated;
+-- Receipt history is served only through authorized server APIs using
+-- service-role, so authenticated clients do not need direct Data API access.
 revoke select on table public.wh_receipt from authenticated;
 
 -- ---------------------------------------------------------------------------
--- 4. Tighten pallet_data SELECT for direct authenticated Data API access.
+-- 4. Tighten direct SELECT policies.
 --
--- Production permissions still need broad read access for pallet operations.
+-- Production permissions still need broad pallet_data read access.
 -- Dashboard viewers intentionally need broad read access for reporting/audit.
--- Normal scan users only need to see their own active pendingWH rows; scanning
--- production pallets itself is done through the protected RPC.
+-- Normal scan users only need their own active pendingWH rows; scanning a
+-- production pallet itself is done through the protected RPC.
 -- receipt.view uses server-side APIs and therefore does not need direct access.
 -- ---------------------------------------------------------------------------
 
@@ -76,12 +75,18 @@ create policy pallet_data_select_authorized on public.pallet_data
     )
   );
 
--- The return-history table is no longer directly exposed to authenticated
--- clients. Keep RLS enabled, but remove the former USING(true) read policy.
+-- Dashboard history currently reads pallet_change_history with the signed-in
+-- user session after the API has checked dashboard.view. Replace the old
+-- USING(true) policy so unrelated authenticated users cannot enumerate returns.
 drop policy if exists pallet_change_history_read on public.pallet_change_history;
 
--- wh_receipt is also server-only. Remove the obsolete receipt.create/edit
--- policy so future permission changes cannot accidentally reopen it.
+create policy pallet_change_history_read on public.pallet_change_history
+  for select
+  to authenticated
+  using (public.has_permission('dashboard.view'));
+
+-- wh_receipt is server-only. Remove the obsolete receipt.create/edit policy so
+-- future permission changes cannot accidentally reopen direct access.
 drop policy if exists wh_receipt_select_authorized on public.wh_receipt;
 
 -- ---------------------------------------------------------------------------
