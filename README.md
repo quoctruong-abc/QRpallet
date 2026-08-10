@@ -590,7 +590,7 @@ Quyền truy cập:
 - chỉ Super Admin được cấp/gỡ `dashboard.view` cho user;
 - Dashboard không phụ thuộc `position_page_access`.
 
-Cả page `/production-dashboard` và API `/api/production-dashboard/details` đều kiểm tra cùng permission `dashboard.view`, tránh bypass bằng cách gọi API trực tiếp.
+Cả page `/production-dashboard`, tab Check FIFO và các API Dashboard đều kiểm tra cùng permission `dashboard.view`, tránh bypass bằng cách gọi route/API trực tiếp.
 
 ### 11.1 Dashboard tổng hợp
 
@@ -630,6 +630,8 @@ Bộ lọc process:
 - `Sản xuất`: lấy pallet active có `status = production`, tức đã tạo nhưng chưa scan.
 - `Scan`: lấy pallet active có `status = pendingWH` hoặc `processingWH`, tức đã scan nhưng chưa hoàn tất nhập kho.
 - `WHdone` không thuộc danh sách FIFO vì đã hoàn tất process.
+- Frontend bắt buộc phải có ít nhất một process được chọn. Khi cả `Sản xuất` và `Scan` đều bỏ chọn, nút `Kiểm tra FIFO` bị disable và submit bị chặn ngay tại browser.
+- Server vẫn giữ lớp chặn dự phòng: nếu URL bị sửa thủ công và không có process thì không chạy query `pallet_data`.
 
 Bảng FIFO hiển thị:
 
@@ -641,6 +643,7 @@ scanned_at
 itemcode
 customer
 product_name
+Xem tiến độ
 ```
 
 `Số ngày delay` được tính theo ngày Việt Nam:
@@ -666,6 +669,48 @@ Rule hiện hành:
 - không thực hiện `count(*)` toàn bộ backlog chỉ để render trang FIFO.
 
 Mục tiêu của giới hạn này là tránh tăng đột biến số request Supabase, RAM/CPU server render, kích thước HTML và nguy cơ timeout khi dữ liệu production lớn.
+
+#### Xem tiến độ từ FIFO
+
+Mỗi pallet có button `Xem tiến độ`. Button chỉ mở popup tại client, chưa query database ngay.
+
+Trong popup user chọn một trong hai chế độ:
+
+```text
+Theo WO
+Theo Item
+```
+
+Sau khi chọn, frontend mới gọi:
+
+```text
+GET /api/production-dashboard/progress
+```
+
+API kiểm tra `dashboard.view` và gọi RPC:
+
+```text
+dashboard_progress
+```
+
+Kết quả dùng cùng logic tổng hợp với Dashboard:
+
+```text
+Quan order
+Số pallet
+Đã sản xuất
+Đã scan
+Đã nhập kho
+```
+
+- Theo WO: `Quan order` lấy max `quanorder` của WO.
+- Theo Item: `Quan order` cộng max `quanorder` theo từng WO của item.
+- `Đã sản xuất`: tổng quantity pallet active trong phạm vi.
+- `Đã scan`: tổng quantity có status khác `production`.
+- `Đã nhập kho`: tổng quantity có status `WHdone`.
+- Tiến độ popup dùng cùng phạm vi thời gian đang chọn ở Check FIFO; nếu FIFO chọn `Tất cả` thì progress không giới hạn ngày.
+
+RPC aggregate trực tiếp tại PostgreSQL và chỉ trả các số tổng hợp. Không tải toàn bộ pallet của WO/Item qua API rồi mới cộng ở Vercel, nhằm giảm network, memory và rủi ro query lớn.
 
 ### 11.3 Lịch sử pallet
 
@@ -836,7 +881,8 @@ Các nhóm migration quan trọng hiện tại:
 - scan return history;
 - loại bỏ legacy return trigger;
 - working day pallet;
-- working day phiếu nhập kho.
+- working day phiếu nhập kho;
+- `dashboard_progress` để aggregate tiến độ WO/Item trực tiếp tại PostgreSQL cho Check FIFO.
 
 ---
 
@@ -1005,24 +1051,28 @@ Sau khi thay đổi env, phải redeploy hoặc restart môi trường.
 39. Với pallet `WHdone`, kiểm tra người nhập kho, giờ nhập kho và số phiếu nhập kho.
 40. Kiểm tra dấu `!` cho pallet edit/return và phần lịch sử chỉnh sửa/return giữ đúng dấu vết cũ.
 41. Kiểm tra tên người thao tác, không hiển thị raw user ID khi profile hợp lệ.
-42. Với user chưa có `dashboard.view`, gọi trực tiếp `/api/production-dashboard/details` phải trả `403`.
+42. Với user chưa có `dashboard.view`, gọi trực tiếp API Dashboard phải trả `403`.
 43. Mở tab `Check FIFO` và kiểm tra `Sản xuất` chỉ hiện `production`; `Scan` chỉ hiện `pendingWH/processingWH`.
-44. Kiểm tra `Tất cả` không tải toàn bộ backlog mà phân trang tối đa 200 pallet mỗi request.
-45. Kiểm tra FIFO sắp pallet cũ nhất trước và `Số ngày delay = ngày hiện tại Việt Nam - working_day`.
-46. Chuyển `Trang sau / Trang trước` và xác nhận giữ nguyên bộ lọc ngày/process.
+44. Bỏ chọn cả `Sản xuất` và `Scan`: frontend phải disable submit/chặn điều hướng; server cũng không query nếu URL bị sửa thủ công.
+45. Kiểm tra `Tất cả` không tải toàn bộ backlog mà phân trang tối đa 200 pallet mỗi request.
+46. Kiểm tra FIFO sắp pallet cũ nhất trước và `Số ngày delay = ngày hiện tại Việt Nam - working_day`.
+47. Chuyển `Trang sau / Trang trước` và xác nhận giữ nguyên bộ lọc ngày/process.
+48. Bấm `Xem tiến độ`, chọn `Theo WO`, kiểm tra Quan order / sản xuất / scan / nhập kho khớp Dashboard trong cùng phạm vi ngày.
+49. Bấm `Xem tiến độ`, chọn `Theo Item`, kiểm tra Quan order cộng theo từng WO và các quantity khớp Dashboard.
+50. Với user không có `dashboard.view`, gọi trực tiếp `/api/production-dashboard/progress` phải trả `403`.
 
 ### PWA
 
-47. Mở `/manifest.webmanifest`.
-48. Mở `/pwa/icon/192` và `/pwa/icon/512`.
-49. Cài app lên màn hình chính.
-50. Mở app dạng standalone.
-51. Tắt mạng và xác nhận operation không thể tiếp tục.
+51. Mở `/manifest.webmanifest`.
+52. Mở `/pwa/icon/192` và `/pwa/icon/512`.
+53. Cài app lên màn hình chính.
+54. Mở app dạng standalone.
+55. Tắt mạng và xác nhận operation không thể tiếp tục.
 
 ### Session
 
-52. Đăng xuất.
-53. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
+56. Đăng xuất.
+57. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
 
 ---
 
@@ -1102,5 +1152,6 @@ display: none
 - Không sử dụng service-role key ở client.
 - `dashboard.view` của user chỉ do Super Admin cấp/gỡ; Admin không được thay đổi quyền này.
 - Check FIFO không được dùng query không giới hạn để tải toàn bộ backlog trong một request.
+- Progress FIFO phải aggregate tại database; không tải hàng loạt pallet về API chỉ để tính tổng.
 - Luôn sửa trên `dev` và kiểm thử trước khi merge production.
 - Luôn cập nhật README khi thay đổi nghiệp vụ hoặc database.
