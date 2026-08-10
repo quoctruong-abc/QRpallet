@@ -604,15 +604,25 @@ Cả page `/production-dashboard` và API `/api/production-dashboard/details` đ
   - quantity đã nhập kho;
   - progress theo order.
 - Mở chi tiết từng pallet bằng icon.
-- Hiển thị dấu `!` nếu pallet đã từng sửa hoặc return.
-- Nhấn dấu `!` để xem lịch sử thay đổi.
+- Mọi pallet đều có nút `Xem` để mở popup lịch sử, kể cả pallet chưa từng edit hoặc return.
+- Pallet đã từng sửa hoặc return vẫn hiển thị dấu `!` để cảnh báo nhanh.
 
 ### Lịch sử pallet
 
-- Lịch sử edit được dựng từ version chain trong `pallet_data` và `old_data_refer`.
-- Lịch sử return lấy từ `pallet_change_history`.
-- Người thao tác được đổi từ user ID sang `full_name`, `username` hoặc `employee_code` trong bảng `profiles`.
-- Việc đọc profile cho dashboard dùng service-role ở server sau khi đã xác thực `dashboard.view`.
+Popup lịch sử được chia thành hai phần:
+
+1. **Flow chính** theo thứ tự workflow:
+   - Tạo pallet: người tạo và giờ tạo, lấy từ version đầu tiên của pallet;
+   - Scan pallet: người scan và giờ scan của trạng thái hiện tại;
+   - Nhập kho: người nhập kho, giờ nhập kho và số phiếu nhập kho; người/giờ nhập kho lấy từ bản ghi `wh_receipt` tương ứng.
+2. **Lịch sử chỉnh sửa / return** giữ layout cũ:
+   - lịch sử edit dựng từ version chain trong `pallet_data` và `old_data_refer`;
+   - lịch sử return lấy từ `pallet_change_history`;
+   - pallet chưa từng chỉnh sửa hoặc return vẫn mở được popup và phần này hiển thị trạng thái không có thay đổi.
+
+Flow chính được hiển thị dạng timeline theo thứ tự `Tạo pallet → Scan pallet → Nhập kho`; bước chưa thực hiện được hiển thị là chưa hoàn tất để user dễ nhận biết pallet đang ở đâu trong workflow.
+
+Người thao tác được đổi từ user ID sang `full_name`, `username` hoặc `employee_code` trong bảng `profiles`. Việc đọc profile và thông tin phiếu cho Dashboard dùng service-role ở server sau khi đã xác thực `dashboard.view`.
 
 ---
 
@@ -727,9 +737,12 @@ receipt_date
 total_pallet
 total_quantity
 uid_user
+user_id
 status
 created_at
 ```
+
+`user_id`/`uid_user` và `created_at` được Dashboard dùng để hiển thị người nhập kho và giờ nhập kho trong flow pallet.
 
 ---
 
@@ -925,22 +938,25 @@ Sau khi thay đổi env, phải redeploy hoặc restart môi trường.
 34. Đổi giữa tổng hợp WO và item.
 35. Kiểm tra số pallet và progress.
 36. Mở chi tiết pallet.
-37. Kiểm tra dấu `!` cho pallet edit/return.
-38. Kiểm tra tên người thao tác, không hiển thị raw user ID khi profile hợp lệ.
-39. Với user chưa có `dashboard.view`, gọi trực tiếp `/api/production-dashboard/details` phải trả `403`.
+37. Mở lịch sử của pallet chưa edit/return và xác nhận popup vẫn hiển thị flow chính.
+38. Kiểm tra flow `Tạo pallet → Scan pallet → Nhập kho` hiển thị đúng người và thời gian; bước chưa thực hiện phải thể hiện trạng thái chưa hoàn tất.
+39. Với pallet `WHdone`, kiểm tra người nhập kho, giờ nhập kho và số phiếu nhập kho.
+40. Kiểm tra dấu `!` cho pallet edit/return và phần lịch sử chỉnh sửa/return giữ đúng dấu vết cũ.
+41. Kiểm tra tên người thao tác, không hiển thị raw user ID khi profile hợp lệ.
+42. Với user chưa có `dashboard.view`, gọi trực tiếp `/api/production-dashboard/details` phải trả `403`.
 
 ### PWA
 
-40. Mở `/manifest.webmanifest`.
-41. Mở `/pwa/icon/192` và `/pwa/icon/512`.
-42. Cài app lên màn hình chính.
-43. Mở app dạng standalone.
-44. Tắt mạng và xác nhận operation không thể tiếp tục.
+43. Mở `/manifest.webmanifest`.
+44. Mở `/pwa/icon/192` và `/pwa/icon/512`.
+45. Cài app lên màn hình chính.
+46. Mở app dạng standalone.
+47. Tắt mạng và xác nhận operation không thể tiếp tục.
 
 ### Session
 
-45. Đăng xuất.
-46. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
+48. Đăng xuất.
+49. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
 
 ---
 
