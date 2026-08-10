@@ -12,14 +12,12 @@ const modules: Array<{
   label: string;
   icon: string;
   permissions: PermissionKey[];
-  adminOnly?: boolean;
 }> = [
   {
     path: "/production-dashboard",
     label: "Dashboard sản xuất",
     icon: "📊",
-    permissions: [],
-    adminOnly: true,
+    permissions: ["dashboard.view"],
   },
   { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload", "planning.change"] },
   { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create", "pallet.edit"] },
@@ -65,7 +63,10 @@ export async function PageShell({
 }) {
   const mappedPaths = await loadMappedPaths(profile);
   const visibleModules = modules.filter((module) => {
-    if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
+    if (module.path === "/production-dashboard") {
+      return hasPermission(profile, "dashboard.view");
+    }
+
     const mapped = profile.role === "superadmin" || mappedPaths.has(module.path);
     const permitted = module.permissions.some((permission) => hasPermission(profile, permission));
     return mapped && permitted;
