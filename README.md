@@ -2,7 +2,7 @@
 
 Hệ thống quản lý kế hoạch sản xuất, tạo tem pallet QR, scan nhập kho và theo dõi lịch sử pallet nội bộ.
 
-> **Baseline nghiệp vụ tạm chốt: 21/07/2026**  
+> **Baseline nghiệp vụ tạm chốt: 10/08/2026**  
 > README này là tài liệu tham chiếu chính cho logic nghiệp vụ, trạng thái pallet, phân quyền, database, PWA và quy trình deploy. Khi thay đổi workflow, permission, RPC hoặc cấu trúc bảng, phải cập nhật README trong cùng đợt thay đổi.
 
 ---
@@ -138,9 +138,9 @@ Khi truy cập bằng điện thoại trong cùng mạng nội bộ, dùng đị
 
 | Role | Quy tắc |
 |---|---|
-| `superadmin` | Toàn quyền, bypass permission |
-| `admin` | Quản trị trong phạm vi được cấu hình và có thể xem Dashboard sản xuất |
-| `user` | Chỉ sử dụng chức năng được cấp permission |
+| `superadmin` | Toàn quyền, bypass permission; mặc định xem Dashboard và là role duy nhất được cấp/gỡ `dashboard.view` cho user |
+| `admin` | Quản trị trong phạm vi được cấu hình; mặc định được xem Dashboard nhưng không được cấp/gỡ quyền Dashboard cho user |
+| `user` | Chỉ sử dụng chức năng được cấp permission; muốn xem Dashboard phải được Super Admin cấp `dashboard.view` |
 
 ### 5.2 Position
 
@@ -166,6 +166,7 @@ Position được dùng để:
 | `pallet.edit` | Sửa hoặc xóa pallet Production |
 | `scan.standard` | Scan QR, hủy scan, xác nhận và tạo phiếu nhập kho |
 | `receipt.view` | Xem lịch sử, chi tiết và in lại phiếu nhập kho |
+| `dashboard.view` | Xem Dashboard sản xuất; chỉ Super Admin được cấp/gỡ permission này cho user |
 
 Permission cũ không còn dùng:
 
@@ -182,11 +183,18 @@ receipt.edit
 | Production | `/pallet-label` |
 | Warehouse | `/scan-qr`, `/warehouse-receipt` |
 
-Dashboard sản xuất là trang riêng cho `admin` và `superadmin`:
+Dashboard sản xuất là module permission riêng và **không phụ thuộc position mapping**:
 
 ```text
 /production-dashboard
 ```
+
+Rule cuối cùng:
+
+- `superadmin`: mặc định được xem;
+- `admin`: mặc định được xem;
+- `user`: chỉ được xem khi Super Admin cấp `dashboard.view`;
+- Admin bộ phận không được cấp hoặc gỡ `dashboard.view` của user.
 
 ---
 
@@ -568,12 +576,21 @@ Route:
 /production-dashboard
 ```
 
-Quyền truy cập:
+Permission:
 
 ```text
-admin
-superadmin
+dashboard.view
 ```
+
+Quyền truy cập:
+
+- `superadmin`: mặc định được xem;
+- `admin`: mặc định được xem;
+- `user`: chỉ được xem khi Super Admin cấp `dashboard.view`;
+- chỉ Super Admin được cấp/gỡ `dashboard.view` cho user;
+- Dashboard không phụ thuộc `position_page_access`.
+
+Cả page `/production-dashboard` và API `/api/production-dashboard/details` đều kiểm tra cùng permission `dashboard.view`, tránh bypass bằng cách gọi API trực tiếp.
 
 ### Chức năng
 
@@ -595,7 +612,7 @@ superadmin
 - Lịch sử edit được dựng từ version chain trong `pallet_data` và `old_data_refer`.
 - Lịch sử return lấy từ `pallet_change_history`.
 - Người thao tác được đổi từ user ID sang `full_name`, `username` hoặc `employee_code` trong bảng `profiles`.
-- Việc đọc profile cho dashboard dùng service-role ở server sau khi đã xác thực quyền admin.
+- Việc đọc profile cho dashboard dùng service-role ở server sau khi đã xác thực `dashboard.view`.
 
 ---
 
@@ -644,15 +661,15 @@ is_active
 
 ### `permissions`
 
-Danh mục permission hợp lệ.
+Danh mục permission hợp lệ, bao gồm `dashboard.view`.
 
 ### `user_permissions`
 
-Permission được cấp cho admin và user.
+Permission được cấp riêng cho tài khoản. Với `dashboard.view`, chỉ Super Admin được phép thêm hoặc gỡ bản ghi cho user; Admin bộ phận không được thay đổi quyền này.
 
 ### `position_page_access`
 
-Mapping position với route.
+Mapping position với route. Dashboard không dùng mapping này để quyết định quyền truy cập.
 
 ### `planning_inject`
 
@@ -737,6 +754,7 @@ Quy tắc:
 Các nhóm migration quan trọng hiện tại:
 
 - phân quyền và page access;
+- `dashboard.view` và RLS chỉ cho Super Admin cấp/gỡ quyền Dashboard của user;
 - scan owner và tạo phiếu trực tiếp;
 - pallet versioning;
 - edit/return flags;
@@ -857,7 +875,7 @@ Sau khi thay đổi env, phải redeploy hoặc restart môi trường.
 2. Kiểm tra tài khoản inactive.
 3. Cấp và thu hồi permission.
 4. Navigation chỉ hiện module được phép.
-5. Dashboard chỉ hiện cho admin/superadmin.
+5. Dashboard: `superadmin` và `admin` nhìn thấy mặc định; `user` không thấy khi chưa có `dashboard.view`, thấy và truy cập được sau khi Super Admin cấp; Admin bộ phận không thể cấp/gỡ quyền này và thao tác lưu các quyền khác không được làm mất `dashboard.view` đã cấp.
 
 ### Planning
 
@@ -909,19 +927,20 @@ Sau khi thay đổi env, phải redeploy hoặc restart môi trường.
 36. Mở chi tiết pallet.
 37. Kiểm tra dấu `!` cho pallet edit/return.
 38. Kiểm tra tên người thao tác, không hiển thị raw user ID khi profile hợp lệ.
+39. Với user chưa có `dashboard.view`, gọi trực tiếp `/api/production-dashboard/details` phải trả `403`.
 
 ### PWA
 
-39. Mở `/manifest.webmanifest`.
-40. Mở `/pwa/icon/192` và `/pwa/icon/512`.
-41. Cài app lên màn hình chính.
-42. Mở app dạng standalone.
-43. Tắt mạng và xác nhận operation không thể tiếp tục.
+40. Mở `/manifest.webmanifest`.
+41. Mở `/pwa/icon/192` và `/pwa/icon/512`.
+42. Cài app lên màn hình chính.
+43. Mở app dạng standalone.
+44. Tắt mạng và xác nhận operation không thể tiếp tục.
 
 ### Session
 
-44. Đăng xuất.
-45. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
+45. Đăng xuất.
+46. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
 
 ---
 
@@ -999,5 +1018,6 @@ display: none
 - Khi đổi RPC, phải cập nhật API và tài liệu trong cùng commit.
 - Không thêm offline cache cho operation nếu chưa có thiết kế chống trùng và đồng bộ transaction.
 - Không sử dụng service-role key ở client.
+- `dashboard.view` của user chỉ do Super Admin cấp/gỡ; Admin không được thay đổi quyền này.
 - Luôn sửa trên `dev` và kiểm thử trước khi merge production.
 - Luôn cập nhật README khi thay đổi nghiệp vụ hoặc database.
