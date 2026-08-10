@@ -23,6 +23,7 @@ type PalletDashboardRow = {
   has_been_edited: boolean | null;
   has_been_return: boolean | null;
   working_day: string;
+  is_deleted: boolean;
 };
 
 function formatNumber(value: number) {
@@ -97,17 +98,19 @@ function aggregateByWo(rows: PalletDashboardRow[]): DashboardSummaryRow[] {
     if (row.itemcode?.trim()) current.itemcodes.add(row.itemcode.trim());
     if (row.product_name?.trim()) current.productNames.add(row.product_name.trim());
     if (row.customer?.trim()) current.customers.add(row.customer.trim());
-    if (row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
+    if (!row.is_deleted && row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
 
     const quantity = Number(row.quantity) || 0;
     const orderQuantity = Number(row.quanorder) || 0;
     const status = (row.status ?? "").toLowerCase();
 
     current.orderQuantity = Math.max(current.orderQuantity, orderQuantity);
-    current.producedQuantity += quantity;
-    if (status !== "production") current.scannedQuantity += quantity;
-    if (status === "whdone") current.warehouseQuantity += quantity;
-    current.warning ||= Boolean(row.has_been_edited || row.has_been_return);
+    if (!row.is_deleted) {
+      current.producedQuantity += quantity;
+      if (status !== "production") current.scannedQuantity += quantity;
+      if (status === "whdone") current.warehouseQuantity += quantity;
+    }
+    current.warning ||= Boolean(row.has_been_edited || row.has_been_return || row.is_deleted);
 
     groups.set(wo, current);
   }
@@ -161,7 +164,7 @@ function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummaryRow[] {
 
     if (row.product_name?.trim()) current.productNames.add(row.product_name.trim());
     if (row.customer?.trim()) current.customers.add(row.customer.trim());
-    if (row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
+    if (!row.is_deleted && row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
 
     const wo = row.wo?.trim();
     const orderQuantity = Number(row.quanorder) || 0;
@@ -172,10 +175,12 @@ function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummaryRow[] {
     const quantity = Number(row.quantity) || 0;
     const status = (row.status ?? "").toLowerCase();
 
-    current.producedQuantity += quantity;
-    if (status !== "production") current.scannedQuantity += quantity;
-    if (status === "whdone") current.warehouseQuantity += quantity;
-    current.warning ||= Boolean(row.has_been_edited || row.has_been_return);
+    if (!row.is_deleted) {
+      current.producedQuantity += quantity;
+      if (status !== "production") current.scannedQuantity += quantity;
+      if (status === "whdone") current.warehouseQuantity += quantity;
+    }
+    current.warning ||= Boolean(row.has_been_edited || row.has_been_return || row.is_deleted);
 
     groups.set(itemcode, current);
   }
@@ -248,13 +253,13 @@ export default async function ProductionDashboardPage({
   const palletRows: PalletDashboardRow[] = [];
   const pageSize = 1000;
   let queryError = "";
+  const dashboardFields =
+    "id,pallet_id,itemcode,product_name,customer,wo,quanorder,quantity,status,has_been_edited,has_been_return,working_day";
 
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await supabase
       .from("pallet_data")
-      .select(
-        "id,pallet_id,itemcode,product_name,customer,wo,quanorder,quantity,status,has_been_edited,has_been_return,working_day",
-      )
+      .select(dashboardFields)
       .is("effect_to", null)
       .gte("working_day", startDate)
       .lte("working_day", endDate)
@@ -266,9 +271,35 @@ export default async function ProductionDashboardPage({
       break;
     }
 
-    const pageRows = (data ?? []) as PalletDashboardRow[];
-    palletRows.push(...pageRows);
+    const pageRows = (data ?? []) as Omit<PalletDashboardRow, "is_deleted">[];
+    palletRows.push(...pageRows.map((row) => ({ ...row, is_deleted: false })));
     if (pageRows.length < pageSize) break;
+  }
+
+  // Deleted pallets have no active version (effect_to is no longer null), so
+  // load only the terminal delete versions instead of all historical versions.
+  // They remain visible for audit/warning but are excluded from production KPIs.
+  if (!queryError) {
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await supabase
+        .from("pallet_data")
+        .select(dashboardFields)
+        .not("effect_to", "is", null)
+        .ilike("note", "delete:%")
+        .gte("working_day", startDate)
+        .lte("working_day", endDate)
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        queryError = error.message;
+        break;
+      }
+
+      const pageRows = (data ?? []) as Omit<PalletDashboardRow, "is_deleted">[];
+      palletRows.push(...pageRows.map((row) => ({ ...row, is_deleted: true })));
+      if (pageRows.length < pageSize) break;
+    }
   }
 
   const woRows = aggregateByWo(palletRows);
