@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   DashboardTableClient,
@@ -221,7 +221,7 @@ export default async function ProductionDashboardPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const profile = await requireAdmin();
+  const profile = await requirePermission("dashboard.view");
   const params = await searchParams;
   const currentWorkingDay = getCurrentWorkingDay();
 
