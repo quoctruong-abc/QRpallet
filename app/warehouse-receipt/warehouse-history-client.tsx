@@ -23,7 +23,8 @@ type ReceiptPalletRow = {
 };
 
 export function WarehouseHistoryClient() {
-  const [receiptDate, setReceiptDate] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [receipts, setReceipts] = useState<ReceiptRow[]>([]);
   const [working, setWorking] = useState<"history" | "reprint" | "detail" | null>(null);
   const [activeReceiptId, setActiveReceiptId] = useState<string | null>(null);
@@ -31,11 +32,21 @@ export function WarehouseHistoryClient() {
   const [detailRows, setDetailRows] = useState<ReceiptPalletRow[]>([]);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  async function loadReceipts(date = receiptDate) {
+  async function loadReceipts(from = "", to = "") {
+    if ((from && !to) || (!from && to)) {
+      setNotice({ type: "error", text: "Vui lòng chọn đầy đủ Từ ngày và Đến ngày." });
+      return;
+    }
+
     setWorking("history");
     setNotice(null);
     try {
-      const query = date ? `?date=${encodeURIComponent(date)}` : "";
+      const params = new URLSearchParams();
+      if (from && to) {
+        params.set("from", from);
+        params.set("to", to);
+      }
+      const query = params.toString() ? `?${params.toString()}` : "";
       const response = await fetch(`/api/warehouse-receipt/list${query}`, { cache: "no-store" });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || "Không thể tải lịch sử phiếu.");
@@ -91,19 +102,28 @@ export function WarehouseHistoryClient() {
     setActiveReceiptId(null);
   }
 
-  useEffect(() => { void loadReceipts(""); }, []);
+  useEffect(() => { void loadReceipts(); }, []);
+
+  const rangeReady = Boolean(fromDate && toDate);
 
   return (
     <section className="warehouse-page">
       <div className="hero-row">
-        <div><h1>Lịch sử phiếu nhập kho</h1><p className="muted">Module này chỉ dùng để xem lịch sử, xem pallet chi tiết và in lại phiếu. Việc tạo phiếu được thực hiện tại module Scan nhập kho.</p></div>
+        <div><h1>Lịch sử phiếu nhập kho</h1><p className="muted">Mặc định hiển thị 10 phiếu nhập kho gần nhất. Có thể lọc theo khoảng ngày để xem lịch sử cũ hơn.</p></div>
         <div className="stat-card"><span className="stat-number">{receipts.length}</span><span className="muted">Phiếu đang hiển thị</span></div>
       </div>
 
       <div className="warehouse-filter-card">
-        <label><span>Ngày phiếu</span><input type="date" value={receiptDate} onChange={(event) => setReceiptDate(event.target.value)} /></label>
-        <button className="button button-primary" type="button" disabled={working === "history"} onClick={() => loadReceipts()}>{working === "history" ? "Đang tải..." : "Tìm theo ngày"}</button>
-        <button className="button button-secondary" type="button" disabled={working === "history"} onClick={() => { setReceiptDate(""); void loadReceipts(""); }}>7 ngày gần nhất</button>
+        <label><span>Từ ngày</span><input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
+        <label><span>Đến ngày</span><input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
+        <button
+          className="button button-primary"
+          type="button"
+          disabled={working === "history" || !rangeReady}
+          onClick={() => loadReceipts(fromDate, toDate)}
+        >
+          {working === "history" ? "Đang tải..." : "Tìm khoảng ngày"}
+        </button>
       </div>
 
       {notice ? <div className={`alert ${notice.type === "error" ? "alert-error" : "alert-success"}`}>{notice.text}</div> : null}

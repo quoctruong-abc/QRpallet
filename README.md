@@ -2,7 +2,7 @@
 
 Hệ thống quản lý kế hoạch sản xuất, tạo tem pallet QR, scan nhập kho và theo dõi lịch sử pallet nội bộ.
 
-> **Baseline nghiệp vụ tạm chốt: 21/07/2026**  
+> **Baseline nghiệp vụ tạm chốt: 10/08/2026**  
 > README này là tài liệu tham chiếu chính cho logic nghiệp vụ, trạng thái pallet, phân quyền, database, PWA và quy trình deploy. Khi thay đổi workflow, permission, RPC hoặc cấu trúc bảng, phải cập nhật README trong cùng đợt thay đổi.
 
 ---
@@ -138,9 +138,9 @@ Khi truy cập bằng điện thoại trong cùng mạng nội bộ, dùng đị
 
 | Role | Quy tắc |
 |---|---|
-| `superadmin` | Toàn quyền, bypass permission |
-| `admin` | Quản trị trong phạm vi được cấu hình và có thể xem Dashboard sản xuất |
-| `user` | Chỉ sử dụng chức năng được cấp permission |
+| `superadmin` | Toàn quyền, bypass permission; mặc định xem Dashboard và là role duy nhất được cấp/gỡ `dashboard.view` cho user |
+| `admin` | Quản trị trong phạm vi được cấu hình; mặc định được xem Dashboard nhưng không được cấp/gỡ quyền Dashboard cho user |
+| `user` | Chỉ sử dụng chức năng được cấp permission; muốn xem Dashboard phải được Super Admin cấp `dashboard.view` |
 
 ### 5.2 Position
 
@@ -166,6 +166,7 @@ Position được dùng để:
 | `pallet.edit` | Sửa hoặc xóa pallet Production |
 | `scan.standard` | Scan QR, hủy scan, xác nhận và tạo phiếu nhập kho |
 | `receipt.view` | Xem lịch sử, chi tiết và in lại phiếu nhập kho |
+| `dashboard.view` | Xem Dashboard sản xuất; chỉ Super Admin được cấp/gỡ permission này cho user |
 
 Permission cũ không còn dùng:
 
@@ -182,11 +183,18 @@ receipt.edit
 | Production | `/pallet-label` |
 | Warehouse | `/scan-qr`, `/warehouse-receipt` |
 
-Dashboard sản xuất là trang riêng cho `admin` và `superadmin`:
+Dashboard sản xuất là module permission riêng và **không phụ thuộc position mapping**:
 
 ```text
 /production-dashboard
 ```
+
+Rule cuối cùng:
+
+- `superadmin`: mặc định được xem;
+- `admin`: mặc định được xem;
+- `user`: chỉ được xem khi Super Admin cấp `dashboard.view`;
+- Admin bộ phận không được cấp hoặc gỡ `dashboard.view` của user.
 
 ---
 
@@ -568,14 +576,23 @@ Route:
 /production-dashboard
 ```
 
-Quyền truy cập:
+Permission:
 
 ```text
-admin
-superadmin
+dashboard.view
 ```
 
-### Chức năng
+Quyền truy cập:
+
+- `superadmin`: mặc định được xem;
+- `admin`: mặc định được xem;
+- `user`: chỉ được xem khi Super Admin cấp `dashboard.view`;
+- chỉ Super Admin được cấp/gỡ `dashboard.view` cho user;
+- Dashboard không phụ thuộc `position_page_access`.
+
+Cả page `/production-dashboard`, tab Check FIFO và các API Dashboard đều kiểm tra cùng permission `dashboard.view`, tránh bypass bằng cách gọi route/API trực tiếp.
+
+### 11.1 Dashboard tổng hợp
 
 - Tìm theo một ngày hoặc khoảng ngày làm việc.
 - Tổng hợp theo WO hoặc itemcode.
@@ -587,15 +604,130 @@ superadmin
   - quantity đã nhập kho;
   - progress theo order.
 - Mở chi tiết từng pallet bằng icon.
-- Hiển thị dấu `!` nếu pallet đã từng sửa hoặc return.
-- Nhấn dấu `!` để xem lịch sử thay đổi.
+- Mọi pallet đều có nút `Xem` để mở popup lịch sử, kể cả pallet chưa từng edit hoặc return.
+- Pallet đã từng sửa hoặc return vẫn hiển thị dấu `!` để cảnh báo nhanh.
 
-### Lịch sử pallet
+### 11.2 Check FIFO
 
-- Lịch sử edit được dựng từ version chain trong `pallet_data` và `old_data_refer`.
-- Lịch sử return lấy từ `pallet_change_history`.
-- Người thao tác được đổi từ user ID sang `full_name`, `username` hoặc `employee_code` trong bảng `profiles`.
-- Việc đọc profile cho dashboard dùng service-role ở server sau khi đã xác thực quyền admin.
+Route:
+
+```text
+/production-dashboard/check-fifo
+```
+
+Check FIFO dùng cùng permission `dashboard.view` và dùng để tìm pallet đã tồn lâu nhưng chưa đi tới process tiếp theo.
+
+Bộ lọc thời gian:
+
+```text
+Theo ngày
+Khoảng ngày
+Tất cả
+```
+
+Bộ lọc process:
+
+- `Sản xuất`: lấy pallet active có `status = production`, tức đã tạo nhưng chưa scan.
+- `Scan`: lấy pallet active có `status = pendingWH` hoặc `processingWH`, tức đã scan nhưng chưa hoàn tất nhập kho.
+- `WHdone` không thuộc danh sách FIFO vì đã hoàn tất process.
+- Frontend bắt buộc phải có ít nhất một process được chọn. Khi cả `Sản xuất` và `Scan` đều bỏ chọn, nút `Kiểm tra FIFO` bị disable và submit bị chặn ngay tại browser.
+- Server vẫn giữ lớp chặn dự phòng: nếu URL bị sửa thủ công và không có process thì không chạy query `pallet_data`.
+
+Bảng FIFO hiển thị:
+
+```text
+pallet_id
+working_day
+số ngày delay
+scanned_at
+itemcode
+customer
+product_name
+Xem tiến độ
+```
+
+`Số ngày delay` được tính theo ngày Việt Nam:
+
+```text
+ngày hiện tại - working_day
+```
+
+Ví dụ `working_day = 08/08/2026`, ngày hiện tại `10/08/2026` thì delay là `2 ngày`.
+
+Danh sách sắp xếp `working_day` tăng dần để pallet cũ nhất nằm trên cùng. `working_day` được dùng thay vì `created_at` vì pallet sau khi edit vẫn phải giữ ngày sản xuất gốc.
+
+#### An toàn query Tất cả
+
+Không được loop tải toàn bộ dữ liệu khi chọn `Tất cả`.
+
+Rule hiện hành:
+
+- mỗi request chỉ tải tối đa `200` pallet để render;
+- query lấy thêm đúng `1` dòng để xác định còn trang sau;
+- dùng phân trang `Trang trước / Trang sau`;
+- bộ lọc vẫn chạy trực tiếp tại database theo `effect_to`, `status` và `working_day`;
+- không thực hiện `count(*)` toàn bộ backlog chỉ để render trang FIFO.
+
+Mục tiêu của giới hạn này là tránh tăng đột biến số request Supabase, RAM/CPU server render, kích thước HTML và nguy cơ timeout khi dữ liệu production lớn.
+
+#### Xem tiến độ từ FIFO
+
+Mỗi pallet có button `Xem tiến độ`. Button chỉ mở popup tại client, chưa query database ngay.
+
+Trong popup user chọn một trong hai chế độ:
+
+```text
+Theo WO
+Theo Item
+```
+
+Sau khi chọn, frontend mới gọi:
+
+```text
+GET /api/production-dashboard/progress
+```
+
+API kiểm tra `dashboard.view` và gọi RPC:
+
+```text
+dashboard_progress
+```
+
+Kết quả dùng cùng logic tổng hợp với Dashboard:
+
+```text
+Quan order
+Số pallet
+Đã sản xuất
+Đã scan
+Đã nhập kho
+```
+
+- Theo WO: `Quan order` lấy max `quanorder` của WO.
+- Theo Item: `Quan order` cộng max `quanorder` theo từng WO của item.
+- `Đã sản xuất`: tổng quantity pallet active trong phạm vi.
+- `Đã scan`: tổng quantity có status khác `production`.
+- `Đã nhập kho`: tổng quantity có status `WHdone`.
+- Tiến độ popup dùng cùng phạm vi thời gian đang chọn ở Check FIFO; nếu FIFO chọn `Tất cả` thì progress không giới hạn ngày.
+
+RPC aggregate trực tiếp tại PostgreSQL và chỉ trả các số tổng hợp. Không tải toàn bộ pallet của WO/Item qua API rồi mới cộng ở Vercel, nhằm giảm network, memory và rủi ro query lớn.
+
+### 11.3 Lịch sử pallet
+
+Popup lịch sử được chia thành hai phần:
+
+1. **Flow chính** theo thứ tự workflow:
+   - Tạo pallet: người tạo và giờ tạo, lấy từ version đầu tiên của pallet;
+   - Scan pallet: người scan và giờ scan của trạng thái hiện tại;
+   - Nhập kho: người nhập kho, giờ nhập kho và số phiếu nhập kho; người/giờ nhập kho lấy từ bản ghi `wh_receipt` tương ứng.
+2. **Lịch sử chỉnh sửa / return** giữ layout cũ:
+   - lịch sử edit dựng từ version chain trong `pallet_data` và `old_data_refer`;
+   - lịch sử return lấy từ `pallet_change_history`;
+   - pallet chưa từng chỉnh sửa hoặc return vẫn mở được popup và phần này hiển thị trạng thái không có thay đổi.
+
+Flow chính được hiển thị dạng timeline theo thứ tự `Tạo pallet → Scan pallet → Nhập kho`; bước chưa thực hiện được hiển thị là chưa hoàn tất để user dễ nhận biết pallet đang ở đâu trong workflow.
+
+Người thao tác được đổi từ user ID sang `full_name`, `username` hoặc `employee_code` trong bảng `profiles`. Việc đọc profile và thông tin phiếu cho Dashboard dùng service-role ở server sau khi đã xác thực `dashboard.view`.
 
 ---
 
@@ -644,15 +776,15 @@ is_active
 
 ### `permissions`
 
-Danh mục permission hợp lệ.
+Danh mục permission hợp lệ, bao gồm `dashboard.view`.
 
 ### `user_permissions`
 
-Permission được cấp cho admin và user.
+Permission được cấp riêng cho tài khoản. Với `dashboard.view`, chỉ Super Admin được phép thêm hoặc gỡ bản ghi cho user; Admin bộ phận không được thay đổi quyền này.
 
 ### `position_page_access`
 
-Mapping position với route.
+Mapping position với route. Dashboard không dùng mapping này để quyết định quyền truy cập.
 
 ### `planning_inject`
 
@@ -694,6 +826,8 @@ scanned_at
 working_day
 ```
 
+Check FIFO chỉ đọc các field cần thiết và lọc trực tiếp trên `effect_to`, `status`, `working_day`. Schema hiện tại đã có index riêng cho `working_day` và `status`; phân trang giới hạn lượng dữ liệu trả về trên mỗi request.
+
 ### `pallet_change_history`
 
 Hiện dùng để lưu sự kiện `scan_return`.
@@ -710,9 +844,12 @@ receipt_date
 total_pallet
 total_quantity
 uid_user
+user_id
 status
 created_at
 ```
+
+`user_id`/`uid_user` và `created_at` được Dashboard dùng để hiển thị người nhập kho và giờ nhập kho trong flow pallet.
 
 ---
 
@@ -737,13 +874,15 @@ Quy tắc:
 Các nhóm migration quan trọng hiện tại:
 
 - phân quyền và page access;
+- `dashboard.view` và RLS chỉ cho Super Admin cấp/gỡ quyền Dashboard của user;
 - scan owner và tạo phiếu trực tiếp;
 - pallet versioning;
 - edit/return flags;
 - scan return history;
 - loại bỏ legacy return trigger;
 - working day pallet;
-- working day phiếu nhập kho.
+- working day phiếu nhập kho;
+- `dashboard_progress` để aggregate tiến độ WO/Item trực tiếp tại PostgreSQL cho Check FIFO.
 
 ---
 
@@ -857,7 +996,7 @@ Sau khi thay đổi env, phải redeploy hoặc restart môi trường.
 2. Kiểm tra tài khoản inactive.
 3. Cấp và thu hồi permission.
 4. Navigation chỉ hiện module được phép.
-5. Dashboard chỉ hiện cho admin/superadmin.
+5. Dashboard: `superadmin` và `admin` nhìn thấy mặc định; `user` không thấy khi chưa có `dashboard.view`, thấy và truy cập được sau khi Super Admin cấp; Admin bộ phận không thể cấp/gỡ quyền này và thao tác lưu các quyền khác không được làm mất `dashboard.view` đã cấp.
 
 ### Planning
 
@@ -907,21 +1046,33 @@ Sau khi thay đổi env, phải redeploy hoặc restart môi trường.
 34. Đổi giữa tổng hợp WO và item.
 35. Kiểm tra số pallet và progress.
 36. Mở chi tiết pallet.
-37. Kiểm tra dấu `!` cho pallet edit/return.
-38. Kiểm tra tên người thao tác, không hiển thị raw user ID khi profile hợp lệ.
+37. Mở lịch sử của pallet chưa edit/return và xác nhận popup vẫn hiển thị flow chính.
+38. Kiểm tra flow `Tạo pallet → Scan pallet → Nhập kho` hiển thị đúng người và thời gian; bước chưa thực hiện phải thể hiện trạng thái chưa hoàn tất.
+39. Với pallet `WHdone`, kiểm tra người nhập kho, giờ nhập kho và số phiếu nhập kho.
+40. Kiểm tra dấu `!` cho pallet edit/return và phần lịch sử chỉnh sửa/return giữ đúng dấu vết cũ.
+41. Kiểm tra tên người thao tác, không hiển thị raw user ID khi profile hợp lệ.
+42. Với user chưa có `dashboard.view`, gọi trực tiếp API Dashboard phải trả `403`.
+43. Mở tab `Check FIFO` và kiểm tra `Sản xuất` chỉ hiện `production`; `Scan` chỉ hiện `pendingWH/processingWH`.
+44. Bỏ chọn cả `Sản xuất` và `Scan`: frontend phải disable submit/chặn điều hướng; server cũng không query nếu URL bị sửa thủ công.
+45. Kiểm tra `Tất cả` không tải toàn bộ backlog mà phân trang tối đa 200 pallet mỗi request.
+46. Kiểm tra FIFO sắp pallet cũ nhất trước và `Số ngày delay = ngày hiện tại Việt Nam - working_day`.
+47. Chuyển `Trang sau / Trang trước` và xác nhận giữ nguyên bộ lọc ngày/process.
+48. Bấm `Xem tiến độ`, chọn `Theo WO`, kiểm tra Quan order / sản xuất / scan / nhập kho khớp Dashboard trong cùng phạm vi ngày.
+49. Bấm `Xem tiến độ`, chọn `Theo Item`, kiểm tra Quan order cộng theo từng WO và các quantity khớp Dashboard.
+50. Với user không có `dashboard.view`, gọi trực tiếp `/api/production-dashboard/progress` phải trả `403`.
 
 ### PWA
 
-39. Mở `/manifest.webmanifest`.
-40. Mở `/pwa/icon/192` và `/pwa/icon/512`.
-41. Cài app lên màn hình chính.
-42. Mở app dạng standalone.
-43. Tắt mạng và xác nhận operation không thể tiếp tục.
+51. Mở `/manifest.webmanifest`.
+52. Mở `/pwa/icon/192` và `/pwa/icon/512`.
+53. Cài app lên màn hình chính.
+54. Mở app dạng standalone.
+55. Tắt mạng và xác nhận operation không thể tiếp tục.
 
 ### Session
 
-44. Đăng xuất.
-45. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
+56. Đăng xuất.
+57. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
 
 ---
 
@@ -999,5 +1150,8 @@ display: none
 - Khi đổi RPC, phải cập nhật API và tài liệu trong cùng commit.
 - Không thêm offline cache cho operation nếu chưa có thiết kế chống trùng và đồng bộ transaction.
 - Không sử dụng service-role key ở client.
+- `dashboard.view` của user chỉ do Super Admin cấp/gỡ; Admin không được thay đổi quyền này.
+- Check FIFO không được dùng query không giới hạn để tải toàn bộ backlog trong một request.
+- Progress FIFO phải aggregate tại database; không tải hàng loạt pallet về API chỉ để tính tổng.
 - Luôn sửa trên `dev` và kiểm thử trước khi merge production.
 - Luôn cập nhật README khi thay đổi nghiệp vụ hoặc database.

@@ -26,12 +26,13 @@ const allPermissions: Array<{ key: PermissionKey; label: string }> = [
   { key: "pallet.edit", label: "Sửa pallet" },
   { key: "scan.standard", label: "Scan QR" },
   { key: "receipt.view", label: "Xem phiếu nhập kho" },
+  { key: "dashboard.view", label: "Xem Dashboard" },
 ];
 
 const roleRules = [
-  { role: "superadmin", system: "Toàn hệ thống", create: "superadmin, admin, user", accounts: "Tất cả tài khoản", mapping: "Được chỉnh", permissions: "Toàn bộ, luôn bypass" },
-  { role: "admin", system: "Trong position của mình", create: "Chỉ user cùng position", accounts: "Chỉ user cùng position", mapping: "Không được chỉnh", permissions: "Tự xem phiếu; cấp quyền cho user" },
-  { role: "user", system: "Không có quyền mặc định", create: "Không", accounts: "Không", mapping: "Không", permissions: "Được admin cấp từng quyền" },
+  { role: "superadmin", system: "Toàn hệ thống", create: "superadmin, admin, user", accounts: "Tất cả tài khoản", mapping: "Được chỉnh", permissions: "Toàn bộ, luôn bypass; chỉ role này cấp Dashboard cho user" },
+  { role: "admin", system: "Trong position của mình", create: "Chỉ user cùng position", accounts: "Chỉ user cùng position", mapping: "Không được chỉnh", permissions: "Dashboard mặc định; cấp quyền nghiệp vụ theo position" },
+  { role: "user", system: "Không có quyền mặc định", create: "Không", accounts: "Không", mapping: "Không", permissions: "Dashboard chỉ khi Super Admin cấp" },
 ] as const;
 
 function mappingEnabled(rows: PositionPageMapping[], position: Position, path: string) {
@@ -90,8 +91,8 @@ export default async function AdminPage() {
             <h1>Quản trị phân quyền hệ thống</h1>
             <p className="muted admin-intro">
               {isSuperadmin
-                ? "Quản lý tài khoản, position mapping và permission. Mapping quyết định bộ phận được dùng module; admin được xem mặc định, user phải được cấp quyền riêng."
-                : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Admin được xem phiếu mặc định và có thể cấp quyền xem cho từng user.`}
+                ? "Quản lý tài khoản, position mapping và permission. Admin và Super Admin được xem Dashboard mặc định; user chỉ được xem khi Super Admin cấp quyền Xem Dashboard."
+                : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Dashboard là quyền mặc định của Admin; quyền Dashboard của user chỉ do Super Admin quản lý.`}
             </p>
           </div>
           <div className="stat-card admin-stat-card">
@@ -152,8 +153,8 @@ export default async function AdminPage() {
               <h2>Quyền của từng tài khoản</h2>
               <p className="muted small">
                 {isSuperadmin
-                  ? "Superadmin có thể cấp quyền cho admin và user. Quyền xem phiếu của admin được bật cố định theo role; user phải được tick riêng."
-                  : `Chỉ hiển thị user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Tick Xem phiếu nhập kho cho đúng người cần kiểm tra báo cáo.`}
+                  ? "Super Admin có thể cấp Xem Dashboard cho user. Admin và Super Admin được xem Dashboard theo role nên không cần cấp riêng."
+                  : `Chỉ hiển thị user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Admin có thể cấp quyền nghiệp vụ trong position, nhưng không thể cấp hoặc gỡ quyền Dashboard.`}
               </p>
             </div>
           </div>
@@ -179,7 +180,9 @@ export default async function AdminPage() {
                       granted={Array.from(granted)}
                       permissions={visiblePermissions.map((permission) => ({
                         ...permission,
-                        roleGranted: user.role === "admin" && permission.key === "receipt.view",
+                        roleGranted: user.role === "admin" && (
+                          permission.key === "receipt.view" || permission.key === "dashboard.view"
+                        ),
                       }))}
                       userId={user.id}
                       username={user.username}

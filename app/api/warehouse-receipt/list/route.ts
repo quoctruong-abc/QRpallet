@@ -23,6 +23,10 @@ function getCreatorId(receipt: ReceiptRecord) {
     ?? null;
 }
 
+function isValidDate(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
 export async function GET(request: Request) {
   const authorization = await authorizePermission("receipt.view");
   if (!authorization.ok) {
@@ -33,10 +37,20 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const date = url.searchParams.get("date")?.trim() || "";
-  const since = new Date();
-  since.setDate(since.getDate() - 6);
-  const sinceText = since.toISOString().slice(0, 10);
+  const requestedFrom = url.searchParams.get("from")?.trim() || "";
+  const requestedTo = url.searchParams.get("to")?.trim() || "";
+  const hasRangeFilter = Boolean(requestedFrom || requestedTo);
+
+  if (hasRangeFilter && (!isValidDate(requestedFrom) || !isValidDate(requestedTo))) {
+    return Response.json(
+      { success: false, error: "Vui lòng chọn đầy đủ Từ ngày và Đến ngày." },
+      { status: 400 },
+    );
+  }
+
+  let from = requestedFrom;
+  let to = requestedTo;
+  if (hasRangeFilter && from > to) [from, to] = [to, from];
 
   const supabase = createAdminClient();
   let query = supabase
@@ -44,7 +58,11 @@ export async function GET(request: Request) {
     .select("*")
     .order("created_at", { ascending: false });
 
-  query = date ? query.eq("receipt_date", date) : query.gte("receipt_date", sinceText);
+  if (hasRangeFilter) {
+    query = query.gte("receipt_date", from).lte("receipt_date", to);
+  } else {
+    query = query.limit(10);
+  }
 
   const { data, error } = await query;
   if (error) return Response.json({ success: false, error: error.message }, { status: 500 });
@@ -89,5 +107,10 @@ export async function GET(request: Request) {
     };
   });
 
-  return Response.json({ success: true, receipts });
+  return Response.json({
+    success: true,
+    receipts,
+    filter: hasRangeFilter ? { from, to } : null,
+    defaultLimit: hasRangeFilter ? null : 10,
+  });
 }

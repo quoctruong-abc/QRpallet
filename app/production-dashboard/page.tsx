@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
   DashboardTableClient,
@@ -23,7 +23,27 @@ type PalletDashboardRow = {
   has_been_edited: boolean | null;
   has_been_return: boolean | null;
   working_day: string;
+  is_deleted: boolean;
 };
+
+type DashboardTotals = {
+  orderQuantity: number;
+  palletCount: number;
+  producedQuantity: number;
+  scannedQuantity: number;
+  warehouseQuantity: number;
+};
+
+type DashboardSummaryRpcRow = {
+  order_quantity: number | string | null;
+  pallet_count: number | string | null;
+  produced_quantity: number | string | null;
+  scanned_quantity: number | string | null;
+  warehouse_quantity: number | string | null;
+};
+
+const DASHBOARD_WINDOW_DAYS = 7;
+const QUERY_BATCH_SIZE = 1000;
 
 function formatNumber(value: number) {
   return Number(value || 0).toLocaleString("vi-VN");
@@ -53,6 +73,18 @@ function formatDateLabel(value: string) {
   const [year, month, day] = value.split("-");
   if (!year || !month || !day) return value;
   return `${day}/${month}/${year}`;
+}
+
+function addDays(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function daysInclusive(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00Z`).getTime();
+  const end = new Date(`${endDate}T00:00:00Z`).getTime();
+  return Math.floor((end - start) / 86_400_000) + 1;
 }
 
 function summarizeValues(values: Set<string>) {
@@ -97,17 +129,19 @@ function aggregateByWo(rows: PalletDashboardRow[]): DashboardSummaryRow[] {
     if (row.itemcode?.trim()) current.itemcodes.add(row.itemcode.trim());
     if (row.product_name?.trim()) current.productNames.add(row.product_name.trim());
     if (row.customer?.trim()) current.customers.add(row.customer.trim());
-    if (row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
+    if (!row.is_deleted && row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
 
     const quantity = Number(row.quantity) || 0;
     const orderQuantity = Number(row.quanorder) || 0;
     const status = (row.status ?? "").toLowerCase();
 
     current.orderQuantity = Math.max(current.orderQuantity, orderQuantity);
-    current.producedQuantity += quantity;
-    if (status !== "production") current.scannedQuantity += quantity;
-    if (status === "whdone") current.warehouseQuantity += quantity;
-    current.warning ||= Boolean(row.has_been_edited || row.has_been_return);
+    if (!row.is_deleted) {
+      current.producedQuantity += quantity;
+      if (status !== "production") current.scannedQuantity += quantity;
+      if (status === "whdone") current.warehouseQuantity += quantity;
+    }
+    current.warning ||= Boolean(row.has_been_edited || row.has_been_return || row.is_deleted);
 
     groups.set(wo, current);
   }
@@ -161,7 +195,7 @@ function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummaryRow[] {
 
     if (row.product_name?.trim()) current.productNames.add(row.product_name.trim());
     if (row.customer?.trim()) current.customers.add(row.customer.trim());
-    if (row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
+    if (!row.is_deleted && row.pallet_id?.trim()) current.palletIds.add(row.pallet_id.trim());
 
     const wo = row.wo?.trim();
     const orderQuantity = Number(row.quanorder) || 0;
@@ -172,10 +206,12 @@ function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummaryRow[] {
     const quantity = Number(row.quantity) || 0;
     const status = (row.status ?? "").toLowerCase();
 
-    current.producedQuantity += quantity;
-    if (status !== "production") current.scannedQuantity += quantity;
-    if (status === "whdone") current.warehouseQuantity += quantity;
-    current.warning ||= Boolean(row.has_been_edited || row.has_been_return);
+    if (!row.is_deleted) {
+      current.producedQuantity += quantity;
+      if (status !== "production") current.scannedQuantity += quantity;
+      if (status === "whdone") current.warehouseQuantity += quantity;
+    }
+    current.warning ||= Boolean(row.has_been_edited || row.has_been_return || row.is_deleted);
 
     groups.set(itemcode, current);
   }
@@ -197,7 +233,7 @@ function aggregateByItem(rows: PalletDashboardRow[]): DashboardSummaryRow[] {
     .sort((a, b) => a.label.localeCompare(b.label, "vi", { numeric: true }));
 }
 
-function getTotals(rows: DashboardSummaryRow[]) {
+function getTotals(rows: DashboardSummaryRow[]): DashboardTotals {
   return rows.reduce(
     (total, row) => ({
       orderQuantity: total.orderQuantity + row.orderQuantity,
@@ -216,18 +252,29 @@ function getTotals(rows: DashboardSummaryRow[]) {
   );
 }
 
+function normalizeRangeSummary(row: DashboardSummaryRpcRow | undefined): DashboardTotals {
+  return {
+    orderQuantity: Number(row?.order_quantity) || 0,
+    palletCount: Number(row?.pallet_count) || 0,
+    producedQuantity: Number(row?.produced_quantity) || 0,
+    scannedQuantity: Number(row?.scanned_quantity) || 0,
+    warehouseQuantity: Number(row?.warehouse_quantity) || 0,
+  };
+}
+
 export default async function ProductionDashboardPage({
   searchParams,
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const profile = await requireAdmin();
+  const profile = await requirePermission("dashboard.view");
   const params = await searchParams;
   const currentWorkingDay = getCurrentWorkingDay();
 
   const selectedDay = readParam(params.day);
   const requestedFrom = readParam(params.from);
   const requestedTo = readParam(params.to);
+  const requestedPage = Number.parseInt(readParam(params.page), 10);
   const mode: DashboardMode = readParam(params.mode) === "item" ? "item" : "wo";
 
   let startDate = currentWorkingDay;
@@ -244,59 +291,135 @@ export default async function ProductionDashboardPage({
     if (startDate > endDate) [startDate, endDate] = [endDate, startDate];
   }
 
+  const totalDays = Math.max(1, daysInclusive(startDate, endDate));
+  const totalPages = Math.max(1, Math.ceil(totalDays / DASHBOARD_WINDOW_DAYS));
+  const currentPage = Number.isFinite(requestedPage)
+    ? Math.min(Math.max(requestedPage, 1), totalPages)
+    : 1;
+  const pageStartDate = addDays(startDate, (currentPage - 1) * DASHBOARD_WINDOW_DAYS);
+  const candidatePageEnd = addDays(pageStartDate, DASHBOARD_WINDOW_DAYS - 1);
+  const pageEndDate = candidatePageEnd < endDate ? candidatePageEnd : endDate;
+
   const supabase = await createClient();
   const palletRows: PalletDashboardRow[] = [];
-  const pageSize = 1000;
-  let queryError = "";
+  let queryError = false;
+  let summaryError = false;
+  const dashboardFields =
+    "id,pallet_id,itemcode,product_name,customer,wo,quanorder,quantity,status,has_been_edited,has_been_return,working_day";
 
-  for (let offset = 0; ; offset += pageSize) {
+  const { data: summaryData, error: summaryRpcError } = await supabase.rpc("dashboard_summary", {
+    p_from: startDate,
+    p_to: endDate,
+  });
+
+  if (summaryRpcError) {
+    summaryError = true;
+    console.error("Dashboard summary database error", {
+      startDate,
+      endDate,
+      message: summaryRpcError.message,
+    });
+  }
+  const rangeSummary = normalizeRangeSummary(
+    ((summaryData ?? []) as DashboardSummaryRpcRow[])[0],
+  );
+
+  for (let offset = 0; ; offset += QUERY_BATCH_SIZE) {
     const { data, error } = await supabase
       .from("pallet_data")
-      .select(
-        "id,pallet_id,itemcode,product_name,customer,wo,quanorder,quantity,status,has_been_edited,has_been_return,working_day",
-      )
+      .select(dashboardFields)
       .is("effect_to", null)
-      .gte("working_day", startDate)
-      .lte("working_day", endDate)
+      .gte("working_day", pageStartDate)
+      .lte("working_day", pageEndDate)
       .order("id", { ascending: true })
-      .range(offset, offset + pageSize - 1);
+      .range(offset, offset + QUERY_BATCH_SIZE - 1);
 
     if (error) {
-      queryError = error.message;
+      queryError = true;
+      console.error("Dashboard active pallet query database error", {
+        pageStartDate,
+        pageEndDate,
+        message: error.message,
+      });
       break;
     }
 
-    const pageRows = (data ?? []) as PalletDashboardRow[];
-    palletRows.push(...pageRows);
-    if (pageRows.length < pageSize) break;
+    const pageRows = (data ?? []) as Omit<PalletDashboardRow, "is_deleted">[];
+    palletRows.push(...pageRows.map((row) => ({ ...row, is_deleted: false })));
+    if (pageRows.length < QUERY_BATCH_SIZE) break;
+  }
+
+  if (!queryError) {
+    for (let offset = 0; ; offset += QUERY_BATCH_SIZE) {
+      const { data, error } = await supabase
+        .from("pallet_data")
+        .select(dashboardFields)
+        .not("effect_to", "is", null)
+        .ilike("note", "delete:%")
+        .gte("working_day", pageStartDate)
+        .lte("working_day", pageEndDate)
+        .order("id", { ascending: true })
+        .range(offset, offset + QUERY_BATCH_SIZE - 1);
+
+      if (error) {
+        queryError = true;
+        console.error("Dashboard deleted pallet query database error", {
+          pageStartDate,
+          pageEndDate,
+          message: error.message,
+        });
+        break;
+      }
+
+      const pageRows = (data ?? []) as Omit<PalletDashboardRow, "is_deleted">[];
+      palletRows.push(...pageRows.map((row) => ({ ...row, is_deleted: true })));
+      if (pageRows.length < QUERY_BATCH_SIZE) break;
+    }
   }
 
   const woRows = aggregateByWo(palletRows);
   const itemRows = aggregateByItem(palletRows);
   const visibleRows = mode === "item" ? itemRows : woRows;
-  const totals = getTotals(visibleRows);
+  const pageTotals = getTotals(visibleRows);
 
-  const modeParams = new URLSearchParams();
-  if (filterType === "day") modeParams.set("day", startDate);
+  const filterParams = new URLSearchParams();
+  if (filterType === "day") filterParams.set("day", startDate);
   else {
-    modeParams.set("from", startDate);
-    modeParams.set("to", endDate);
+    filterParams.set("from", startDate);
+    filterParams.set("to", endDate);
   }
 
-  const woParams = new URLSearchParams(modeParams);
+  const woParams = new URLSearchParams(filterParams);
   woParams.set("mode", "wo");
-  const itemParams = new URLSearchParams(modeParams);
-  itemParams.set("mode", "item");
+  if (currentPage > 1) woParams.set("page", String(currentPage));
 
-  const periodLabel =
+  const itemParams = new URLSearchParams(filterParams);
+  itemParams.set("mode", "item");
+  if (currentPage > 1) itemParams.set("page", String(currentPage));
+
+  const pageHref = (page: number) => {
+    const paginationParams = new URLSearchParams(filterParams);
+    paginationParams.set("mode", mode);
+    if (page > 1) paginationParams.set("page", String(page));
+    return `/production-dashboard?${paginationParams.toString()}`;
+  };
+
+  const rangePeriodLabel =
     startDate === endDate
       ? `Ngày làm việc ${formatDateLabel(startDate)}`
       : `Từ ${formatDateLabel(startDate)} đến ${formatDateLabel(endDate)}`;
+  const pagePeriodLabel =
+    pageStartDate === pageEndDate
+      ? `Ngày làm việc ${formatDateLabel(pageStartDate)}`
+      : `${formatDateLabel(pageStartDate)} → ${formatDateLabel(pageEndDate)}`;
 
   return (
     <PageShell profile={profile} title="Dashboard sản xuất">
       <style>{`
         .dashboard-page { display: grid; gap: 22px; }
+        .dashboard-view-tabs { display: inline-flex; gap: 6px; width: fit-content; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: #f2f4f7; }
+        .dashboard-view-tab { min-width: 140px; padding: 10px 16px; border-radius: 9px; color: #475467; font-weight: 850; text-align: center; }
+        .dashboard-view-tab-active { color: white; background: var(--primary); box-shadow: 0 4px 10px rgba(21,94,239,.2); }
         .dashboard-filter-grid { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(420px, 1.4fr); gap: 14px; }
         .dashboard-filter-card { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: white; }
         .dashboard-filter-card label { min-width: 180px; flex: 1 1 180px; }
@@ -304,10 +427,15 @@ export default async function ProductionDashboardPage({
         .dashboard-tabs { display: inline-flex; gap: 6px; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: #f2f4f7; }
         .dashboard-tab { min-width: 120px; padding: 9px 14px; border-radius: 9px; color: #475467; font-weight: 800; text-align: center; }
         .dashboard-tab-active { color: white; background: var(--primary); box-shadow: 0 4px 10px rgba(21,94,239,.2); }
+        .dashboard-summary-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        .dashboard-summary-heading p { margin: 0; }
         .dashboard-summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
         .dashboard-summary-grid .stat-card { min-width: 0; }
         .dashboard-table-header { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 16px; }
         .dashboard-table-header p { margin-bottom: 0; }
+        .dashboard-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
+        .dashboard-pagination-status { min-width: 220px; text-align: center; color: #475467; font-weight: 750; }
+        .dashboard-pagination .button[aria-disabled="true"] { pointer-events: none; opacity: .45; }
 
         .dashboard-table-panel { width: 100%; max-width: 100%; overflow: hidden; }
         .dashboard-table-panel .table-wrap { width: 100%; max-width: 100%; overflow-x: auto; }
@@ -352,12 +480,14 @@ export default async function ProductionDashboardPage({
           .dashboard-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         @media (max-width: 640px) {
+          .dashboard-view-tabs, .dashboard-tabs { width: 100%; }
+          .dashboard-view-tab, .dashboard-tab { flex: 1; min-width: 0; }
           .dashboard-filter-card { display: grid; }
           .dashboard-filter-card label, .dashboard-filter-card .button { width: 100%; }
           .dashboard-summary-grid { grid-template-columns: 1fr; }
-          .dashboard-table-header { align-items: stretch; flex-direction: column; }
-          .dashboard-tabs { width: 100%; }
-          .dashboard-tab { flex: 1; min-width: 0; }
+          .dashboard-summary-heading, .dashboard-table-header { align-items: stretch; flex-direction: column; }
+          .dashboard-pagination { display: grid; grid-template-columns: 1fr 1fr; }
+          .dashboard-pagination-status { grid-column: 1 / -1; grid-row: 1; min-width: 0; }
         }
       `}</style>
 
@@ -367,6 +497,12 @@ export default async function ProductionDashboardPage({
             <h1>Dashboard sản xuất</h1>
             <p className="muted">Theo dõi tiến độ tạo pallet, scan và nhập kho theo ngày làm việc.</p>
           </div>
+        </div>
+
+        <div className="dashboard-view-tabs" aria-label="Dashboard tabs">
+          <Link className="dashboard-view-tab dashboard-view-tab-active" href="/production-dashboard">Dashboard</Link>
+          <Link className="dashboard-view-tab" href="/production-dashboard/check-fifo">Check FIFO</Link>
+          <Link className="dashboard-view-tab" href="/production-dashboard/check-item">Check item</Link>
         </div>
 
         <div className="dashboard-filter-grid">
@@ -393,39 +529,48 @@ export default async function ProductionDashboardPage({
           </form>
         </div>
 
-        {queryError ? (
-          <section className="alert alert-error">Không thể tải dữ liệu dashboard: {queryError}</section>
+        {summaryError || queryError ? (
+          <section className="alert alert-error">Không thể tải dữ liệu. Vui lòng thử lại.</section>
         ) : null}
+
+        <div className="dashboard-summary-heading">
+          <div>
+            <p className="eyebrow">TỔNG TOÀN KHOẢNG</p>
+            <p className="muted small">{rangePeriodLabel} · Summary không đổi khi chuyển trang</p>
+          </div>
+        </div>
 
         <div className="dashboard-summary-grid">
           <div className="stat-card">
             <span className="muted small">Quan order</span>
-            <span className="stat-number">{formatNumber(totals.orderQuantity)}</span>
+            <span className="stat-number">{summaryError ? "—" : formatNumber(rangeSummary.orderQuantity)}</span>
           </div>
           <div className="stat-card">
             <span className="muted small">Pallet đã tạo</span>
-            <span className="stat-number">{formatNumber(totals.palletCount)}</span>
+            <span className="stat-number">{summaryError ? "—" : formatNumber(rangeSummary.palletCount)}</span>
           </div>
           <div className="stat-card">
             <span className="muted small">Đã sản xuất</span>
-            <span className="stat-number">{formatNumber(totals.producedQuantity)}</span>
+            <span className="stat-number">{summaryError ? "—" : formatNumber(rangeSummary.producedQuantity)}</span>
           </div>
           <div className="stat-card">
             <span className="muted small">Đã scan</span>
-            <span className="stat-number">{formatNumber(totals.scannedQuantity)}</span>
+            <span className="stat-number">{summaryError ? "—" : formatNumber(rangeSummary.scannedQuantity)}</span>
           </div>
           <div className="stat-card">
             <span className="muted small">Đã nhập kho</span>
-            <span className="stat-number">{formatNumber(totals.warehouseQuantity)}</span>
+            <span className="stat-number">{summaryError ? "—" : formatNumber(rangeSummary.warehouseQuantity)}</span>
           </div>
         </div>
 
         <section className="panel dashboard-table-panel">
           <div className="dashboard-table-header">
             <div>
-              <p className="eyebrow">{periodLabel}</p>
+              <p className="eyebrow">7 NGÀY / TRANG · {pagePeriodLabel}</p>
               <h2>{mode === "wo" ? "Tổng hợp theo WO" : "Tổng hợp theo Item"}</h2>
-              <p className="muted small">{visibleRows.length} dòng dữ liệu tổng hợp</p>
+              <p className="muted small">
+                {visibleRows.length} dòng dữ liệu tổng hợp · TOTAL trong bảng chỉ tính khoảng đang hiển thị
+              </p>
             </div>
 
             <div className="dashboard-tabs" aria-label="Chế độ xem">
@@ -445,12 +590,44 @@ export default async function ProductionDashboardPage({
           </div>
 
           <DashboardTableClient
-            endDate={endDate}
+            endDate={pageEndDate}
             mode={mode}
             rows={visibleRows}
-            startDate={startDate}
-            totals={totals}
+            startDate={pageStartDate}
+            totals={pageTotals}
           />
+
+          {totalPages > 1 ? (
+            <nav className="dashboard-pagination" aria-label="Phân trang dashboard theo 7 ngày">
+              {currentPage > 1 ? (
+                <Link
+                  className="button button-secondary"
+                  href={pageHref(currentPage - 1)}
+                  prefetch={false}
+                >
+                  ← 7 ngày trước
+                </Link>
+              ) : (
+                <span aria-disabled="true" className="button button-secondary">← 7 ngày trước</span>
+              )}
+
+              <span className="dashboard-pagination-status">
+                Trang {currentPage}/{totalPages} · {pagePeriodLabel}
+              </span>
+
+              {currentPage < totalPages ? (
+                <Link
+                  className="button button-secondary"
+                  href={pageHref(currentPage + 1)}
+                  prefetch={false}
+                >
+                  7 ngày tiếp →
+                </Link>
+              ) : (
+                <span aria-disabled="true" className="button button-secondary">7 ngày tiếp →</span>
+              )}
+            </nav>
+          ) : null}
         </section>
       </div>
     </PageShell>

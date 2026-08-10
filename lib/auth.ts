@@ -67,6 +67,10 @@ export function hasRole(profile: Profile, roles: AppRole | AppRole[]) {
 export function hasPermission(profile: Profile, permission: PermissionKey) {
   if (profile.role === "superadmin") return true;
 
+  // Dashboard is a role-level default for every admin. User accounts only get
+  // access when Super Admin grants dashboard.view in user_permissions.
+  if (profile.role === "admin" && permission === "dashboard.view") return true;
+
   // Department admins receive the standard permissions of their position.
   // Extra permissions granted by Super Admin remain available through
   // profile.permissions below.
