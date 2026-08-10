@@ -592,7 +592,7 @@ Quyền truy cập:
 
 Cả page `/production-dashboard` và API `/api/production-dashboard/details` đều kiểm tra cùng permission `dashboard.view`, tránh bypass bằng cách gọi API trực tiếp.
 
-### Chức năng
+### 11.1 Dashboard tổng hợp
 
 - Tìm theo một ngày hoặc khoảng ngày làm việc.
 - Tổng hợp theo WO hoặc itemcode.
@@ -607,7 +607,67 @@ Cả page `/production-dashboard` và API `/api/production-dashboard/details` đ
 - Mọi pallet đều có nút `Xem` để mở popup lịch sử, kể cả pallet chưa từng edit hoặc return.
 - Pallet đã từng sửa hoặc return vẫn hiển thị dấu `!` để cảnh báo nhanh.
 
-### Lịch sử pallet
+### 11.2 Check FIFO
+
+Route:
+
+```text
+/production-dashboard/check-fifo
+```
+
+Check FIFO dùng cùng permission `dashboard.view` và dùng để tìm pallet đã tồn lâu nhưng chưa đi tới process tiếp theo.
+
+Bộ lọc thời gian:
+
+```text
+Theo ngày
+Khoảng ngày
+Tất cả
+```
+
+Bộ lọc process:
+
+- `Sản xuất`: lấy pallet active có `status = production`, tức đã tạo nhưng chưa scan.
+- `Scan`: lấy pallet active có `status = pendingWH` hoặc `processingWH`, tức đã scan nhưng chưa hoàn tất nhập kho.
+- `WHdone` không thuộc danh sách FIFO vì đã hoàn tất process.
+
+Bảng FIFO hiển thị:
+
+```text
+pallet_id
+working_day
+số ngày delay
+scanned_at
+itemcode
+customer
+product_name
+```
+
+`Số ngày delay` được tính theo ngày Việt Nam:
+
+```text
+ngày hiện tại - working_day
+```
+
+Ví dụ `working_day = 08/08/2026`, ngày hiện tại `10/08/2026` thì delay là `2 ngày`.
+
+Danh sách sắp xếp `working_day` tăng dần để pallet cũ nhất nằm trên cùng. `working_day` được dùng thay vì `created_at` vì pallet sau khi edit vẫn phải giữ ngày sản xuất gốc.
+
+#### An toàn query Tất cả
+
+Không được loop tải toàn bộ dữ liệu khi chọn `Tất cả`.
+
+Rule hiện hành:
+
+- mỗi request chỉ tải tối đa `200` pallet để render;
+- query lấy thêm đúng `1` dòng để xác định còn trang sau;
+- dùng phân trang `Trang trước / Trang sau`;
+- bộ lọc vẫn chạy trực tiếp tại database theo `effect_to`, `status` và `working_day`;
+- không thực hiện `count(*)` toàn bộ backlog chỉ để render trang FIFO.
+
+Mục tiêu của giới hạn này là tránh tăng đột biến số request Supabase, RAM/CPU server render, kích thước HTML và nguy cơ timeout khi dữ liệu production lớn.
+
+### 11.3 Lịch sử pallet
 
 Popup lịch sử được chia thành hai phần:
 
@@ -720,6 +780,8 @@ scanned_by
 scanned_at
 working_day
 ```
+
+Check FIFO chỉ đọc các field cần thiết và lọc trực tiếp trên `effect_to`, `status`, `working_day`. Schema hiện tại đã có index riêng cho `working_day` và `status`; phân trang giới hạn lượng dữ liệu trả về trên mỗi request.
 
 ### `pallet_change_history`
 
@@ -944,19 +1006,23 @@ Sau khi thay đổi env, phải redeploy hoặc restart môi trường.
 40. Kiểm tra dấu `!` cho pallet edit/return và phần lịch sử chỉnh sửa/return giữ đúng dấu vết cũ.
 41. Kiểm tra tên người thao tác, không hiển thị raw user ID khi profile hợp lệ.
 42. Với user chưa có `dashboard.view`, gọi trực tiếp `/api/production-dashboard/details` phải trả `403`.
+43. Mở tab `Check FIFO` và kiểm tra `Sản xuất` chỉ hiện `production`; `Scan` chỉ hiện `pendingWH/processingWH`.
+44. Kiểm tra `Tất cả` không tải toàn bộ backlog mà phân trang tối đa 200 pallet mỗi request.
+45. Kiểm tra FIFO sắp pallet cũ nhất trước và `Số ngày delay = ngày hiện tại Việt Nam - working_day`.
+46. Chuyển `Trang sau / Trang trước` và xác nhận giữ nguyên bộ lọc ngày/process.
 
 ### PWA
 
-43. Mở `/manifest.webmanifest`.
-44. Mở `/pwa/icon/192` và `/pwa/icon/512`.
-45. Cài app lên màn hình chính.
-46. Mở app dạng standalone.
-47. Tắt mạng và xác nhận operation không thể tiếp tục.
+47. Mở `/manifest.webmanifest`.
+48. Mở `/pwa/icon/192` và `/pwa/icon/512`.
+49. Cài app lên màn hình chính.
+50. Mở app dạng standalone.
+51. Tắt mạng và xác nhận operation không thể tiếp tục.
 
 ### Session
 
-48. Đăng xuất.
-49. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
+52. Đăng xuất.
+53. Kiểm tra không quay lại trang bảo vệ bằng browser cache.
 
 ---
 
@@ -1035,5 +1101,6 @@ display: none
 - Không thêm offline cache cho operation nếu chưa có thiết kế chống trùng và đồng bộ transaction.
 - Không sử dụng service-role key ở client.
 - `dashboard.view` của user chỉ do Super Admin cấp/gỡ; Admin không được thay đổi quyền này.
+- Check FIFO không được dùng query không giới hạn để tải toàn bộ backlog trong một request.
 - Luôn sửa trên `dev` và kiểm thử trước khi merge production.
 - Luôn cập nhật README khi thay đổi nghiệp vụ hoặc database.
