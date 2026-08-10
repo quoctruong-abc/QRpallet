@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentProfile } from "@/lib/auth";
+import { authorizePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -85,29 +85,6 @@ function extractEditReason(note: string | null) {
 function fallbackActor(userId: string | null) {
   if (!userId) return "Không xác định";
   return `User ${userId.slice(0, 8)}`;
-}
-
-async function authorizeAdmin() {
-  const profile = await getCurrentProfile();
-  if (!profile) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { success: false, error: "Phiên đăng nhập đã hết hạn." },
-        { status: 401 },
-      ),
-    };
-  }
-  if (!profile.is_active || !["admin", "superadmin"].includes(profile.role)) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { success: false, error: "Bạn không có quyền xem dashboard." },
-        { status: 403 },
-      ),
-    };
-  }
-  return { ok: true as const };
 }
 
 async function loadPalletDetails(url: URL) {
@@ -301,8 +278,13 @@ async function loadPalletHistory(palletId: string) {
 }
 
 export async function GET(request: Request) {
-  const authorization = await authorizeAdmin();
-  if (!authorization.ok) return authorization.response;
+  const authorization = await authorizePermission("dashboard.view");
+  if (!authorization.ok) {
+    return NextResponse.json(
+      { success: false, error: authorization.error },
+      { status: authorization.status },
+    );
+  }
 
   try {
     const url = new URL(request.url);
