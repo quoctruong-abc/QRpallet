@@ -38,6 +38,9 @@ type PalletVersionRow = {
   has_been_edited: boolean | null;
   edit_count: number | null;
   has_been_return: boolean | null;
+  scanned_by: string | null;
+  scanned_at: string | null;
+  wh_receipt: string | null;
 };
 
 type ReturnHistoryRow = {
@@ -56,6 +59,13 @@ type ProfileRow = {
   username: string | null;
   full_name: string | null;
   employee_code: string | null;
+};
+
+type ReceiptRow = {
+  receipt_id: string;
+  user_id: string | null;
+  uid_user: string | null;
+  created_at: string;
 };
 
 type HistoryEvent = {
@@ -151,7 +161,7 @@ async function loadPalletHistory(palletId: string) {
     supabase
       .from("pallet_data")
       .select(
-        "id,pallet_id,quantity,status,note,old_data_refer,created_by,created_at,updated_at,effect_to,has_been_edited,edit_count,has_been_return",
+        "id,pallet_id,quantity,status,note,old_data_refer,created_by,created_at,updated_at,effect_to,has_been_edited,edit_count,has_been_return,scanned_by,scanned_at,wh_receipt",
       )
       .eq("pallet_id", palletId)
       .order("created_at", { ascending: true }),
@@ -181,9 +191,36 @@ async function loadPalletHistory(palletId: string) {
     return NextResponse.json({ success: false, error: "Không tìm thấy pallet." }, { status: 404 });
   }
 
+  const original = versions[0];
+  const current = versions[versions.length - 1];
+  const adminSupabase = createAdminClient();
+
+  let receipt: ReceiptRow | null = null;
+  if (current.wh_receipt) {
+    const { data: receiptData, error: receiptError } = await adminSupabase
+      .from("wh_receipt")
+      .select("receipt_id,user_id,uid_user,created_at")
+      .eq("receipt_id", current.wh_receipt)
+      .maybeSingle();
+
+    if (receiptError) {
+      console.error("Dashboard receipt lookup failed", {
+        palletId,
+        receiptId: current.wh_receipt,
+        message: receiptError.message,
+      });
+    } else {
+      receipt = receiptData as ReceiptRow | null;
+    }
+  }
+
+  const receiptActorId = receipt?.user_id ?? receipt?.uid_user ?? null;
   const actorIds = Array.from(
     new Set(
       [
+        original.created_by,
+        current.scanned_by,
+        receiptActorId,
         ...versions.map((row) => row.created_by),
         ...returns.map((row) => row.scanned_by),
         ...returns.map((row) => row.cancelled_by),
@@ -193,7 +230,6 @@ async function loadPalletHistory(palletId: string) {
 
   const profileMap = new Map<string, ProfileRow>();
   if (actorIds.length) {
-    const adminSupabase = createAdminClient();
     const { data: profiles, error: profileError } = await adminSupabase
       .from("profiles")
       .select("id,username,full_name,employee_code")
@@ -207,7 +243,7 @@ async function loadPalletHistory(palletId: string) {
   }
 
   const actorName = (userId: string | null) => {
-    if (!userId) return fallbackActor(userId);
+    if (!userId) return "Chưa có";
     const profile = profileMap.get(userId);
     if (!profile) return fallbackActor(userId);
 
@@ -237,7 +273,6 @@ async function loadPalletHistory(palletId: string) {
   }
 
   if (!events.some((event) => event.type === "edit")) {
-    const current = versions[versions.length - 1];
     const fallbackReasons = (current.note ?? "")
       .split("\n")
       .map((line) => line.trim())
@@ -274,7 +309,30 @@ async function loadPalletHistory(palletId: string) {
     (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
   );
 
-  return NextResponse.json({ success: true, palletId, events });
+  return NextResponse.json({
+    success: true,
+    palletId,
+    flow: {
+      created: {
+        actor: actorName(original.created_by),
+        at: original.created_at,
+      },
+      scanned: current.scanned_at
+        ? {
+            actor: actorName(current.scanned_by),
+            at: current.scanned_at,
+          }
+        : null,
+      warehouse: current.wh_receipt
+        ? {
+            actor: receipt ? actorName(receiptActorId) : "Không xác định",
+            at: receipt?.created_at ?? null,
+            receiptId: current.wh_receipt,
+          }
+        : null,
+    },
+    events,
+  });
 }
 
 export async function GET(request: Request) {
