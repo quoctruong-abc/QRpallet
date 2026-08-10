@@ -229,6 +229,9 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
     setHistoryError("");
   }
 
+  const historyEditCount = history.filter((event) => event.type === "edit").length;
+  const historyHasReturn = history.some((event) => event.type === "return");
+
   return (
     <>
       <style>{`
@@ -395,6 +398,9 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
               <span>{selectedRow.producedQuantity.toLocaleString("vi-VN")} pcs đã sản xuất</span>
               <span>{selectedRow.scannedQuantity.toLocaleString("vi-VN")} pcs đã scan</span>
               <span>{selectedRow.warehouseQuantity.toLocaleString("vi-VN")} pcs đã nhập kho</span>
+              {pallets.some((pallet) => pallet.is_deleted) ? (
+                <span>{pallets.filter((pallet) => pallet.is_deleted).length.toLocaleString("vi-VN")} pallet đã xóa</span>
+              ) : null}
             </div>
 
             {detailLoading ? <p className="alert alert-success">Đang tải tình trạng pallet...</p> : null}
@@ -470,8 +476,8 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
             </div>
 
             <div className="dashboard-modal-summary">
-              <span>{historyPallet.edit_count} lần chỉnh sửa</span>
-              <span>{historyPallet.has_been_return ? "Đã từng return" : "Chưa return"}</span>
+              <span>{Math.max(historyEditCount, historyPallet.edit_count)} lần chỉnh sửa</span>
+              <span>{historyHasReturn || historyPallet.has_been_return ? "Đã từng return" : "Chưa return"}</span>
               <span>Hiện tại: {statusLabel(historyPallet.status)}</span>
             </div>
 
