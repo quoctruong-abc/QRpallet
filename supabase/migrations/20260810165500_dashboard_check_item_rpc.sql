@@ -7,6 +7,8 @@ returns table (
   itemcode text,
   product_name text,
   customer text,
+  first_working_day date,
+  last_working_day date,
   wo text,
   order_quantity numeric,
   pallet_count bigint,
@@ -39,6 +41,7 @@ begin
       p.product_name,
       p.customer,
       p.wo,
+      p.working_day,
       coalesce(p.quanorder, 0)::numeric as quanorder,
       coalesce(p.quantity, 0)::bigint as quantity,
       lower(coalesce(p.status, '')) as status,
@@ -56,6 +59,7 @@ begin
       p.product_name,
       p.customer,
       p.wo,
+      p.working_day,
       coalesce(p.quanorder, 0)::numeric as quanorder,
       0::bigint as quantity,
       lower(coalesce(p.status, '')) as status,
@@ -85,7 +89,10 @@ begin
   item_meta as (
     select
       coalesce((select string_agg(pn.value, ' / ' order by pn.value) from product_names pn), '—') as product_name,
-      coalesce((select string_agg(c.value, ' / ' order by c.value) from customers c), '—') as customer
+      coalesce((select string_agg(c.value, ' / ' order by c.value) from customers c), '—') as customer,
+      min(r.working_day) as first_working_day,
+      max(r.working_day) as last_working_day
+    from item_rows r
   ),
   wo_keys as (
     select distinct trim(r.wo) as wo
@@ -121,6 +128,8 @@ begin
     v_itemcode as itemcode,
     m.product_name,
     m.customer,
+    m.first_working_day,
+    m.last_working_day,
     k.wo,
     coalesce(o.order_quantity, 0)::numeric as order_quantity,
     coalesce(t.pallet_count, 0)::bigint as pallet_count,
