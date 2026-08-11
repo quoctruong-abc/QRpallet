@@ -158,21 +158,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: authorization.error }, { status: authorization.status });
   }
 
-  let stage = "request";
-
   try {
-    stage = "form-data";
     const formData = await request.formData();
     const file = formData.get("file");
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "Vui lòng chọn file Excel." }, { status: 400 });
     }
-
-    console.info("[planning-import] file received", {
-      name: file.name,
-      size: file.size,
-      type: file.type,
-    });
 
     if (file.size === 0) {
       return NextResponse.json({ error: "File Excel đang trống." }, { status: 400 });
@@ -187,70 +178,30 @@ export async function POST(request: Request) {
       );
     }
 
-    stage = "buffer";
     const buffer = Buffer.from(await file.arrayBuffer());
-    console.info("[planning-import] buffer ready", { bytes: buffer.length });
+    const workbook = await readExcelFile(buffer, { trim: false });
+    const selected = workbook.find(
+      (entry) => normalizeSheetName(entry?.sheet) === PLANNING_SHEET_NAME,
+    );
 
-    stage = "read-workbook";
-    let worksheet: CellValue[][];
-    try {
-      const workbook = await readExcelFile(buffer, { trim: false });
-      const availableSheets = workbook.map((entry, index) => ({
-        index: index + 1,
-        sheet: typeof entry?.sheet === "string" ? entry.sheet : null,
-        rows: Array.isArray(entry?.data) ? entry.data.length : null,
-      }));
-
-      console.info("[planning-import] workbook loaded", {
-        requestedSheet: PLANNING_SHEET_NAME,
-        availableSheets,
-      });
-
-      const selected = workbook.find(
-        (entry) => normalizeSheetName(entry?.sheet) === PLANNING_SHEET_NAME,
+    if (!selected || !Array.isArray(selected.data)) {
+      const names = workbook
+        .map((entry) => (typeof entry?.sheet === "string" ? entry.sheet : null))
+        .filter((name): name is string => Boolean(name));
+      return NextResponse.json(
+        {
+          error: `Không tìm thấy sheet tên ${PLANNING_SHEET_NAME} trong file Excel. Sheet hiện có: ${names.join(", ") || "không xác định"}.`,
+        },
+        { status: 400 },
       );
-
-      if (!selected || !Array.isArray(selected.data)) {
-        const names = availableSheets
-          .map((entry) => entry.sheet)
-          .filter((name): name is string => Boolean(name));
-        return NextResponse.json(
-          {
-            error: `Không tìm thấy sheet tên ${PLANNING_SHEET_NAME} trong file Excel. Sheet hiện có: ${names.join(", ") || "không xác định"}.`,
-          },
-          { status: 400 },
-        );
-      }
-
-      worksheet = selected.data;
-      console.info("[planning-import] sheet selected", {
-        selectedSheet: selected.sheet,
-        rows: worksheet.length,
-      });
-    } catch (error) {
-      console.error("[planning-import] workbook read failed", {
-        stage,
-        requestedSheet: PLANNING_SHEET_NAME,
-        name: error instanceof Error ? error.name : typeof error,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      throw error;
     }
 
+    const worksheet: CellValue[][] = selected.data;
     if (worksheet.length === 0) {
       return NextResponse.json({ error: "Sheet data đang trống." }, { status: 400 });
     }
 
     const widestRow = worksheet.reduce((max, row) => Math.max(max, row.length), 0);
-    console.info("[planning-import] sheet loaded", {
-      selectedSheet: PLANNING_SHEET_NAME,
-      rows: worksheet.length,
-      widestRow,
-      header: worksheet[0]?.slice(0, EXPECTED_COLUMN_COUNT),
-      preview: worksheet.slice(1, 4).map((row) => row.slice(0, EXPECTED_COLUMN_COUNT)),
-    });
-
     if (widestRow < EXPECTED_COLUMN_COUNT) {
       return NextResponse.json(
         { error: `Sheet data phải có đủ ${EXPECTED_COLUMN_COUNT} cột từ A đến L.` },
@@ -258,50 +209,33 @@ export async function POST(request: Request) {
       );
     }
 
-    stage = "parse-rows";
     const rows: PlanningRow[] = [];
     const warnings: string[] = [];
-    let skippedNoItem = 0;
 
     // Dòng 1 luôn là header. Dữ liệu bắt đầu từ dòng 2.
     for (let dataIndex = 1; dataIndex < worksheet.length; dataIndex += 1) {
       const excelRow = dataIndex + 1;
       const row = worksheet[dataIndex] ?? [];
 
-      try {
-        const itemcode = toItemCode(row[1] ?? null, excelRow, warnings);
-        if (!itemcode) {
-          const hasAnyCell = row.some((value) => toText(value) !== null);
-          if (hasAnyCell) skippedNoItem += 1;
-          continue;
-        }
+      const itemcode = toItemCode(row[1] ?? null, excelRow, warnings);
+      if (!itemcode) continue;
 
-        const parsedRow: PlanningRow = {
-          machine: toText(row[0] ?? null),
-          itemcode,
-          product_name: toText(row[2] ?? null),
-          customer: toText(row[3] ?? null),
-          wo: toText(row[4] ?? null),
-          netweight: optionalNumber(row[5] ?? null, excelRow, "Netweight", warnings),
-          quanperh: optionalNumber(row[6] ?? null, excelRow, "quanperh", warnings),
-          quanperday: optionalNumber(row[7] ?? null, excelRow, "quanperday", warnings),
-          color: toText(row[8] ?? null),
-          material: toText(row[9] ?? null),
-          package: toText(row[10] ?? null),
-          quanorder: requiredReportNumber(row[11] ?? null, excelRow),
-        };
+      const parsedRow: PlanningRow = {
+        machine: toText(row[0] ?? null),
+        itemcode,
+        product_name: toText(row[2] ?? null),
+        customer: toText(row[3] ?? null),
+        wo: toText(row[4] ?? null),
+        netweight: optionalNumber(row[5] ?? null, excelRow, "Netweight", warnings),
+        quanperh: optionalNumber(row[6] ?? null, excelRow, "quanperh", warnings),
+        quanperday: optionalNumber(row[7] ?? null, excelRow, "quanperday", warnings),
+        color: toText(row[8] ?? null),
+        material: toText(row[9] ?? null),
+        package: toText(row[10] ?? null),
+        quanorder: requiredReportNumber(row[11] ?? null, excelRow),
+      };
 
-        if (!isEmptyRow(parsedRow)) rows.push(parsedRow);
-      } catch (error) {
-        console.error("[planning-import] row parse failed", {
-          stage,
-          selectedSheet: PLANNING_SHEET_NAME,
-          excelRow,
-          rawRow: row.slice(0, EXPECTED_COLUMN_COUNT),
-          message: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
+      if (!isEmptyRow(parsedRow)) rows.push(parsedRow);
 
       if (rows.length > MAX_ROWS) {
         return NextResponse.json(
@@ -311,15 +245,6 @@ export async function POST(request: Request) {
       }
     }
 
-    console.info("[planning-import] rows parsed", {
-      selectedSheet: PLANNING_SHEET_NAME,
-      importedCandidates: rows.length,
-      skippedNoItem,
-      warningCount: warnings.length,
-      warnings,
-      sample: rows.slice(0, 3),
-    });
-
     if (rows.length === 0) {
       return NextResponse.json(
         { error: "Sheet data không có dòng kế hoạch hợp lệ có Itemcode." },
@@ -327,29 +252,14 @@ export async function POST(request: Request) {
       );
     }
 
-    stage = "rpc";
-    console.info("[planning-import] calling replace_planning_inject", {
-      selectedSheet: PLANNING_SHEET_NAME,
-      rows: rows.length,
-      sourceFile: file.name,
-    });
-
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("replace_planning_inject", {
       p_rows: rows,
       p_source_file: file.name,
     });
     if (error) {
-      console.error("replace_planning_inject failed", error);
       return NextResponse.json({ error: `Không thể cập nhật database: ${error.message}` }, { status: 500 });
     }
-
-    console.info("[planning-import] completed", {
-      selectedSheet: PLANNING_SHEET_NAME,
-      imported: Number(data ?? rows.length),
-      sourceFile: file.name,
-      warningCount: warnings.length,
-    });
 
     return NextResponse.json({
       success: true,
@@ -358,13 +268,6 @@ export async function POST(request: Request) {
       warnings: warnings.length,
     });
   } catch (error) {
-    console.error("[planning-import] failed", {
-      stage,
-      requestedSheet: PLANNING_SHEET_NAME,
-      name: error instanceof Error ? error.name : typeof error,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
     const message = error instanceof Error ? error.message : "Không thể đọc file Excel.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
