@@ -8,52 +8,11 @@ export const runtime = "nodejs";
 
 const MAX_FILE_SIZE = 4 * 1024 * 1024;
 const MAX_ROWS = 20000;
-const HEADER_SCAN_ROWS = 30;
 const MAX_WARNING_LOGS = 20;
 const PLANNING_SHEET_NAME = "data";
+const EXPECTED_COLUMN_COUNT = 12;
 
 type CellPrimitive = CellValue | null | undefined;
-type PlanningField = Exclude<keyof PlanningRow, "id" | "source_file" | "imported_at">;
-type ColumnMap = Partial<Record<PlanningField, number>>;
-
-const FIXED_COLUMN_MAP: ColumnMap = {
-  machine: 0,
-  itemcode: 1,
-  product_name: 2,
-  customer: 3,
-  wo: 4,
-  netweight: 5,
-  quanperh: 6,
-  quanperday: 7,
-  color: 8,
-  material: 9,
-  package: 10,
-  quanorder: 11,
-};
-
-const HEADER_ALIASES: Record<PlanningField, string[]> = {
-  machine: ["machine", "machineno", "machinecode", "may", "somay"],
-  itemcode: ["itemcode", "item", "itemno", "itemnumber", "maitem", "mavattu"],
-  product_name: ["productname", "product", "description", "productdescription", "tenhang", "tensanpham"],
-  customer: ["customer", "customername", "khachhang"],
-  wo: ["wo", "workorder", "workorderno", "workordernumber"],
-  netweight: ["netweight", "netweightg", "netweigth", "netweigthg", "netwt", "netwtg"],
-  quanperh: ["quanperh", "qtyperh", "quantityperh", "quantityperhour", "qtyperhour"],
-  quanperday: ["quanperday", "qtyperday", "quantityperday", "quantityday"],
-  color: ["color", "colour", "mau"],
-  material: ["material", "nguyenlieu"],
-  package: ["package", "packaging", "packing", "donggoi"],
-  quanorder: ["quanorder", "orderqty", "orderquantity", "qtyorder", "quantityorder", "orderedqty"],
-};
-
-function normalizeHeader(value: CellPrimitive): string {
-  if (value === null || value === undefined) return "";
-  return String(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
 
 function normalizeSheetName(value: unknown): string {
   if (typeof value !== "string") return "";
@@ -180,72 +139,13 @@ function optionalNumber(
   return null;
 }
 
-function requiredReportNumber(value: CellPrimitive, excelRow: number, columnName: string): number | null {
+function requiredReportNumber(value: CellPrimitive, excelRow: number): number | null {
   const parsed = parseFlexibleNumber(value);
   if (parsed !== null) return parsed;
 
   const raw = toText(value);
   if (!raw) return null;
-  throw new Error(`Dòng ${excelRow}, cột ${columnName}: “${raw}” không thể chuyển thành số.`);
-}
-
-function matchHeaderField(value: CellPrimitive): PlanningField | null {
-  const normalized = normalizeHeader(value);
-  if (!normalized) return null;
-
-  for (const [field, aliases] of Object.entries(HEADER_ALIASES) as [PlanningField, string[]][]) {
-    if (aliases.includes(normalized)) return field;
-  }
-  return null;
-}
-
-function buildColumnMap(row: CellValue[]): ColumnMap {
-  const map: ColumnMap = {};
-  row.forEach((value, index) => {
-    const field = matchHeaderField(value);
-    if (field && map[field] === undefined) map[field] = index;
-  });
-  return map;
-}
-
-function headerScore(map: ColumnMap): number {
-  return Object.keys(map).length;
-}
-
-function findHeader(worksheet: CellValue[][]): { headerIndex: number; columnMap: ColumnMap; detected: boolean } {
-  let bestIndex = -1;
-  let bestMap: ColumnMap = {};
-  let bestScore = 0;
-
-  for (let index = 0; index < Math.min(worksheet.length, HEADER_SCAN_ROWS); index += 1) {
-    const map = buildColumnMap(worksheet[index] ?? []);
-    const score = headerScore(map);
-    if (score > bestScore) {
-      bestIndex = index;
-      bestMap = map;
-      bestScore = score;
-    }
-  }
-
-  if (
-    bestIndex >= 0 &&
-    bestScore >= 4 &&
-    bestMap.itemcode !== undefined &&
-    bestMap.quanorder !== undefined
-  ) {
-    return { headerIndex: bestIndex, columnMap: bestMap, detected: true };
-  }
-
-  return { headerIndex: 0, columnMap: FIXED_COLUMN_MAP, detected: false };
-}
-
-function getCell(row: CellValue[], columnMap: ColumnMap, field: PlanningField): CellPrimitive {
-  const index = columnMap[field];
-  return index === undefined ? null : row[index] ?? null;
-}
-
-function looksLikeRepeatedHeader(row: CellValue[]): boolean {
-  return headerScore(buildColumnMap(row)) >= 4;
+  throw new Error(`Dòng ${excelRow}, cột Quanorder: “${raw}” không thể chuyển thành số.`);
 }
 
 function isEmptyRow(row: PlanningRow) {
@@ -294,14 +194,10 @@ export async function POST(request: Request) {
     stage = "read-workbook";
     let worksheet: CellValue[][];
     try {
-      // Không dùng readSheet() để chọn sheet nữa.
-      // Đọc toàn workbook với trim=false rồi tự chọn sheet `data` để tránh parser nội bộ
-      // gọi .trim() trên cell bất thường trong các file planning đã chỉnh sửa nhiều lần.
       const workbook = await readExcelFile(buffer, { trim: false });
       const availableSheets = workbook.map((entry, index) => ({
         index: index + 1,
         sheet: typeof entry?.sheet === "string" ? entry.sheet : null,
-        hasData: Array.isArray(entry?.data),
         rows: Array.isArray(entry?.data) ? entry.data.length : null,
       }));
 
@@ -311,7 +207,7 @@ export async function POST(request: Request) {
       });
 
       const selected = workbook.find(
-        (entry) => normalizeSheetName(entry?.sheet) === PLANNING_SHEET_NAME.toLowerCase(),
+        (entry) => normalizeSheetName(entry?.sheet) === PLANNING_SHEET_NAME,
       );
 
       if (!selected || !Array.isArray(selected.data)) {
@@ -342,31 +238,22 @@ export async function POST(request: Request) {
       throw error;
     }
 
+    if (worksheet.length === 0) {
+      return NextResponse.json({ error: "Sheet data đang trống." }, { status: 400 });
+    }
+
     const widestRow = worksheet.reduce((max, row) => Math.max(max, row.length), 0);
     console.info("[planning-import] sheet loaded", {
       selectedSheet: PLANNING_SHEET_NAME,
       rows: worksheet.length,
       widestRow,
-      preview: worksheet.slice(0, 6).map((row) => row.slice(0, 12)),
+      header: worksheet[0]?.slice(0, EXPECTED_COLUMN_COUNT),
+      preview: worksheet.slice(1, 4).map((row) => row.slice(0, EXPECTED_COLUMN_COUNT)),
     });
 
-    if (worksheet.length === 0) {
-      return NextResponse.json({ error: "Sheet data đang trống." }, { status: 400 });
-    }
-
-    stage = "detect-header";
-    const { headerIndex, columnMap, detected } = findHeader(worksheet);
-    console.info("[planning-import] header mapping", {
-      selectedSheet: PLANNING_SHEET_NAME,
-      detected,
-      excelHeaderRow: headerIndex + 1,
-      columnMap,
-      headerValues: worksheet[headerIndex]?.slice(0, Math.max(widestRow, 12)),
-    });
-
-    if (columnMap.itemcode === undefined || columnMap.quanorder === undefined) {
+    if (widestRow < EXPECTED_COLUMN_COUNT) {
       return NextResponse.json(
-        { error: "Không nhận diện được cột Itemcode và Quanorder trong sheet data." },
+        { error: `Sheet data phải có đủ ${EXPECTED_COLUMN_COUNT} cột từ A đến L.` },
         { status: 400 },
       );
     }
@@ -374,22 +261,15 @@ export async function POST(request: Request) {
     stage = "parse-rows";
     const rows: PlanningRow[] = [];
     const warnings: string[] = [];
-    let skippedRepeatedHeaders = 0;
     let skippedNoItem = 0;
 
-    for (let dataIndex = headerIndex + 1; dataIndex < worksheet.length; dataIndex += 1) {
+    // Dòng 1 luôn là header. Dữ liệu bắt đầu từ dòng 2.
+    for (let dataIndex = 1; dataIndex < worksheet.length; dataIndex += 1) {
       const excelRow = dataIndex + 1;
       const row = worksheet[dataIndex] ?? [];
 
-      if (looksLikeRepeatedHeader(row)) {
-        skippedRepeatedHeaders += 1;
-        continue;
-      }
-
       try {
-        const itemcode = toItemCode(getCell(row, columnMap, "itemcode"), excelRow, warnings);
-        const wo = toText(getCell(row, columnMap, "wo"));
-
+        const itemcode = toItemCode(row[1] ?? null, excelRow, warnings);
         if (!itemcode) {
           const hasAnyCell = row.some((value) => toText(value) !== null);
           if (hasAnyCell) skippedNoItem += 1;
@@ -397,18 +277,18 @@ export async function POST(request: Request) {
         }
 
         const parsedRow: PlanningRow = {
-          machine: toText(getCell(row, columnMap, "machine")),
+          machine: toText(row[0] ?? null),
           itemcode,
-          product_name: toText(getCell(row, columnMap, "product_name")),
-          customer: toText(getCell(row, columnMap, "customer")),
-          wo,
-          netweight: optionalNumber(getCell(row, columnMap, "netweight"), excelRow, "Netweight", warnings),
-          quanperh: optionalNumber(getCell(row, columnMap, "quanperh"), excelRow, "quanperh", warnings),
-          quanperday: optionalNumber(getCell(row, columnMap, "quanperday"), excelRow, "quanperday", warnings),
-          color: toText(getCell(row, columnMap, "color")),
-          material: toText(getCell(row, columnMap, "material")),
-          package: toText(getCell(row, columnMap, "package")),
-          quanorder: requiredReportNumber(getCell(row, columnMap, "quanorder"), excelRow, "Quanorder"),
+          product_name: toText(row[2] ?? null),
+          customer: toText(row[3] ?? null),
+          wo: toText(row[4] ?? null),
+          netweight: optionalNumber(row[5] ?? null, excelRow, "Netweight", warnings),
+          quanperh: optionalNumber(row[6] ?? null, excelRow, "quanperh", warnings),
+          quanperday: optionalNumber(row[7] ?? null, excelRow, "quanperday", warnings),
+          color: toText(row[8] ?? null),
+          material: toText(row[9] ?? null),
+          package: toText(row[10] ?? null),
+          quanorder: requiredReportNumber(row[11] ?? null, excelRow),
         };
 
         if (!isEmptyRow(parsedRow)) rows.push(parsedRow);
@@ -417,7 +297,7 @@ export async function POST(request: Request) {
           stage,
           selectedSheet: PLANNING_SHEET_NAME,
           excelRow,
-          rawRow: row.slice(0, Math.max(widestRow, 12)),
+          rawRow: row.slice(0, EXPECTED_COLUMN_COUNT),
           message: error instanceof Error ? error.message : String(error),
         });
         throw error;
@@ -434,7 +314,6 @@ export async function POST(request: Request) {
     console.info("[planning-import] rows parsed", {
       selectedSheet: PLANNING_SHEET_NAME,
       importedCandidates: rows.length,
-      skippedRepeatedHeaders,
       skippedNoItem,
       warningCount: warnings.length,
       warnings,
