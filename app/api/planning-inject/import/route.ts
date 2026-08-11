@@ -196,7 +196,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const worksheet: CellValue[][] = selected.data;
+    const worksheet: (CellValue | null)[][] = selected.data;
     if (worksheet.length === 0) {
       return NextResponse.json({ error: "Sheet data đang trống." }, { status: 400 });
     }
