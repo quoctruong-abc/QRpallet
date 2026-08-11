@@ -1,4 +1,4 @@
-import readXlsxFile, { type CellValue } from "read-excel-file/node";
+import { readSheet, type CellValue } from "read-excel-file/node";
 import { NextResponse } from "next/server";
 import { authorizePermission } from "@/lib/auth";
 import type { PlanningRow } from "@/lib/planning";
@@ -75,13 +75,20 @@ export async function POST(request: Request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const sheets = await readXlsxFile(buffer);
-    const worksheet = sheets.find((sheet) => sheet.sheet.trim().toLowerCase() === "data");
-    if (!worksheet) {
-      return NextResponse.json({ error: "Không tìm thấy sheet tên data trong file Excel." }, { status: 400 });
+    let worksheet: CellValue[][];
+    try {
+      worksheet = await readSheet(buffer, "data");
+    } catch (error) {
+      if (error instanceof Error && error.name === "SheetNotFoundError") {
+        return NextResponse.json(
+          { error: "Không tìm thấy sheet tên data trong file Excel." },
+          { status: 400 },
+        );
+      }
+      throw error;
     }
 
-    const widestRow = worksheet.data.reduce((max, row) => Math.max(max, row.length), 0);
+    const widestRow = worksheet.reduce((max, row) => Math.max(max, row.length), 0);
     if (widestRow < EXPECTED_COLUMN_COUNT) {
       return NextResponse.json(
         { error: `Sheet data phải có ít nhất ${EXPECTED_COLUMN_COUNT} cột từ A đến L.` },
@@ -90,9 +97,9 @@ export async function POST(request: Request) {
     }
 
     const rows: PlanningRow[] = [];
-    for (let dataIndex = 1; dataIndex < worksheet.data.length; dataIndex += 1) {
+    for (let dataIndex = 1; dataIndex < worksheet.length; dataIndex += 1) {
       const excelRow = dataIndex + 1;
-      const row = worksheet.data[dataIndex];
+      const row = worksheet[dataIndex] ?? [];
       const parsedRow: PlanningRow = {
         machine: toText(row[0] ?? null),
         itemcode: toText(row[1] ?? null),
