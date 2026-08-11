@@ -1,4 +1,4 @@
-import { readSheet, type CellValue } from "read-excel-file/node";
+import readExcelFile, { type CellValue } from "read-excel-file/node";
 import { NextResponse } from "next/server";
 import { authorizePermission } from "@/lib/auth";
 import type { PlanningRow } from "@/lib/planning";
@@ -55,6 +55,11 @@ function normalizeHeader(value: CellPrimitive): string {
     .replace(/[^a-z0-9]/g, "");
 }
 
+function normalizeSheetName(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim().toLowerCase();
+}
+
 function toText(value: CellPrimitive): string | null {
   if (value === null || value === undefined) return null;
   if (value instanceof Date) return value.toISOString();
@@ -92,7 +97,7 @@ function toItemCode(value: CellPrimitive, excelRow: number, warnings: string[]):
     if (!Number.isFinite(value)) return null;
     if (Number.isInteger(value) && !Number.isSafeInteger(value) && warnings.length < MAX_WARNING_LOGS) {
       warnings.push(
-        `Dòng ${excelRow}, Itemcode là số vượt giới hạn integer an toàn của JavaScript; hãy format cột Itemcode thành Text trong Excel nếu cần giữ tuyệt đối mọi chữ số.`,
+        `Dòng ${excelRow}, Itemcode là số vượt giới hạn integer an toàn của JavaScript; nếu mã dài hơn 15 chữ số hãy để cột Itemcode dạng Text trong Excel.`,
       );
     }
     return expandExponentialString(String(value));
@@ -286,26 +291,54 @@ export async function POST(request: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     console.info("[planning-import] buffer ready", { bytes: buffer.length });
 
-    stage = "read-sheet";
+    stage = "read-workbook";
     let worksheet: CellValue[][];
-    console.info("[planning-import] reading sheet", { requestedSheet: PLANNING_SHEET_NAME });
     try {
-      worksheet = await readSheet(buffer, PLANNING_SHEET_NAME);
-      console.info("[planning-import] sheet selected", { selectedSheet: PLANNING_SHEET_NAME });
+      // Không dùng readSheet() để chọn sheet nữa.
+      // Đọc toàn workbook với trim=false rồi tự chọn sheet `data` để tránh parser nội bộ
+      // gọi .trim() trên cell bất thường trong các file planning đã chỉnh sửa nhiều lần.
+      const workbook = await readExcelFile(buffer, { trim: false });
+      const availableSheets = workbook.map((entry, index) => ({
+        index: index + 1,
+        sheet: typeof entry?.sheet === "string" ? entry.sheet : null,
+        hasData: Array.isArray(entry?.data),
+        rows: Array.isArray(entry?.data) ? entry.data.length : null,
+      }));
+
+      console.info("[planning-import] workbook loaded", {
+        requestedSheet: PLANNING_SHEET_NAME,
+        availableSheets,
+      });
+
+      const selected = workbook.find(
+        (entry) => normalizeSheetName(entry?.sheet) === PLANNING_SHEET_NAME.toLowerCase(),
+      );
+
+      if (!selected || !Array.isArray(selected.data)) {
+        const names = availableSheets
+          .map((entry) => entry.sheet)
+          .filter((name): name is string => Boolean(name));
+        return NextResponse.json(
+          {
+            error: `Không tìm thấy sheet tên ${PLANNING_SHEET_NAME} trong file Excel. Sheet hiện có: ${names.join(", ") || "không xác định"}.`,
+          },
+          { status: 400 },
+        );
+      }
+
+      worksheet = selected.data;
+      console.info("[planning-import] sheet selected", {
+        selectedSheet: selected.sheet,
+        rows: worksheet.length,
+      });
     } catch (error) {
-      console.error("[planning-import] readSheet failed", {
+      console.error("[planning-import] workbook read failed", {
         stage,
         requestedSheet: PLANNING_SHEET_NAME,
         name: error instanceof Error ? error.name : typeof error,
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
-      if (error instanceof Error && error.name === "SheetNotFoundError") {
-        return NextResponse.json(
-          { error: `Không tìm thấy sheet tên ${PLANNING_SHEET_NAME} trong file Excel.` },
-          { status: 400 },
-        );
-      }
       throw error;
     }
 
@@ -409,7 +442,10 @@ export async function POST(request: Request) {
     });
 
     if (rows.length === 0) {
-      return NextResponse.json({ error: "Sheet data không có dòng kế hoạch hợp lệ có Itemcode." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Sheet data không có dòng kế hoạch hợp lệ có Itemcode." },
+        { status: 400 },
+      );
     }
 
     stage = "rpc";
