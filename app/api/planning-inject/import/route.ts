@@ -10,6 +10,7 @@ const MAX_FILE_SIZE = 4 * 1024 * 1024;
 const MAX_ROWS = 20000;
 const HEADER_SCAN_ROWS = 30;
 const MAX_WARNING_LOGS = 20;
+const PLANNING_SHEET_NAME = "data";
 
 type CellPrimitive = CellValue | null | undefined;
 type PlanningField = Exclude<keyof PlanningRow, "id" | "source_file" | "imported_at">;
@@ -100,7 +101,6 @@ function toItemCode(value: CellPrimitive, excelRow: number, warnings: string[]):
   const text = String(value).trim();
   if (!text) return null;
 
-  // Excel/user copy-paste đôi khi lưu mã số dưới dạng text scientific notation.
   if (/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(text)) {
     return expandExponentialString(text);
   }
@@ -127,7 +127,6 @@ function parseFlexibleNumber(value: CellPrimitive): number | null {
     raw = raw.slice(1, -1);
   }
 
-  // Cho phép text có đơn vị/ghi chú ở cuối, ví dụ "1,200 pcs".
   const numericToken = raw.match(/[+-]?\d[\d.,]*(?:[eE][+-]?\d+)?/i)?.[0];
   if (!numericToken) return null;
 
@@ -140,10 +139,8 @@ function parseFlexibleNumber(value: CellPrimitive): number | null {
       const lastComma = normalized.lastIndexOf(",");
       const lastDot = normalized.lastIndexOf(".");
       if (lastComma > lastDot) {
-        // 1.234,56 -> 1234.56
         normalized = normalized.replace(/\./g, "").replace(",", ".");
       } else {
-        // 1,234.56 -> 1234.56
         normalized = normalized.replace(/,/g, "");
       }
     } else if (commaCount > 0) {
@@ -225,7 +222,6 @@ function findHeader(worksheet: CellValue[][]): { headerIndex: number; columnMap:
     }
   }
 
-  // Itemcode + Quanorder là hai anchor mạnh nhất. Chỉ cần thêm >=2 cột khác để nhận là header.
   if (
     bestIndex >= 0 &&
     bestScore >= 4 &&
@@ -235,7 +231,6 @@ function findHeader(worksheet: CellValue[][]): { headerIndex: number; columnMap:
     return { headerIndex: bestIndex, columnMap: bestMap, detected: true };
   }
 
-  // Fallback cho file legacy đúng thứ tự A:L nhưng header quá khác alias.
   return { headerIndex: 0, columnMap: FIXED_COLUMN_MAP, detected: false };
 }
 
@@ -293,18 +288,21 @@ export async function POST(request: Request) {
 
     stage = "read-sheet";
     let worksheet: CellValue[][];
+    console.info("[planning-import] reading sheet", { requestedSheet: PLANNING_SHEET_NAME });
     try {
-      worksheet = await readSheet(buffer, { sheet: "data", trim: false });
+      worksheet = await readSheet(buffer, PLANNING_SHEET_NAME);
+      console.info("[planning-import] sheet selected", { selectedSheet: PLANNING_SHEET_NAME });
     } catch (error) {
       console.error("[planning-import] readSheet failed", {
         stage,
+        requestedSheet: PLANNING_SHEET_NAME,
         name: error instanceof Error ? error.name : typeof error,
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
       if (error instanceof Error && error.name === "SheetNotFoundError") {
         return NextResponse.json(
-          { error: "Không tìm thấy sheet tên data trong file Excel." },
+          { error: `Không tìm thấy sheet tên ${PLANNING_SHEET_NAME} trong file Excel.` },
           { status: 400 },
         );
       }
@@ -313,6 +311,7 @@ export async function POST(request: Request) {
 
     const widestRow = worksheet.reduce((max, row) => Math.max(max, row.length), 0);
     console.info("[planning-import] sheet loaded", {
+      selectedSheet: PLANNING_SHEET_NAME,
       rows: worksheet.length,
       widestRow,
       preview: worksheet.slice(0, 6).map((row) => row.slice(0, 12)),
@@ -325,6 +324,7 @@ export async function POST(request: Request) {
     stage = "detect-header";
     const { headerIndex, columnMap, detected } = findHeader(worksheet);
     console.info("[planning-import] header mapping", {
+      selectedSheet: PLANNING_SHEET_NAME,
       detected,
       excelHeaderRow: headerIndex + 1,
       columnMap,
@@ -357,7 +357,6 @@ export async function POST(request: Request) {
         const itemcode = toItemCode(getCell(row, columnMap, "itemcode"), excelRow, warnings);
         const wo = toText(getCell(row, columnMap, "wo"));
 
-        // Dòng không có Itemcode thường là note/header phụ/blank trong file planning chỉnh tay.
         if (!itemcode) {
           const hasAnyCell = row.some((value) => toText(value) !== null);
           if (hasAnyCell) skippedNoItem += 1;
@@ -383,6 +382,7 @@ export async function POST(request: Request) {
       } catch (error) {
         console.error("[planning-import] row parse failed", {
           stage,
+          selectedSheet: PLANNING_SHEET_NAME,
           excelRow,
           rawRow: row.slice(0, Math.max(widestRow, 12)),
           message: error instanceof Error ? error.message : String(error),
@@ -399,6 +399,7 @@ export async function POST(request: Request) {
     }
 
     console.info("[planning-import] rows parsed", {
+      selectedSheet: PLANNING_SHEET_NAME,
       importedCandidates: rows.length,
       skippedRepeatedHeaders,
       skippedNoItem,
@@ -413,6 +414,7 @@ export async function POST(request: Request) {
 
     stage = "rpc";
     console.info("[planning-import] calling replace_planning_inject", {
+      selectedSheet: PLANNING_SHEET_NAME,
       rows: rows.length,
       sourceFile: file.name,
     });
@@ -428,6 +430,7 @@ export async function POST(request: Request) {
     }
 
     console.info("[planning-import] completed", {
+      selectedSheet: PLANNING_SHEET_NAME,
       imported: Number(data ?? rows.length),
       sourceFile: file.name,
       warningCount: warnings.length,
@@ -442,6 +445,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("[planning-import] failed", {
       stage,
+      requestedSheet: PLANNING_SHEET_NAME,
       name: error instanceof Error ? error.name : typeof error,
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
