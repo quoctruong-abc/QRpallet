@@ -7,10 +7,52 @@ import { createClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 
 const MAX_FILE_SIZE = 4 * 1024 * 1024;
-const EXPECTED_COLUMN_COUNT = 12;
 const MAX_ROWS = 20000;
+const HEADER_SCAN_ROWS = 30;
+const MAX_WARNING_LOGS = 20;
 
 type CellPrimitive = CellValue | null | undefined;
+type PlanningField = Exclude<keyof PlanningRow, "id" | "source_file" | "imported_at">;
+type ColumnMap = Partial<Record<PlanningField, number>>;
+
+const FIXED_COLUMN_MAP: ColumnMap = {
+  machine: 0,
+  itemcode: 1,
+  product_name: 2,
+  customer: 3,
+  wo: 4,
+  netweight: 5,
+  quanperh: 6,
+  quanperday: 7,
+  color: 8,
+  material: 9,
+  package: 10,
+  quanorder: 11,
+};
+
+const HEADER_ALIASES: Record<PlanningField, string[]> = {
+  machine: ["machine", "machineno", "machinecode", "may", "somay"],
+  itemcode: ["itemcode", "item", "itemno", "itemnumber", "maitem", "mavattu"],
+  product_name: ["productname", "product", "description", "productdescription", "tenhang", "tensanpham"],
+  customer: ["customer", "customername", "khachhang"],
+  wo: ["wo", "workorder", "workorderno", "workordernumber"],
+  netweight: ["netweight", "netweightg", "netweigth", "netweigthg", "netwt", "netwtg"],
+  quanperh: ["quanperh", "qtyperh", "quantityperh", "quantityperhour", "qtyperhour"],
+  quanperday: ["quanperday", "qtyperday", "quantityperday", "quantityday"],
+  color: ["color", "colour", "mau"],
+  material: ["material", "nguyenlieu"],
+  package: ["package", "packaging", "packing", "donggoi"],
+  quanorder: ["quanorder", "orderqty", "orderquantity", "qtyorder", "quantityorder", "orderedqty"],
+};
+
+function normalizeHeader(value: CellPrimitive): string {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
 
 function toText(value: CellPrimitive): string | null {
   if (value === null || value === undefined) return null;
@@ -19,43 +61,195 @@ function toText(value: CellPrimitive): string | null {
   return text === "" ? null : text;
 }
 
-function toNumber(value: CellPrimitive, excelRow: number, columnName: string): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  if (typeof value === "number") {
-    if (Number.isFinite(value)) return value;
-    throw new Error(`Dòng ${excelRow}, cột ${columnName}: giá trị số không hợp lệ.`);
+function expandExponentialString(value: string): string {
+  const match = value.toLowerCase().match(/^([+-]?)(\d+)(?:\.(\d*))?e([+-]?\d+)$/);
+  if (!match) return value;
+
+  const [, sign, integerPart, fractionPart = "", exponentText] = match;
+  const exponent = Number(exponentText);
+  if (!Number.isInteger(exponent)) return value;
+
+  const digits = `${integerPart}${fractionPart}`;
+  const decimalIndex = integerPart.length + exponent;
+  let expanded: string;
+
+  if (decimalIndex <= 0) {
+    expanded = `0.${"0".repeat(Math.abs(decimalIndex))}${digits}`;
+  } else if (decimalIndex >= digits.length) {
+    expanded = `${digits}${"0".repeat(decimalIndex - digits.length)}`;
+  } else {
+    expanded = `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
   }
 
-  const raw = String(value).trim().replace(/\s/g, "");
-  if (!raw) return null;
-  const isParenthesizedNegative = raw.startsWith("(") && raw.endsWith(")");
-  const unsignedRaw = isParenthesizedNegative ? raw.slice(1, -1) : raw;
-  let normalized = unsignedRaw;
-  if (unsignedRaw.includes(",") && unsignedRaw.includes(".")) {
-    normalized = unsignedRaw.replace(/,/g, "");
-  } else if (unsignedRaw.includes(",")) {
-    normalized = unsignedRaw.replace(",", ".");
+  return `${sign}${expanded}`;
+}
+
+function toItemCode(value: CellPrimitive, excelRow: number, warnings: string[]): string | null {
+  if (value === null || value === undefined || value === "") return null;
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    if (Number.isInteger(value) && !Number.isSafeInteger(value) && warnings.length < MAX_WARNING_LOGS) {
+      warnings.push(
+        `Dòng ${excelRow}, Itemcode là số vượt giới hạn integer an toàn của JavaScript; hãy format cột Itemcode thành Text trong Excel nếu cần giữ tuyệt đối mọi chữ số.`,
+      );
+    }
+    return expandExponentialString(String(value));
   }
-  if (isParenthesizedNegative) normalized = `-${normalized}`;
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  // Excel/user copy-paste đôi khi lưu mã số dưới dạng text scientific notation.
+  if (/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(text)) {
+    return expandExponentialString(text);
+  }
+
+  return text;
+}
+
+function parseFlexibleNumber(value: CellPrimitive): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (value instanceof Date || typeof value === "boolean") return null;
+
+  let raw = String(value)
+    .trim()
+    .replace(/^'+/, "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, "");
+
+  if (!raw) return null;
+
+  let negative = false;
+  if (raw.startsWith("(") && raw.endsWith(")")) {
+    negative = true;
+    raw = raw.slice(1, -1);
+  }
+
+  // Cho phép text có đơn vị/ghi chú ở cuối, ví dụ "1,200 pcs".
+  const numericToken = raw.match(/[+-]?\d[\d.,]*(?:[eE][+-]?\d+)?/i)?.[0];
+  if (!numericToken) return null;
+
+  let normalized = numericToken;
+  const commaCount = (normalized.match(/,/g) ?? []).length;
+  const dotCount = (normalized.match(/\./g) ?? []).length;
+
+  if (!/[eE]/.test(normalized)) {
+    if (commaCount > 0 && dotCount > 0) {
+      const lastComma = normalized.lastIndexOf(",");
+      const lastDot = normalized.lastIndexOf(".");
+      if (lastComma > lastDot) {
+        // 1.234,56 -> 1234.56
+        normalized = normalized.replace(/\./g, "").replace(",", ".");
+      } else {
+        // 1,234.56 -> 1234.56
+        normalized = normalized.replace(/,/g, "");
+      }
+    } else if (commaCount > 0) {
+      const pieces = normalized.split(",");
+      const looksLikeThousands = pieces.length > 1 && pieces.slice(1).every((part) => part.length === 3);
+      normalized = looksLikeThousands ? pieces.join("") : normalized.replace(",", ".");
+    } else if (dotCount > 1) {
+      const pieces = normalized.split(".");
+      const looksLikeThousands = pieces.length > 1 && pieces.slice(1).every((part) => part.length === 3);
+      if (looksLikeThousands) normalized = pieces.join("");
+    }
+  }
 
   const parsed = Number(normalized);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`Dòng ${excelRow}, cột ${columnName}: “${raw}” không phải là số.`);
+  if (!Number.isFinite(parsed)) return null;
+  return negative ? -Math.abs(parsed) : parsed;
+}
+
+function optionalNumber(
+  value: CellPrimitive,
+  excelRow: number,
+  columnName: string,
+  warnings: string[],
+): number | null {
+  const parsed = parseFlexibleNumber(value);
+  if (parsed !== null) return parsed;
+
+  const raw = toText(value);
+  if (raw && warnings.length < MAX_WARNING_LOGS) {
+    warnings.push(`Dòng ${excelRow}, ${columnName}: “${raw}” không chuyển được sang số nên đã để null.`);
   }
-  return parsed;
+  return null;
+}
+
+function requiredReportNumber(value: CellPrimitive, excelRow: number, columnName: string): number | null {
+  const parsed = parseFlexibleNumber(value);
+  if (parsed !== null) return parsed;
+
+  const raw = toText(value);
+  if (!raw) return null;
+  throw new Error(`Dòng ${excelRow}, cột ${columnName}: “${raw}” không thể chuyển thành số.`);
+}
+
+function matchHeaderField(value: CellPrimitive): PlanningField | null {
+  const normalized = normalizeHeader(value);
+  if (!normalized) return null;
+
+  for (const [field, aliases] of Object.entries(HEADER_ALIASES) as [PlanningField, string[]][]) {
+    if (aliases.includes(normalized)) return field;
+  }
+  return null;
+}
+
+function buildColumnMap(row: CellValue[]): ColumnMap {
+  const map: ColumnMap = {};
+  row.forEach((value, index) => {
+    const field = matchHeaderField(value);
+    if (field && map[field] === undefined) map[field] = index;
+  });
+  return map;
+}
+
+function headerScore(map: ColumnMap): number {
+  return Object.keys(map).length;
+}
+
+function findHeader(worksheet: CellValue[][]): { headerIndex: number; columnMap: ColumnMap; detected: boolean } {
+  let bestIndex = -1;
+  let bestMap: ColumnMap = {};
+  let bestScore = 0;
+
+  for (let index = 0; index < Math.min(worksheet.length, HEADER_SCAN_ROWS); index += 1) {
+    const map = buildColumnMap(worksheet[index] ?? []);
+    const score = headerScore(map);
+    if (score > bestScore) {
+      bestIndex = index;
+      bestMap = map;
+      bestScore = score;
+    }
+  }
+
+  // Itemcode + Quanorder là hai anchor mạnh nhất. Chỉ cần thêm >=2 cột khác để nhận là header.
+  if (
+    bestIndex >= 0 &&
+    bestScore >= 4 &&
+    bestMap.itemcode !== undefined &&
+    bestMap.quanorder !== undefined
+  ) {
+    return { headerIndex: bestIndex, columnMap: bestMap, detected: true };
+  }
+
+  // Fallback cho file legacy đúng thứ tự A:L nhưng header quá khác alias.
+  return { headerIndex: 0, columnMap: FIXED_COLUMN_MAP, detected: false };
+}
+
+function getCell(row: CellValue[], columnMap: ColumnMap, field: PlanningField): CellPrimitive {
+  const index = columnMap[field];
+  return index === undefined ? null : row[index] ?? null;
+}
+
+function looksLikeRepeatedHeader(row: CellValue[]): boolean {
+  return headerScore(buildColumnMap(row)) >= 4;
 }
 
 function isEmptyRow(row: PlanningRow) {
   return Object.values(row).every((value) => value === null || value === "");
-}
-
-function previewRow(row: CellValue[] | undefined) {
-  return (row ?? []).slice(0, EXPECTED_COLUMN_COUNT).map((value) => {
-    if (value === null || value === undefined) return null;
-    if (value instanceof Date) return value.toISOString();
-    if (typeof value === "string") return value.slice(0, 80);
-    return value;
-  });
 }
 
 export async function POST(request: Request) {
@@ -64,7 +258,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: authorization.error }, { status: authorization.status });
   }
 
-  let stage = "authorization";
+  let stage = "request";
 
   try {
     stage = "form-data";
@@ -74,7 +268,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Vui lòng chọn file Excel." }, { status: 400 });
     }
 
-    console.log("[planning-import] file received", {
+    console.info("[planning-import] file received", {
       name: file.name,
       size: file.size,
       type: file.type,
@@ -95,16 +289,11 @@ export async function POST(request: Request) {
 
     stage = "buffer";
     const buffer = Buffer.from(await file.arrayBuffer());
-    console.log("[planning-import] buffer ready", {
-      bytes: buffer.length,
-      signature: buffer.subarray(0, 4).toString("hex"),
-    });
+    console.info("[planning-import] buffer ready", { bytes: buffer.length });
 
     stage = "read-sheet";
     let worksheet: CellValue[][];
     try {
-      // We trim/normalize cells ourselves below. Disabling the library's string
-      // trimming also helps isolate malformed/shared-string cells from parser errors.
       worksheet = await readSheet(buffer, { sheet: "data", trim: false });
     } catch (error) {
       console.error("[planning-import] readSheet failed", {
@@ -113,7 +302,6 @@ export async function POST(request: Request) {
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
-
       if (error instanceof Error && error.name === "SheetNotFoundError") {
         return NextResponse.json(
           { error: "Không tìm thấy sheet tên data trong file Excel." },
@@ -123,52 +311,81 @@ export async function POST(request: Request) {
       throw error;
     }
 
-    stage = "inspect-sheet";
-    const widestRow = worksheet.reduce((max, row) => Math.max(max, row?.length ?? 0), 0);
-    console.log("[planning-import] sheet loaded", {
+    const widestRow = worksheet.reduce((max, row) => Math.max(max, row.length), 0);
+    console.info("[planning-import] sheet loaded", {
       rows: worksheet.length,
       widestRow,
-      header: previewRow(worksheet[0]),
-      firstDataRow: previewRow(worksheet[1]),
+      preview: worksheet.slice(0, 6).map((row) => row.slice(0, 12)),
     });
 
-    if (widestRow < EXPECTED_COLUMN_COUNT) {
+    if (worksheet.length === 0) {
+      return NextResponse.json({ error: "Sheet data đang trống." }, { status: 400 });
+    }
+
+    stage = "detect-header";
+    const { headerIndex, columnMap, detected } = findHeader(worksheet);
+    console.info("[planning-import] header mapping", {
+      detected,
+      excelHeaderRow: headerIndex + 1,
+      columnMap,
+      headerValues: worksheet[headerIndex]?.slice(0, Math.max(widestRow, 12)),
+    });
+
+    if (columnMap.itemcode === undefined || columnMap.quanorder === undefined) {
       return NextResponse.json(
-        { error: `Sheet data phải có ít nhất ${EXPECTED_COLUMN_COUNT} cột từ A đến L.` },
+        { error: "Không nhận diện được cột Itemcode và Quanorder trong sheet data." },
         { status: 400 },
       );
     }
 
     stage = "parse-rows";
     const rows: PlanningRow[] = [];
-    for (let dataIndex = 1; dataIndex < worksheet.length; dataIndex += 1) {
+    const warnings: string[] = [];
+    let skippedRepeatedHeaders = 0;
+    let skippedNoItem = 0;
+
+    for (let dataIndex = headerIndex + 1; dataIndex < worksheet.length; dataIndex += 1) {
       const excelRow = dataIndex + 1;
       const row = worksheet[dataIndex] ?? [];
 
+      if (looksLikeRepeatedHeader(row)) {
+        skippedRepeatedHeaders += 1;
+        continue;
+      }
+
       try {
+        const itemcode = toItemCode(getCell(row, columnMap, "itemcode"), excelRow, warnings);
+        const wo = toText(getCell(row, columnMap, "wo"));
+
+        // Dòng không có Itemcode thường là note/header phụ/blank trong file planning chỉnh tay.
+        if (!itemcode) {
+          const hasAnyCell = row.some((value) => toText(value) !== null);
+          if (hasAnyCell) skippedNoItem += 1;
+          continue;
+        }
+
         const parsedRow: PlanningRow = {
-          machine: toText(row[0]),
-          itemcode: toText(row[1]),
-          product_name: toText(row[2]),
-          customer: toText(row[3]),
-          wo: toText(row[4]),
-          netweight: toNumber(row[5], excelRow, "Netweight"),
-          quanperh: toNumber(row[6], excelRow, "quanperh"),
-          quanperday: toNumber(row[7], excelRow, "quanperday"),
-          color: toText(row[8]),
-          material: toText(row[9]),
-          package: toText(row[10]),
-          quanorder: toNumber(row[11], excelRow, "quanorder"),
+          machine: toText(getCell(row, columnMap, "machine")),
+          itemcode,
+          product_name: toText(getCell(row, columnMap, "product_name")),
+          customer: toText(getCell(row, columnMap, "customer")),
+          wo,
+          netweight: optionalNumber(getCell(row, columnMap, "netweight"), excelRow, "Netweight", warnings),
+          quanperh: optionalNumber(getCell(row, columnMap, "quanperh"), excelRow, "quanperh", warnings),
+          quanperday: optionalNumber(getCell(row, columnMap, "quanperday"), excelRow, "quanperday", warnings),
+          color: toText(getCell(row, columnMap, "color")),
+          material: toText(getCell(row, columnMap, "material")),
+          package: toText(getCell(row, columnMap, "package")),
+          quanorder: requiredReportNumber(getCell(row, columnMap, "quanorder"), excelRow, "Quanorder"),
         };
 
         if (!isEmptyRow(parsedRow)) rows.push(parsedRow);
       } catch (error) {
         console.error("[planning-import] row parse failed", {
+          stage,
           excelRow,
-          raw: previewRow(row),
-          name: error instanceof Error ? error.name : typeof error,
+          rawRow: row.slice(0, Math.max(widestRow, 12)),
           message: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
         });
         throw error;
       }
@@ -181,14 +398,21 @@ export async function POST(request: Request) {
       }
     }
 
-    console.log("[planning-import] rows parsed", { importedRows: rows.length });
+    console.info("[planning-import] rows parsed", {
+      importedCandidates: rows.length,
+      skippedRepeatedHeaders,
+      skippedNoItem,
+      warningCount: warnings.length,
+      warnings,
+      sample: rows.slice(0, 3),
+    });
 
     if (rows.length === 0) {
-      return NextResponse.json({ error: "Sheet data không có dữ liệu sau dòng header." }, { status: 400 });
+      return NextResponse.json({ error: "Sheet data không có dòng kế hoạch hợp lệ có Itemcode." }, { status: 400 });
     }
 
     stage = "rpc";
-    console.log("[planning-import] calling replace_planning_inject", {
+    console.info("[planning-import] calling replace_planning_inject", {
       rows: rows.length,
       sourceFile: file.name,
     });
@@ -199,21 +423,22 @@ export async function POST(request: Request) {
       p_source_file: file.name,
     });
     if (error) {
-      console.error("[planning-import] replace_planning_inject failed", {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
-      return NextResponse.json({ error: "Không thể cập nhật database. Vui lòng thử lại." }, { status: 500 });
+      console.error("replace_planning_inject failed", error);
+      return NextResponse.json({ error: `Không thể cập nhật database: ${error.message}` }, { status: 500 });
     }
 
-    console.log("[planning-import] completed", {
+    console.info("[planning-import] completed", {
       imported: Number(data ?? rows.length),
-      fileName: file.name,
+      sourceFile: file.name,
+      warningCount: warnings.length,
     });
 
-    return NextResponse.json({ success: true, imported: Number(data ?? rows.length), fileName: file.name });
+    return NextResponse.json({
+      success: true,
+      imported: Number(data ?? rows.length),
+      fileName: file.name,
+      warnings: warnings.length,
+    });
   } catch (error) {
     console.error("[planning-import] failed", {
       stage,
