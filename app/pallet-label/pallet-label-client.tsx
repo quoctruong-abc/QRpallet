@@ -31,7 +31,7 @@ export type ActivePallet = {
 
 type Props = { rows: PlanItem[]; pallets: ActivePallet[] };
 type Mode = "full" | "partial";
-type Dialog = "create" | "history" | "edit" | "delete" | "merge" | null;
+type Dialog = "create" | "created" | "history" | "edit" | "delete" | "merge" | null;
 
 function formatNumber(value: number | null) {
   return value === null ? "—" : Number(value).toLocaleString("vi-VN");
@@ -195,7 +195,9 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       const pdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(result.pallet.pallet_id)}`;
       if (pdfWindow) pdfWindow.location.href = pdfUrl;
       else window.location.href = pdfUrl;
-      setMessage({ type: "success", text: `Đã tạo ${result.pallet.pallet_id} và mở PDF.` });
+      setMessage({ type: "success", text: `Đã tạo pallet ${result.pallet.pallet_id}. File PDF đã được mở ở tab mới.` });
+      setDialog("created");
+      setQuantity("");
       router.refresh();
     } catch (error) {
       pdfWindow?.close();
@@ -286,7 +288,6 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   return <>
     <div className="feature-toolbar pallet-main-toolbar">
       <button className="button button-secondary" onClick={() => openHistory()}>Lịch sử in tem</button>
-      <button className="button button-primary" onClick={() => { setWo1(""); setWo2(""); setQuantity(""); setDialog("merge"); }}>Gộp WO</button>
     </div>
 
     <div className="machine-grid">
@@ -316,7 +317,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     </div>
 
     {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className="modal-card modal-card-wide" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2></div><button className="modal-close" onClick={closeDialog}>×</button></div>
+      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2></div><button className="modal-close" onClick={closeDialog}>×</button></div>
 
       {dialog === "create" && selectedRow ? <>
         <div className="pallet-choice-grid">
@@ -325,6 +326,11 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         </div>
         <label>Số lượng<input type="number" min="1" disabled={mode === "full"} value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending} onClick={savePallet}>{pending ? "Đang lưu..." : "Xác nhận & lưu"}</button></div>
+      </> : null}
+
+      {dialog === "created" ? <>
+        {message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
+        <div className="modal-actions"><button className="button button-primary" onClick={closeDialog}>Đóng</button></div>
       </> : null}
 
       {dialog === "history" ? <>
@@ -369,7 +375,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending} onClick={mergePallet}>Xác nhận gộp</button></div>
       </> : null}
 
-      {message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
+      {dialog !== "created" && message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
     </div></div> : null}
   </>;
 }

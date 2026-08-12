@@ -293,14 +293,62 @@ export default async function ProductionDashboardPage({
 
   const totalDays = Math.max(1, daysInclusive(startDate, endDate));
   const totalPages = Math.max(1, Math.ceil(totalDays / DASHBOARD_WINDOW_DAYS));
-  const currentPage = Number.isFinite(requestedPage)
+  let currentPage = Number.isFinite(requestedPage)
     ? Math.min(Math.max(requestedPage, 1), totalPages)
     : 1;
+  const supabase = await createClient();
+  let firstDataDate: string | null = null;
+  let skippedLeadingEndDate: string | null = null;
+
+  if (filterType === "range" && !Number.isFinite(requestedPage) && totalPages > 1) {
+    const [activeFirstResult, deletedFirstResult] = await Promise.all([
+      supabase
+        .from("pallet_data")
+        .select("working_day")
+        .is("effect_to", null)
+        .gte("working_day", startDate)
+        .lte("working_day", endDate)
+        .order("working_day", { ascending: true })
+        .limit(1),
+      supabase
+        .from("pallet_data")
+        .select("working_day")
+        .not("effect_to", "is", null)
+        .ilike("note", "delete:%")
+        .gte("working_day", startDate)
+        .lte("working_day", endDate)
+        .order("working_day", { ascending: true })
+        .limit(1),
+    ]);
+
+    if (activeFirstResult.error || deletedFirstResult.error) {
+      console.error("Dashboard first data date query error", {
+        startDate,
+        endDate,
+        activeMessage: activeFirstResult.error?.message,
+        deletedMessage: deletedFirstResult.error?.message,
+      });
+    } else {
+      const candidateDates = [
+        activeFirstResult.data?.[0]?.working_day,
+        deletedFirstResult.data?.[0]?.working_day,
+      ].filter((value): value is string => Boolean(value));
+
+      firstDataDate = candidateDates.sort()[0] ?? null;
+      if (firstDataDate && firstDataDate > startDate) {
+        currentPage = Math.min(
+          Math.floor((daysInclusive(startDate, firstDataDate) - 1) / DASHBOARD_WINDOW_DAYS) + 1,
+          totalPages,
+        );
+        skippedLeadingEndDate = addDays(firstDataDate, -1);
+      }
+    }
+  }
+
   const pageStartDate = addDays(startDate, (currentPage - 1) * DASHBOARD_WINDOW_DAYS);
   const candidatePageEnd = addDays(pageStartDate, DASHBOARD_WINDOW_DAYS - 1);
   const pageEndDate = candidatePageEnd < endDate ? candidatePageEnd : endDate;
 
-  const supabase = await createClient();
   const palletRows: PalletDashboardRow[] = [];
   let queryError = false;
   let summaryError = false;
@@ -531,6 +579,11 @@ export default async function ProductionDashboardPage({
 
         {summaryError || queryError ? (
           <section className="alert alert-error">Không thể tải dữ liệu. Vui lòng thử lại.</section>
+        ) : null}
+        {!queryError && firstDataDate && skippedLeadingEndDate ? (
+          <section className="alert">
+            Không có dữ liệu từ {formatDateLabel(startDate)} đến {formatDateLabel(skippedLeadingEndDate)}. Hệ thống tự mở trang {currentPage}, dữ liệu bắt đầu từ {formatDateLabel(firstDataDate)}.
+          </section>
         ) : null}
 
         <div className="dashboard-summary-heading">
