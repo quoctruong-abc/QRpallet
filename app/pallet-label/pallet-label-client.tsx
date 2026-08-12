@@ -286,7 +286,6 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   return <>
     <div className="feature-toolbar pallet-main-toolbar">
       <button className="button button-secondary" onClick={() => openHistory()}>Lịch sử in tem</button>
-      <button className="button button-primary" onClick={() => { setWo1(""); setWo2(""); setQuantity(""); setDialog("merge"); }}>Gộp WO</button>
     </div>
 
     <div className="machine-grid">
