@@ -27,8 +27,23 @@ export async function login(
   const { data: signInData, error: signInError } =
     await supabase.auth.signInWithPassword({ email, password });
 
-  if (signInError || !signInData.user) {
-    return { error: "Tên đăng nhập hoặc mật khẩu không đúng." };
+  if (signInError) {
+    const errorDetails = [
+      signInError.code ? `code: ${signInError.code}` : null,
+      signInError.status ? `status: ${signInError.status}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+
+    return {
+      error: `Lỗi đăng nhập Supabase${errorDetails ? ` (${errorDetails})` : ""}: ${signInError.message}`,
+    };
+  }
+
+  if (!signInData.user) {
+    return {
+      error: "Lỗi đăng nhập: Supabase không trả về thông tin người dùng.",
+    };
   }
 
   const { data: profileData, error: profileError } = await supabase
