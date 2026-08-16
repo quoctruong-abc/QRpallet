@@ -49,26 +49,36 @@ function formatDate(value: string | null | undefined) {
   return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : value;
 }
 
+function mergeUnique(current: string, next: string) {
+  if (!next) return current;
+  const values = current ? current.split(" / ").filter(Boolean) : [];
+  if (!values.includes(next)) values.push(next);
+  return values.join(" / ");
+}
+
 export function summarizeReceiptPallets(pallets: ReceiptPalletRow[]) {
   const grouped = new Map<string, SummaryRow>();
   for (const pallet of pallets) {
     const productionDate = pallet.working_day?.slice(0, 10) ?? "";
-    const key = [pallet.itemcode, pallet.customer ?? "", pallet.product_name ?? "", pallet.wo ?? "", productionDate].join("::");
+    const key = [pallet.itemcode, productionDate].join("::");
     const current = grouped.get(key) ?? {
-      wo: pallet.wo ?? "",
+      wo: "",
       itemcode: pallet.itemcode,
-      customer: pallet.customer ?? "",
-      productName: pallet.product_name ?? "",
+      customer: "",
+      productName: "",
       productionDate,
       palletCount: 0,
       totalQuantity: 0,
     };
+    current.wo = mergeUnique(current.wo, pallet.wo ?? "");
+    current.customer = mergeUnique(current.customer, pallet.customer ?? "");
+    current.productName = mergeUnique(current.productName, pallet.product_name ?? "");
     current.palletCount += 1;
     current.totalQuantity += Number(pallet.quantity) || 0;
     grouped.set(key, current);
   }
   return Array.from(grouped.values()).sort((a, b) =>
-    a.itemcode.localeCompare(b.itemcode) || a.productionDate.localeCompare(b.productionDate) || a.wo.localeCompare(b.wo),
+    a.itemcode.localeCompare(b.itemcode) || a.productionDate.localeCompare(b.productionDate),
   );
 }
 
@@ -103,7 +113,7 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
   const pageWidth = 841.89, pageHeight = 595.28, margin = 22, topY = pageHeight - 18;
   const titleHeight = 50, infoHeight = 25, tableHeaderHeight = 30, rowHeight = 20, signatureHeight = 90, codeFooterHeight = 15;
   const footerHeight = signatureHeight + codeFooterHeight;
-  const columns = [20, 58, 55, 70, 244, 65, 45, 60, 73, 58, 40];
+  const columns = [22, 70, 80, 85, 270, 80, 60, 80, 50];
   const totalColumnsWidth = columns.reduce((sum, value) => sum + value, 0);
   const startX = margin + ((pageWidth - margin * 2) - totalColumnsWidth) / 2;
   const tableTop = topY - titleHeight - infoHeight;
@@ -127,7 +137,7 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
 
   const drawTableHeader = (page: PDFPage, y: number) => {
     let x = startX;
-    const headers = [["STT", "No."], ["KHÁCH HÀNG", "Customer"], ["SỐ CÔNG VIỆC", "WO No."], ["MÃ SẢN PHẨM", "Item code"], ["TÊN SẢN PHẨM", "Item Name"], ["TỔNG SỐ LƯỢNG", "Total Q'ty"], ["SỐ PALLET", "Pallet Q'ty"], ["SỐ CÂY/ THÙNG", "Bag/ Box Q'ty"], ["SP MỖI CÂY/ THÙNG", "Q'ty per Bag/ Box"], ["NGÀY SX", "Production Date"], ["GHI CHÚ", "Remark"]];
+    const headers = [["STT", "No."], ["KHÁCH HÀNG", "Customer"], ["SỐ CÔNG VIỆC", "WO No."], ["MÃ SẢN PHẨM", "Item code"], ["TÊN SẢN PHẨM", "Item Name"], ["TỔNG SỐ LƯỢNG", "Total Q'ty"], ["SỐ PALLET", "Pallet Q'ty"], ["NGÀY SX", "Production Date"], ["GHI CHÚ", "Remark"]];
     headers.forEach((lines, index) => { drawMultilineCell(page, bold, lines, index === 0 ? 7.2 : 7, x, y, columns[index], tableHeaderHeight, true); x += columns[index]; });
   };
 
@@ -163,7 +173,7 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
     const chunk = rows.slice(pageIndex * rowsPerPage, (pageIndex + 1) * rowsPerPage);
     let y = headerY - rowHeight;
     chunk.forEach((row, localIndex) => {
-      const values = [String(pageIndex * rowsPerPage + localIndex + 1), row.customer || "-", row.wo || "-", row.itemcode, row.productName || "-", row.totalQuantity.toLocaleString("vi-VN"), String(row.palletCount), "", "", formatDate(row.productionDate), ""];
+      const values = [String(pageIndex * rowsPerPage + localIndex + 1), row.customer || "-", row.wo || "-", row.itemcode, row.productName || "-", row.totalQuantity.toLocaleString("vi-VN"), String(row.palletCount), formatDate(row.productionDate), ""];
       let x = startX;
       values.forEach((value, index) => {
         page.drawRectangle({ x, y, width: columns[index], height: rowHeight, borderColor: BORDER, borderWidth: 0.65 });
@@ -182,7 +192,7 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
       page.drawRectangle({ x, y: totalY, width: firstWidth, height: rowHeight, borderColor: BORDER, borderWidth: 0.7 });
       drawCenteredText(page, bold, "TỔNG CỘNG/ TOTAL", 8, x, totalY + 9, firstWidth);
       x += firstWidth;
-      [calculatedTotals.quantity.toLocaleString("vi-VN"), String(calculatedTotals.pallets), "", "", "", ""].forEach((value, index) => {
+      [calculatedTotals.quantity.toLocaleString("vi-VN"), String(calculatedTotals.pallets), "", ""].forEach((value, index) => {
         const width = columns[index + 5];
         page.drawRectangle({ x, y: totalY, width, height: rowHeight, borderColor: BORDER, borderWidth: 0.7 });
         drawCenteredText(page, bold, value, 8, x, totalY + 9, width);
