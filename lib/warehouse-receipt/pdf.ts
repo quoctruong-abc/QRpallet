@@ -113,7 +113,7 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
   const pageWidth = 841.89, pageHeight = 595.28, margin = 22, topY = pageHeight - 18;
   const titleHeight = 50, infoHeight = 25, tableHeaderHeight = 30, rowHeight = 20, signatureHeight = 90, codeFooterHeight = 15;
   const footerHeight = signatureHeight + codeFooterHeight;
-  const columns = [22, 70, 80, 85, 270, 80, 60, 80, 50];
+  const columns = [22, 70, 70, 75, 320, 70, 50, 70, 50];
   const totalColumnsWidth = columns.reduce((sum, value) => sum + value, 0);
   const startX = margin + ((pageWidth - margin * 2) - totalColumnsWidth) / 2;
   const tableTop = topY - titleHeight - infoHeight;
