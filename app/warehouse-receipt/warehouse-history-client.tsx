@@ -26,7 +26,7 @@ export function WarehouseHistoryClient() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [receipts, setReceipts] = useState<ReceiptRow[]>([]);
-  const [working, setWorking] = useState<"history" | "reprint" | "detail" | null>(null);
+  const [working, setWorking] = useState<"history" | "reprint" | "detail" | "excel" | null>(null);
   const [activeReceiptId, setActiveReceiptId] = useState<string | null>(null);
   const [detailReceiptId, setDetailReceiptId] = useState<string | null>(null);
   const [detailRows, setDetailRows] = useState<ReceiptPalletRow[]>([]);
@@ -102,6 +102,40 @@ export function WarehouseHistoryClient() {
     setActiveReceiptId(null);
   }
 
+  async function downloadExcel(receiptId: string) {
+    setWorking("excel");
+    setActiveReceiptId(receiptId);
+    setNotice(null);
+
+    try {
+      const response = await fetch(
+        `/api/warehouse-receipt/excel?receiptId=${encodeURIComponent(receiptId)}`,
+        { cache: "no-store" },
+      );
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        throw new Error(result?.error || "Không thể xuất Excel.");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${receiptId}.xlsx`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice({ type: "success", text: `Đã tải file Excel phiếu ${receiptId}.` });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể xuất Excel." });
+    } finally {
+      setWorking(null);
+      setActiveReceiptId(null);
+    }
+  }
+
   useEffect(() => { void loadReceipts(); }, []);
 
   const rangeReady = Boolean(fromDate && toDate);
@@ -130,7 +164,7 @@ export function WarehouseHistoryClient() {
 
       <div className="scan-table-card">
         {!receipts.length ? <div className="scan-empty">Không có phiếu nhập kho phù hợp.</div> : <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Số phiếu</th><th>Ngày</th><th>Người tạo phiếu</th><th>Tổng pallet</th><th>Tổng số lượng</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>
-          {receipts.map((receipt) => <tr key={receipt.receipt_id}><td><strong>{receipt.receipt_id}</strong></td><td>{receipt.receipt_date}</td><td>{receipt.creator_name || "—"}</td><td>{Number(receipt.total_pallet).toLocaleString("vi-VN")}</td><td>{Number(receipt.total_quantity).toLocaleString("vi-VN")}</td><td>{receipt.status === "cancelled" ? "Đã hủy" : "Hoạt động"}</td><td><div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}><button className="button button-primary" type="button" disabled={working === "detail"} onClick={() => loadReceiptDetail(receipt.receipt_id)}>{working === "detail" && activeReceiptId === receipt.receipt_id ? "Đang tải..." : "Xem chi tiết"}</button><button className="button button-secondary" type="button" disabled={working === "reprint"} onClick={() => reprintReceipt(receipt.receipt_id)}>{working === "reprint" && activeReceiptId === receipt.receipt_id ? "Đang in..." : "In lại"}</button></div></td></tr>)}
+          {receipts.map((receipt) => <tr key={receipt.receipt_id}><td><strong>{receipt.receipt_id}</strong></td><td>{receipt.receipt_date}</td><td>{receipt.creator_name || "—"}</td><td>{Number(receipt.total_pallet).toLocaleString("vi-VN")}</td><td>{Number(receipt.total_quantity).toLocaleString("vi-VN")}</td><td>{receipt.status === "cancelled" ? "Đã hủy" : "Hoạt động"}</td><td><div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}><button className="button button-primary" type="button" disabled={working === "detail"} onClick={() => loadReceiptDetail(receipt.receipt_id)}>{working === "detail" && activeReceiptId === receipt.receipt_id ? "Đang tải..." : "Xem chi tiết"}</button><button className="button button-secondary" type="button" disabled={working === "reprint"} onClick={() => reprintReceipt(receipt.receipt_id)}>{working === "reprint" && activeReceiptId === receipt.receipt_id ? "Đang in..." : "In lại"}</button><button className="button button-secondary" type="button" disabled={working === "excel" || receipt.status === "cancelled"} onClick={() => downloadExcel(receipt.receipt_id)}>{working === "excel" && activeReceiptId === receipt.receipt_id ? "Đang tải..." : "Excel"}</button></div></td></tr>)}
         </tbody></table></div>}
       </div>
 
