@@ -52,45 +52,50 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  const { data, error } = await supabase.auth.getClaims();
-  const userId = data?.claims?.sub;
-  const isLoggedIn = !error && Boolean(userId);
   const pathname = request.nextUrl.pathname;
   const isPublicRoute = pathname === "/login" || pathname === "/inactive";
 
+  // Ask Supabase Auth for the current user instead of relying only on JWT
+  // claims. A deleted user can still have a locally valid JWT until expiry.
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  const isLoggedIn = !userError && Boolean(userId);
+
   if (!isLoggedIn) {
+    // Clear stale local auth cookies so the next login starts cleanly.
+    await supabase.auth.signOut({ scope: "local" });
+
     if (isPublicRoute) return response;
 
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", pathname);
-    return NextResponse.redirect(url);
+    const redirectResponse = NextResponse.redirect(url);
+    for (const cookie of response.cookies.getAll()) {
+      redirectResponse.cookies.set(cookie);
+    }
+    return redirectResponse;
   }
 
   // API authorization is handled by the API route helpers. Keep the proxy
   // focused on page/session routing.
   if (pathname.startsWith("/api/")) return response;
 
-  // A JWT can remain valid for a short period after its Auth user is deleted.
-  // Confirm that this JWT still belongs to an application profile before
-  // redirecting away from /login. Without this check a deleted user can loop
-  // forever between /login and /dashboard until the old JWT expires.
-  const { data: profileData } = await supabase
+  // Auth has confirmed the user. Load the application profile with the
+  // server-only admin client so proxy routing and server-page authorization
+  // use exactly the same profile row regardless of RLS policy differences.
+  const adminClient = createAdminClient();
+  const { data: profileData, error: profileError } = await adminClient
     .from("profiles")
     .select("id,email,full_name,employee_code,role,position,is_active,created_at,updated_at")
     .eq("id", userId!)
     .maybeSingle();
   const profile = profileData as Profile | null;
 
-  if (!profile) {
-    // Local sign-out clears the stale Supabase cookies on this browser/device.
-    // It does not revoke sessions on other devices.
+  if (profileError || !profile) {
     await supabase.auth.signOut({ scope: "local" });
 
-    if (pathname === "/login") {
-      return response;
-    }
-
+    if (pathname === "/login") return response;
     return redirectWithSessionCookies(request, response, "/login");
   }
 
@@ -100,7 +105,11 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (pathname === "/login" || pathname === "/inactive") {
-    return redirectWithSessionCookies(request, response, "/dashboard");
+    return redirectWithSessionCookies(
+      request,
+      response,
+      profile.role === "superadmin" || profile.role === "admin" ? "/admin" : "/dashboard",
+    );
   }
 
   if (pathname.startsWith("/superadmin") && profile.role !== "superadmin") {
@@ -121,7 +130,6 @@ export async function updateSession(request: NextRequest) {
 
   // Mapping and permissions are administrative data. Read them with the
   // service-role client so RLS cannot silently hide granted access.
-  const adminClient = createAdminClient();
   const { data: mappingRow, error: mappingError } = await adminClient
     .from("position_page_access")
     .select("is_enabled")
