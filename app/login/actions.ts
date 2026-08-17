@@ -23,6 +23,12 @@ export async function login(
   }
 
   const supabase = await createClient();
+
+  // A browser can still hold a JWT after its Auth user has been deleted.
+  // Always clear the local session before a fresh username/password login so
+  // an orphaned token can never interfere with the new session.
+  await supabase.auth.signOut({ scope: "local" });
+
   const email = usernameToInternalEmail(username);
   const { data: signInData, error: signInError } =
     await supabase.auth.signInWithPassword({ email, password });
