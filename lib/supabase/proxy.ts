@@ -14,6 +14,22 @@ function matchesProtectedPage(pathname: string) {
   );
 }
 
+function redirectWithSessionCookies(
+  request: NextRequest,
+  sessionResponse: NextResponse,
+  pathname: string,
+) {
+  const url = request.nextUrl.clone();
+  url.pathname = pathname;
+  url.search = "";
+
+  const redirectResponse = NextResponse.redirect(url);
+  for (const cookie of sessionResponse.cookies.getAll()) {
+    redirectResponse.cookies.set(cookie);
+  }
+  return redirectResponse;
+}
+
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -42,22 +58,23 @@ export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isPublicRoute = pathname === "/login" || pathname === "/inactive";
 
-  if (!isLoggedIn && !isPublicRoute) {
+  if (!isLoggedIn) {
+    if (isPublicRoute) return response;
+
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", pathname);
     return NextResponse.redirect(url);
   }
 
-  if (isLoggedIn && pathname === "/login") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    url.search = "";
-    return NextResponse.redirect(url);
-  }
+  // API authorization is handled by the API route helpers. Keep the proxy
+  // focused on page/session routing.
+  if (pathname.startsWith("/api/")) return response;
 
-  if (!isLoggedIn || isPublicRoute || pathname.startsWith("/api/")) return response;
-
+  // A JWT can remain valid for a short period after its Auth user is deleted.
+  // Confirm that this JWT still belongs to an application profile before
+  // redirecting away from /login. Without this check a deleted user can loop
+  // forever between /login and /dashboard until the old JWT expires.
   const { data: profileData } = await supabase
     .from("profiles")
     .select("id,email,full_name,employee_code,role,position,is_active,created_at,updated_at")
@@ -66,26 +83,32 @@ export async function updateSession(request: NextRequest) {
   const profile = profileData as Profile | null;
 
   if (!profile) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
+    // Local sign-out clears the stale Supabase cookies on this browser/device.
+    // It does not revoke sessions on other devices.
+    await supabase.auth.signOut({ scope: "local" });
+
+    if (pathname === "/login") {
+      return response;
+    }
+
+    return redirectWithSessionCookies(request, response, "/login");
   }
-  if (!profile.is_active && pathname !== "/inactive") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/inactive";
-    return NextResponse.redirect(url);
+
+  if (!profile.is_active) {
+    if (pathname === "/inactive") return response;
+    return redirectWithSessionCookies(request, response, "/inactive");
+  }
+
+  if (pathname === "/login" || pathname === "/inactive") {
+    return redirectWithSessionCookies(request, response, "/dashboard");
   }
 
   if (pathname.startsWith("/superadmin") && profile.role !== "superadmin") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
+    return redirectWithSessionCookies(request, response, "/dashboard");
   }
 
   if (pathname.startsWith("/admin") && !["superadmin", "admin"].includes(profile.role)) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
+    return redirectWithSessionCookies(request, response, "/dashboard");
   }
 
   const protectedPage = matchesProtectedPage(pathname);
@@ -93,9 +116,7 @@ export async function updateSession(request: NextRequest) {
 
   const position = profile.position as Position | null;
   if (!position) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
+    return redirectWithSessionCookies(request, response, "/dashboard");
   }
 
   // Mapping and permissions are administrative data. Read them with the
@@ -113,9 +134,7 @@ export async function updateSession(request: NextRequest) {
     : Boolean(mappingRow.is_enabled);
 
   if (!positionMapped) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
+    return redirectWithSessionCookies(request, response, "/dashboard");
   }
 
   const { data: permissionRows, error: permissionError } = await adminClient
@@ -141,7 +160,5 @@ export async function updateSession(request: NextRequest) {
     return response;
   }
 
-  const url = request.nextUrl.clone();
-  url.pathname = "/dashboard";
-  return NextResponse.redirect(url);
+  return redirectWithSessionCookies(request, response, "/dashboard");
 }
