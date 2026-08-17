@@ -72,12 +72,15 @@ export async function PageShell({
     return mapped && permitted;
   });
   const userInitial = profile.full_name.trim().charAt(0).toUpperCase() || "U";
+  const homePath = profile.role === "superadmin" || profile.role === "admin"
+    ? "/admin"
+    : "/dashboard";
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="topbar-brand-area">
-          <Link className="brand" href={profile.role === "admin" ? "/admin" : "/dashboard"}>
+          <Link className="brand" href={homePath}>
             SVN Warehouse
           </Link>
           <p className="muted topbar-subtitle" title={title}>{title}</p>
