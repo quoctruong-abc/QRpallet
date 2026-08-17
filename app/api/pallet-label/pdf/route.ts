@@ -23,6 +23,7 @@ type PalletRecord = {
   machine: string | null;
   quantity: number | string | null;
   status: string | null;
+  working_day: string | null;
 };
 
 type TextLayout = {
@@ -50,6 +51,14 @@ function formatNumber(value: unknown): string {
   return numericValue.toLocaleString("vi-VN");
 }
 
+function formatWorkingDay(value: string | null): string {
+  if (!value) return "-";
+  const datePart = value.slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+  if (!match) return safe(value);
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
 function sanitizeFilename(value: string): string {
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
 }
@@ -60,7 +69,7 @@ function withPrefix(prefix: string, value: unknown): string {
 
 // Nội dung đứng trước dữ liệu. Để chuỗi rỗng "" nếu không muốn hiện tiêu đề.
 const LABEL_PREFIX = {
-  palletId: "Pallet ID: ",
+  workingDay: "Ngày sản xuất: ",
   itemcode: "Itemcode: ",
   wo: "Số WO: ",
   productName: "Tên sản phẩm: ",
@@ -73,7 +82,7 @@ const LABEL_PREFIX = {
 // Tất cả x/y dùng đơn vị mm, tính từ góc trên bên trái giấy A4 nằm ngang.
 // A4 landscape có kích thước 297 x 210 mm.
 const LABEL_LAYOUT = {
-  palletId: { x: 18, y: 160, size: 20, bold: false, maxWidth: 185 },
+  workingDay: { x: 18, y: 160, size: 20, bold: false, maxWidth: 185 },
   itemcode: { x: 18, y: 100, size: 25, bold: true, maxWidth: 150 },
   wo: { x: 18, y: 115, size: 20, bold: false, maxWidth: 150 },
   productName: { x: 18, y: 57, size: 25, bold: true, maxWidth: 270 },
@@ -106,7 +115,7 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { data, error } = await supabase
       .from("pallet_data")
-      .select("pallet_id,itemcode,product_name,customer,wo,quanorder,machine,quantity,status")
+      .select("pallet_id,itemcode,product_name,customer,wo,quanorder,machine,quantity,status,working_day")
       .eq("pallet_id", palletId)
       .is("effect_to", null)
       .maybeSingle();
@@ -136,6 +145,7 @@ export async function GET(request: Request) {
       machine: data.machine,
       quantity: data.quantity,
       status: data.status,
+      working_day: data.working_day,
     };
 
     const regularFontPath = path.join(process.cwd(), "public", "fonts", "Arial-Regular.ttf");
@@ -174,7 +184,10 @@ export async function GET(request: Request) {
     });
     const qrImage = await pdfDoc.embedPng(qrBuffer);
 
-    drawText(withPrefix(LABEL_PREFIX.palletId, pallet.pallet_id), LABEL_LAYOUT.palletId);
+    drawText(
+      withPrefix(LABEL_PREFIX.workingDay, formatWorkingDay(pallet.working_day)),
+      LABEL_LAYOUT.workingDay,
+    );
     drawText(withPrefix(LABEL_PREFIX.itemcode, pallet.itemcode), LABEL_LAYOUT.itemcode);
     drawText(withPrefix(LABEL_PREFIX.wo, pallet.wo), LABEL_LAYOUT.wo);
     drawText(withPrefix(LABEL_PREFIX.productName, pallet.product_name), LABEL_LAYOUT.productName);
