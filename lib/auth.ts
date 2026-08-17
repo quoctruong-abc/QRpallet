@@ -37,15 +37,23 @@ async function loadPermissions(profile: Profile): Promise<PermissionKey[]> {
 
 export async function getCurrentProfile(): Promise<Profile | null> {
   const supabase = await createClient();
-  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
-  const userId = claimsData?.claims?.sub;
-  if (claimsError || !userId) return null;
 
-  const { data, error } = await supabase
+  // getUser() asks Supabase Auth for the current user instead of trusting only
+  // the JWT claims. This is important after a user has been deleted or a
+  // server-side session has been revoked while an old JWT still exists locally.
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (userError || !userId) return null;
+
+  // Once Auth has confirmed the user, load the application profile with the
+  // server-only admin client. This keeps page authorization consistent with
+  // proxy.ts and prevents profile RLS differences from causing redirect loops.
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
     .from("profiles")
     .select("*")
     .eq("id", userId)
-    .single();
+    .maybeSingle();
   if (error || !data) return null;
 
   const profile = data as Profile;
