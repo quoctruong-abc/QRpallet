@@ -2,7 +2,6 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { POSITION_ROUTES } from "@/lib/routes";
 import { isValidUsername, normalizeUsername, usernameToInternalEmail } from "@/lib/username";
 import type { Profile } from "@/lib/types";
 
@@ -74,15 +73,11 @@ export async function login(
   }
 
   if (!profile.position) {
-    await supabase.auth.signOut({ scope: "local" });
-    return { error: "Tài khoản chưa được gán position." };
+    redirect("/dashboard");
   }
 
-  const defaultRoute = POSITION_ROUTES[profile.position][0];
-  if (!defaultRoute) {
-    await supabase.auth.signOut({ scope: "local" });
-    return { error: "Position chưa được cấu hình trang truy cập." };
-  }
-
-  redirect(defaultRoute);
+  // User routing is resolved centrally by /dashboard. That page checks the
+  // user's real permissions and page mappings before selecting a module, so a
+  // cleared permission table cannot create a module <-> dashboard loop.
+  redirect("/dashboard");
 }
