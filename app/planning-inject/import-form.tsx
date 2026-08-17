@@ -31,7 +31,7 @@ export function PlanningImportForm({ databaseReady }: ImportFormProps) {
     }
 
     const confirmed = window.confirm(
-      "Khi xác nhận, toàn bộ plan hiện tại sẽ được thay bằng dữ liệu trong sheet data. Tiếp tục?",
+      "Khi xác nhận, toàn bộ plan hiện tại sẽ được thay bằng các dòng hợp lệ trong sheet Daily plan, bắt đầu từ dòng 5 và chỉ lấy dòng có cả cột A và B. Tiếp tục?",
     );
     if (!confirmed) return;
 
@@ -74,7 +74,7 @@ export function PlanningImportForm({ databaseReady }: ImportFormProps) {
         <div>
           <strong>Chọn file kế hoạch Excel</strong>
           <p className="muted small">
-            Hệ thống đọc sheet <b>data</b>, bỏ dòng header đầu tiên và lấy 12 cột A–L.
+            Hệ thống đọc sheet <b>Daily plan</b> từ dòng <b>5</b>, lấy 12 cột A–L và chỉ nhập dòng có cả cột A và B. Ô merge được xử lý theo đúng vùng merge trước khi lọc dữ liệu.
           </p>
         </div>
         <label className="button button-secondary file-picker">
