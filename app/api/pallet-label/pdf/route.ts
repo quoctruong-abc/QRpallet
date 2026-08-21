@@ -109,7 +109,9 @@ export async function GET(request: Request) {
 
     if (requestUrl.searchParams.get("raw") !== "1") {
       const rawPdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(palletId)}&raw=1`;
-      return createPdfPrintPage(rawPdfUrl, `In tem pallet ${palletId}`);
+      return createPdfPrintPage(rawPdfUrl, `In tem pallet ${palletId}`, {
+        closeAfterPrint: true,
+      });
     }
 
     const supabase = await createClient();

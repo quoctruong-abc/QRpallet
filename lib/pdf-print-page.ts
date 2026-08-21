@@ -9,9 +9,18 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#039;");
 }
 
-export function createPdfPrintPage(pdfUrl: string, title: string) {
+type PdfPrintPageOptions = {
+  closeAfterPrint?: boolean;
+};
+
+export function createPdfPrintPage(
+  pdfUrl: string,
+  title: string,
+  options: PdfPrintPageOptions = {},
+) {
   const safeTitle = escapeHtml(title);
   const serializedPdfUrl = JSON.stringify(pdfUrl).replaceAll("<", "\\u003c");
+  const closeAfterPrint = options.closeAfterPrint === true;
 
   const html = `<!doctype html>
 <html lang="vi">
@@ -76,19 +85,50 @@ export function createPdfPrintPage(pdfUrl: string, title: string) {
       const frame = document.getElementById("pdf-frame");
       const button = document.getElementById("print-button");
       const status = document.getElementById("print-status");
+      const closeAfterPrint = ${closeAfterPrint};
+      let printStarted = false;
+      let printFinished = false;
 
-      function openPrintDialog() {
-        try {
-          frame.contentWindow.focus();
-          frame.contentWindow.print();
-        } catch (error) {
-          window.focus();
-          window.print();
+      function finishPrint() {
+        if (printFinished) return;
+        printFinished = true;
+        status.textContent = "Đã gửi lệnh in.";
+        if (closeAfterPrint) {
+          window.setTimeout(() => window.close(), 150);
         }
       }
 
+      function openPrintDialog() {
+        if (printStarted) return;
+        printStarted = true;
+        button.disabled = true;
+        status.textContent = "Đang gửi lệnh in...";
+        try {
+          frame.contentWindow.focus();
+          frame.contentWindow.print();
+          if (closeAfterPrint) window.setTimeout(finishPrint, 1500);
+        } catch (error) {
+          try {
+            window.focus();
+            window.print();
+            if (closeAfterPrint) window.setTimeout(finishPrint, 1500);
+          } catch (fallbackError) {
+            printStarted = false;
+            button.disabled = false;
+            status.textContent = "Không thể mở chức năng in. Hãy nhấn In ngay để thử lại.";
+          }
+        }
+      }
+
+      window.addEventListener("afterprint", finishPrint);
+
       button.addEventListener("click", openPrintDialog);
       frame.addEventListener("load", () => {
+        try {
+          frame.contentWindow.addEventListener("afterprint", finishPrint);
+        } catch (error) {
+          // The fallback timer in openPrintDialog still closes this print page.
+        }
         button.disabled = false;
         status.textContent = "PDF đã sẵn sàng. Nếu hộp thoại chưa mở, nhấn In ngay.";
         window.setTimeout(openPrintDialog, 900);
@@ -97,7 +137,7 @@ export function createPdfPrintPage(pdfUrl: string, title: string) {
       frame.src = ${serializedPdfUrl};
 
       window.setTimeout(() => {
-        if (button.disabled) {
+        if (!printStarted && button.disabled) {
           button.disabled = false;
           status.textContent = "PDF đang tải chậm. Có thể nhấn In ngay để thử lại.";
         }

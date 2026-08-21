@@ -54,7 +54,7 @@ type ScanApiResult = {
   pallet?: ScannedPallet;
 };
 
-const CAMERA_CAPTURE_DELAY_MS = 2000;
+const CAMERA_CAPTURE_DELAY_MS = 10_000;
 const DUPLICATE_LOG_COOLDOWN_MS = 900;
 const MAX_SCAN_PALLETS = 200;
 const SCAN_LIMIT_WARNING_AT = 150;
