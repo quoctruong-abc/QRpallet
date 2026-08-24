@@ -2,7 +2,6 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { POSITION_ROUTES } from "@/lib/routes";
 import { isValidUsername, normalizeUsername, usernameToInternalEmail } from "@/lib/username";
 import type { Profile } from "@/lib/types";
 
@@ -23,12 +22,33 @@ export async function login(
   }
 
   const supabase = await createClient();
+
+  // A browser can still hold a JWT after its Auth user has been deleted.
+  // Always clear the local session before a fresh username/password login so
+  // an orphaned token can never interfere with the new session.
+  await supabase.auth.signOut({ scope: "local" });
+
   const email = usernameToInternalEmail(username);
   const { data: signInData, error: signInError } =
     await supabase.auth.signInWithPassword({ email, password });
 
-  if (signInError || !signInData.user) {
-    return { error: "Tên đăng nhập hoặc mật khẩu không đúng." };
+  if (signInError) {
+    const errorDetails = [
+      signInError.code ? `code: ${signInError.code}` : null,
+      signInError.status ? `status: ${signInError.status}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+
+    return {
+      error: `Lỗi đăng nhập Supabase${errorDetails ? ` (${errorDetails})` : ""}: ${signInError.message}`,
+    };
+  }
+
+  if (!signInData.user) {
+    return {
+      error: "Lỗi đăng nhập: Supabase không trả về thông tin người dùng.",
+    };
   }
 
   const { data: profileData, error: profileError } = await supabase
@@ -53,15 +73,11 @@ export async function login(
   }
 
   if (!profile.position) {
-    await supabase.auth.signOut({ scope: "local" });
-    return { error: "Tài khoản chưa được gán position." };
+    redirect("/dashboard");
   }
 
-  const defaultRoute = POSITION_ROUTES[profile.position][0];
-  if (!defaultRoute) {
-    await supabase.auth.signOut({ scope: "local" });
-    return { error: "Position chưa được cấu hình trang truy cập." };
-  }
-
-  redirect(defaultRoute);
+  // User routing is resolved centrally by /dashboard. That page checks the
+  // user's real permissions and page mappings before selecting a module, so a
+  // cleared permission table cannot create a module <-> dashboard loop.
+  redirect("/dashboard");
 }

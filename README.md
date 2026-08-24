@@ -1,83 +1,106 @@
-# QRpallet
+# QRpallet — SVN Warehouse
 
-Hệ thống quản lý kế hoạch sản xuất, tem pallet QR và nhập kho nội bộ.
+Hệ thống nội bộ quản lý kế hoạch sản xuất, tạo tem pallet QR, scan nhập kho, phiếu nhập kho và Dashboard theo dõi tiến độ/lịch sử pallet.
 
-README này là tài liệu tham chiếu chính cho kiến trúc, nghiệp vụ, phân quyền, database và cách vận hành dự án. Khi thay đổi workflow, permission, RPC hoặc cấu trúc bảng, cần cập nhật README trong cùng đợt thay đổi.
+> **Baseline hiện hành: 10/08/2026**  
+> README này là tài liệu tham chiếu chính để scan nhanh trạng thái dự án. Khi thay đổi workflow, permission, RPC, database, security hoặc quy trình deploy/go-live thì cập nhật README trong cùng đợt thay đổi.
 
 ---
 
-## 1. Tổng quan
+## 1. Phạm vi hệ thống
 
-Luồng nghiệp vụ hiện tại:
+Luồng nghiệp vụ hiện hành:
 
 ```text
 Planning Inject
-→ Production tạo và in tem pallet
+→ Production tạo + in tem pallet
 → Warehouse scan QR
-→ Warehouse xác nhận và tạo phiếu nhập kho
-→ Pallet chuyển sang WHdone
-→ Warehouse xem lịch sử, chi tiết và in lại phiếu
+→ Warehouse xác nhận batch scan
+→ Hệ thống tạo phiếu nhập kho
+→ Pallet chuyển WHdone
+→ Xem lịch sử / Dashboard / in lại phiếu
 ```
 
-Phạm vi hiện tại kết thúc tại `WHdone`. Hệ thống chưa quản lý tồn kho thực tế, xuất kho hoặc điều chỉnh tồn sau nhập kho.
+Phạm vi hiện tại kết thúc tại `WHdone`.
+
+Hệ thống **chưa quản lý**:
+
+- tồn kho thực tế sau nhập kho;
+- xuất kho;
+- điều chỉnh tồn;
+- hủy/đảo phiếu đã hoàn tất;
+- operation offline.
 
 ---
 
-## 2. Công nghệ
+## 2. Công nghệ và kiến trúc
 
 - Next.js 16 App Router
-- TypeScript
-- Tailwind/CSS ứng dụng
+- TypeScript + React
 - Supabase Auth
-- Supabase PostgreSQL
-- PostgreSQL RPC cho nghiệp vụ transaction
-- `pdf-lib`, `fontkit`, `qrcode` cho PDF tem và phiếu nhập kho
-- Deploy trên Vercel
+- Supabase PostgreSQL + RLS
+- PostgreSQL RPC/transaction cho nghiệp vụ quan trọng
+- Vercel frontend/backend
+- `pdf-lib`, `@pdf-lib/fontkit`, `qrcode` cho PDF
+- `read-excel-file` cho Planning Inject
+- PWA dạng standalone, bắt buộc online
 
-Nguyên tắc:
+### Nguyên tắc kiến trúc
 
-- Client không cập nhật trực tiếp trạng thái pallet.
-- API phải xác thực user và permission ở server.
-- Nghiệp vụ nhiều bước thực hiện trong RPC và cùng transaction.
-- Pallet chỉ có một version đang hoạt động với `effect_to is null`.
-- Không sửa hoặc đảo trạng thái pallet sau khi đã `WHdone`.
+- Client không tự cập nhật trạng thái pallet quan trọng bằng direct table DML.
+- API/Server Action phải xác thực user và permission ở server.
+- Nghiệp vụ nhiều bước dùng RPC/transaction trong database.
+- Mỗi `pallet_id` chỉ có một version active với `effect_to is null`.
+- Pallet `WHdone` không sửa/xóa/return.
+- `SUPABASE_SERVICE_ROLE_KEY` chỉ được dùng server-side.
+- Không cache API operation và không có offline queue.
+- Các aggregate lớn phải thực hiện ở PostgreSQL; không tải toàn bộ lịch sử về Vercel chỉ để cộng số.
+
+Kiến trúc security mục tiêu:
+
+```text
+Internet
+→ Vercel / Next.js
+→ Auth + Permission + Input Guard
+→ Supabase Data API least privilege
+→ GRANT whitelist + RLS
+→ SECURITY DEFINER RPC permission/ownership guard
+→ PostgreSQL transaction
+```
+
+> Vercel WAF/Bot Protection/rate limit chưa phải baseline đã cấu hình; xử lý ở bước security/deploy riêng sau.
 
 ---
 
-## 3. Cài đặt và chạy local
+## 3. Branch và quy tắc phát triển
 
-### 3.1 Yêu cầu
+| Branch | Mục đích |
+|---|---|
+| `main` | Production |
+| `dev` | Phát triển và kiểm thử |
 
-- Node.js phù hợp với Next.js 16
-- npm
-- Supabase project
+### Quy tắc bắt buộc
 
-### 3.2 Biến môi trường
+- Chỉ sửa code trên `dev`.
+- Không commit trực tiếp vào `main`.
+- Chỉ merge production sau khi build + smoke test thành công.
 
-Tạo `.env.local`:
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_publishable_key
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-```
-
-Không commit `.env.local` hoặc service-role key lên GitHub.
-
-### 3.3 Chạy development
+Lệnh thường dùng:
 
 ```bash
+git switch dev
+git pull origin dev
 npm install
+npm run build
+```
+
+Chạy development:
+
+```bash
 npm run dev
 ```
 
-Mở:
-
-```text
-http://localhost:3000
-```
-
-### 3.4 Kiểm tra build
+Chạy production local:
 
 ```bash
 npm run build
@@ -86,86 +109,201 @@ npm start
 
 ---
 
-## 4. Branch và deploy
+## 4. Biến môi trường
 
-Khuyến nghị:
+`.env.local`:
 
-- `main`: production
-- `dev`: phát triển và kiểm thử
-- `demo`: môi trường trình diễn nếu cần
-
-Quy trình cơ bản:
-
-```bash
-git checkout dev
-git pull origin dev
-npm run build
-git add .
-git commit -m "mô tả thay đổi"
-git push origin dev
+```env
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_publishable_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
-Chỉ merge lên production sau khi build và kiểm thử nghiệp vụ thành công.
+Không commit `.env.local`, JWT signing key hoặc service-role key lên GitHub.
 
 ---
 
-## 5. Role, position và permission
+## 5. Auth, JWT và security rule
 
-### 5.1 Role
+### 5.1 Login/session
+
+Login dùng Supabase email/password thông qua username nội bộ được map sang email nội bộ.
+
+Server/proxy kiểm tra JWT bằng:
+
+```text
+supabase.auth.getClaims()
+```
+
+Không dựa vào decode JWT local để quyết định user.
+
+Rule hiện hành trong `supabase/config.toml`:
+
+```text
+JWT expiry                  = 3600 giây (1 giờ)
+Refresh token rotation      = ON
+Refresh reuse interval      = 10 giây
+Anonymous sign-in           = OFF
+Public signup               = OFF
+Email signup                = OFF
+Minimum password length     = 8
+```
+
+Business role/permission **không đóng băng trong JWT**. Sau khi xác thực `claims.sub`, hệ thống vẫn đọc trạng thái/permission hiện hành từ database.
+
+Luồng authorization:
+
+```text
+JWT hợp lệ
+→ claims.sub
+→ profiles
+→ is_active / role / position
+→ user_permissions + mapping
+→ RLS / RPC permission check
+```
+
+Nếu user bị khóa `profiles.is_active = false`, business permission bị từ chối dù access JWT cũ chưa hết hạn.
+
+### 5.2 Hosted Supabase Auth settings
+
+Repo đã cấu hình local:
+
+```toml
+[auth]
+enable_signup = false
+minimum_password_length = 8
+
+[auth.email]
+enable_signup = false
+```
+
+Với project Supabase hiện tại, `npx supabase config push` yêu cầu paid tier. Vì vậy khi chạy hosted project phải kiểm tra/chỉnh thủ công trong Supabase Dashboard:
+
+```text
+Authentication
+→ Settings / General Configuration
+→ Allow new users to sign up = OFF
+→ Minimum password length = 8
+```
+
+Admin vẫn tạo user bằng server-side `auth.admin.createUser()`; việc tắt public signup không chặn luồng Admin tạo tài khoản.
+
+### 5.3 Data API hardening
+
+Baseline sau migration `20260810163500_harden_data_api_surface.sql`:
+
+- `anon` không có quyền business trên schema `public`;
+- authenticated không có direct `INSERT/UPDATE/DELETE` trên public tables;
+- future public table/function/sequence mặc định fail-closed, phải `GRANT` rõ ràng;
+- `wh_receipt` không cho authenticated direct SELECT;
+- `pallet_change_history` chỉ đọc khi RLS xác nhận `dashboard.view`;
+- `pallet_data` direct SELECT bị giới hạn theo permission/RLS;
+- authenticated chỉ EXECUTE các RPC/helper đã whitelist;
+- service-role chỉ dùng server-side.
+
+Tài liệu audit chi tiết:
+
+```text
+docs/supabase-data-api-security.md
+```
+
+### 5.4 Business RPC whitelist hiện hành
+
+RLS/auth helpers:
+
+```text
+current_profile_position()
+current_profile_role()
+has_permission(text)
+```
+
+Business RPC:
+
+```text
+replace_planning_inject(jsonb,text)
+create_pallet_record(text,text,text,text,numeric,text,integer,text)
+edit_pallet_quantity_tracked(text,integer,text)
+delete_pallet_record_tracked(text,text)
+scan_pallet_to_pending(text)
+cancel_pending_pallet(text)
+create_warehouse_receipt_from_scan(text[])
+dashboard_progress(text,text,date,date)
+dashboard_summary(date,date)
+dashboard_check_item(text)
+```
+
+Trigger/helper nội bộ không được authenticated gọi trực tiếp.
+
+### 5.5 Error handling
+
+Các route Scan và Dashboard đã harden lỗi database kỹ thuật thành message chung:
+
+```text
+Không thể tải dữ liệu. Vui lòng thử lại.
+```
+
+Raw PostgreSQL/Supabase error chỉ log server-side. Business error có chủ đích như pallet không tồn tại, sai status, sai owner, batch quá 200 vẫn được map thành message phù hợp.
+
+> Chưa sweep generic DB error cho toàn repo; Planning/Pallet/Receipt/Admin cần audit riêng nếu muốn hoàn tất P1 toàn hệ thống.
+
+---
+
+## 6. Role, position và permission
+
+### Role
 
 | Role | Quy tắc |
 |---|---|
-| `superadmin` | Toàn quyền, bypass permission |
-| `admin` | Permission được superadmin chọn trong `user_permissions` |
-| `user` | Permission được admin hoặc superadmin cấp |
+| `superadmin` | Toàn quyền; mặc định xem Dashboard; role duy nhất được cấp/gỡ `dashboard.view` cho user |
+| `admin` | Quản trị trong phạm vi được cấu hình; mặc định xem Dashboard |
+| `user` | Chỉ dùng permission được cấp |
 
-Admin không còn tự động nhận toàn bộ quyền theo position.
+### Position
 
-### 5.2 Position
-
-| Position | Phạm vi quản lý |
+| Position | Phạm vi |
 |---|---|
 | `planning` | Kế hoạch sản xuất |
-| `production` | Tạo và quản lý pallet Production |
-| `warehouse` | Scan, tạo và xem phiếu nhập kho |
+| `production` | Tạo/quản lý pallet |
+| `warehouse` | Scan và lịch sử nhập kho |
 
-Position vẫn được dùng để:
-
-- giới hạn admin chỉ quản lý user cùng position;
-- xác định page mapping;
-- phân nhóm vận hành.
-
-### 5.3 Permission hiện hành
+### Permission
 
 | Permission | Chức năng |
 |---|---|
-| `planning.upload` | Upload và replace Planning Inject |
-| `planning.change` | Thay đổi dữ liệu planning được phép |
-| `pallet.create` | Tạo pallet, in tem, tìm kiếm, in lại và gộp pallet |
-| `pallet.edit` | Sửa hoặc xóa pallet Production |
-| `scan.standard` | Scan QR, hủy scan, xác nhận và tạo phiếu nhập kho |
-| `receipt.view` | Truy cập module lịch sử phiếu, xem chi tiết và in lại |
+| `planning.upload` | Upload/replace Planning Inject |
+| `planning.change` | Thay đổi planning được phép |
+| `pallet.create` | Tạo pallet, in tem, tìm kiếm, in lại, gộp |
+| `pallet.edit` | Sửa/xóa pallet Production |
+| `scan.standard` | Scan, cancel scan, confirm batch + tạo phiếu |
+| `receipt.view` | Xem lịch sử/chi tiết/in lại phiếu |
+| `dashboard.view` | Dashboard + Check FIFO + Check item |
 
-Hai permission cũ không còn sử dụng:
+Permission cũ không còn dùng:
 
 ```text
 receipt.create
 receipt.edit
 ```
 
-### 5.4 Page mapping mặc định
+Page mapping mặc định:
 
-| Position | Trang |
+| Position | Route |
 |---|---|
 | Planning | `/planning-inject` |
 | Production | `/pallet-label` |
 | Warehouse | `/scan-qr`, `/warehouse-receipt` |
 
-Superadmin có thể thay đổi mapping trên trang Admin.
+Dashboard là module permission riêng:
+
+```text
+/production-dashboard
+/production-dashboard/check-fifo
+/production-dashboard/check-item
+```
 
 ---
 
-## 6. Module 1 — Planning Inject
+## 7. Module 1 — Planning Inject
 
 Route:
 
@@ -173,7 +311,7 @@ Route:
 /planning-inject
 ```
 
-Bảng chính:
+Bảng:
 
 ```text
 planning_inject
@@ -181,13 +319,13 @@ planning_inject
 
 Chức năng:
 
-- Upload file Excel từ sheet dữ liệu quy định.
-- Replace kế hoạch hiện tại.
-- Hiển thị kế hoạch theo máy.
-- Đổi máy khi có `planning.change`.
-- Bỏ qua WO trống hoặc WO bằng `0` khi đưa sang module pallet.
+- import Excel theo sheet quy định;
+- replace planning hiện tại;
+- hiển thị theo máy;
+- đổi máy khi có `planning.change`;
+- WO trống hoặc bằng `0` không được đưa sang module pallet.
 
-Các trường chính:
+Trường chính:
 
 ```text
 machine
@@ -204,7 +342,7 @@ package
 quanorder
 ```
 
-API chính:
+API:
 
 | API | Permission |
 |---|---|
@@ -213,7 +351,7 @@ API chính:
 
 ---
 
-## 7. Module 2 — Xuất tem pallet
+## 8. Module 2 — Xuất tem pallet
 
 Route:
 
@@ -224,18 +362,21 @@ Route:
 Bảng chính:
 
 ```text
-pallet_data
+planning_inject
 item_pallet_config
+pallet_data
 ```
 
-### 7.1 Tạo pallet
+### 8.1 Danh sách WO
 
-Điều kiện:
+- chỉ lấy WO khác `0` và không trống;
+- nhóm theo máy;
+- hiển thị dạng `1WO`, `2WO`;
+- tìm theo WO/itemcode;
+- list pallet gần nhất phục vụ thao tác nhanh;
+- chức năng sửa/xóa chỉ cho pallet active `production`.
 
-- WO không trống.
-- WO khác `0`.
-- Quantity là số nguyên lớn hơn 0.
-- User có `pallet.create`.
+### 8.2 Tạo pallet
 
 Pallet mới:
 
@@ -244,31 +385,93 @@ status = production
 effect_to = null
 ```
 
-ID pallet:
+Pallet ID:
 
 ```text
 WO-001
 WO-002
+WO-003
 ...
 ```
 
-ID được sinh tại database và khóa transaction theo WO để tránh trùng số.
+ID được sinh trong database transaction để tránh collision khi nhiều user thao tác.
 
-### 7.2 Working day
+### 8.3 Quantity chuẩn mỗi pallet
 
-Mỗi pallet có:
+Bảng:
 
 ```text
-working_day date
+item_pallet_config
 ```
 
-Working day tính theo múi giờ:
+Field:
+
+```text
+itemcode
+quantity_per_pallet
+```
+
+### 8.4 Edit pallet
+
+Chỉ khi:
+
+```text
+status = production
+effect_to is null
+```
+
+Bắt buộc reason.
+
+Versioning:
+
+1. đóng version cũ bằng `effect_to`;
+2. tạo version mới cùng `pallet_id`;
+3. `old_data_refer` trỏ version trước;
+4. giữ nguyên `working_day` gốc;
+5. cập nhật edit tracking.
+
+RPC:
+
+```text
+edit_pallet_quantity_tracked
+```
+
+### 8.5 Delete pallet
+
+Delete là terminal soft-delete/versioned event:
+
+- chỉ active `production`;
+- reason bắt buộc;
+- đóng active row;
+- tạo terminal delete version với `note = delete: ...`;
+- không còn active version của pallet.
+
+RPC:
+
+```text
+delete_pallet_record_tracked
+```
+
+Dashboard vẫn nhận biết pallet đã delete để giữ context WO/order và cảnh báo history, nhưng pallet delete không được cộng vào KPI active.
+
+### 8.6 PDF tem
+
+- QR chứa `pallet_id`;
+- template PDF trong project;
+- Roboto TTF hỗ trợ tiếng Việt;
+- `pdf-lib` + `fontkit` + `qrcode`.
+
+---
+
+## 9. Working day
+
+Timezone:
 
 ```text
 Asia/Ho_Chi_Minh
 ```
 
-Ca làm việc:
+Cutoff:
 
 ```text
 06:00 hôm nay → trước 06:00 hôm sau
@@ -276,10 +479,12 @@ Ca làm việc:
 
 Ví dụ:
 
-- Tạo lúc `2026-07-21 05:59 +07` → `working_day = 2026-07-20`
-- Tạo lúc `2026-07-21 06:00 +07` → `working_day = 2026-07-21`
+```text
+05:59 21/07/2026 → working_day = 20/07/2026
+06:00 21/07/2026 → working_day = 21/07/2026
+```
 
-Công thức:
+Database logic:
 
 ```sql
 (
@@ -288,73 +493,11 @@ Công thức:
 )::date
 ```
 
-Khi sửa pallet và tạo version mới, `working_day` được giữ từ version gốc, không tính lại theo thời điểm sửa.
-
-### 7.3 PDF tem pallet
-
-- Khổ A4 theo template.
-- QR chứa `pallet_id`.
-- Font Roboto TTF để hỗ trợ tiếng Việt.
-- Dùng `pdf-lib`, `fontkit` và `qrcode`.
-
-### 7.4 Sửa pallet
-
-Chỉ được sửa khi:
-
-```text
-status = production
-effect_to is null
-```
-
-Bắt buộc nhập:
-
-- quantity mới;
-- lý do sửa.
-
-Versioning:
-
-1. Dòng hiện tại được đóng bằng `effect_to`.
-2. Tạo dòng mới với cùng `pallet_id`.
-3. `old_data_refer` trỏ về ID vật lý của dòng cũ.
-4. Dòng mới có:
-
-```text
-has_been_edited = true
-edit_count = edit_count cũ + 1
-```
-
-RPC:
-
-```text
-edit_pallet_quantity_tracked
-```
-
-### 7.5 Xóa pallet
-
-Chỉ được xóa khi pallet còn active và `status = production`.
-
-Xóa là versioned soft delete:
-
-- đóng dòng active bằng `effect_to`;
-- tạo dòng tombstone không active;
-- `old_data_refer` trỏ về dòng bị xóa;
-- bắt buộc nhập lý do.
-
-RPC:
-
-```text
-delete_pallet_record_tracked
-```
-
-### 7.6 Gộp pallet
-
-- Chỉ áp dụng cho pallet đang `production`.
-- Có thể gộp theo WO và số lượng.
-- Dấu vết pallet nguồn được lưu trong `note`.
+Version edit/delete phải giữ `working_day` của pallet gốc.
 
 ---
 
-## 8. Module 3 — Scan QR và tạo phiếu nhập kho
+## 10. Module 3 — Scan QR + tạo phiếu
 
 Route:
 
@@ -368,16 +511,7 @@ Permission:
 scan.standard
 ```
 
-Workflow trạng thái:
-
-```text
-production
-→ pendingWH
-→ processingWH
-→ WHdone
-```
-
-### 8.1 Scan pallet
+### 10.1 Scan
 
 Điều kiện:
 
@@ -390,7 +524,7 @@ status = production
 Kết quả:
 
 ```text
-status = pendingWH
+production → pendingWH
 scanned_by = auth.uid()
 scanned_at = now()
 ```
@@ -401,52 +535,37 @@ RPC:
 scan_pallet_to_pending
 ```
 
-### 8.2 Hủy pallet vừa scan
+### 10.2 Giới hạn batch 200 pallet
 
-Chỉ hủy khi:
+Scan batch tối đa:
 
 ```text
-status = pendingWH
+200 pallet
 ```
 
-User thường chỉ hủy pallet do chính mình scan; superadmin/admin theo rule RPC có thể được phép tùy cấu hình hiện hành.
+Guard có cả frontend và database:
 
-Kết quả:
+- từ `150` pallet frontend hiển thị indicator/cảnh báo `x/200`;
+- `200` pallet: chặn mở camera/scan thêm;
+- DB dùng advisory lock + count `pendingWH` theo scanner để chặn request thứ 201;
+- confirm API/RPC cũng chỉ nhận tối đa 200 pallet;
+- duplicate pallet ID trong confirm bị reject.
+
+User thường chỉ thấy pending pallet của chính mình. Admin/superadmin có thể thấy toàn bộ pending list, nhưng UI vẫn giới hạn batch hiển thị/thao tác tối đa 200.
+
+### 10.3 Cancel scan
 
 ```text
 pendingWH → production
-has_been_return = true
 scanned_by = null
 scanned_at = null
+has_been_return = true
 ```
 
-Chi tiết lần scan và lần hủy được ghi vào:
+Ghi history vào:
 
 ```text
 pallet_change_history
-```
-
-Các trường lịch sử chính:
-
-```text
-pallet_data_id
-pallet_id
-change_type = scan_return
-scanned_by
-scanned_at
-cancelled_by
-cancelled_at
-```
-
-Không còn dùng các cột legacy:
-
-```text
-return_at
-return_by
-return_from
-returned_at
-returned_by
-returned_from
 ```
 
 RPC:
@@ -455,47 +574,33 @@ RPC:
 cancel_pending_pallet
 ```
 
-### 8.3 Xác nhận danh sách scan
+Normal user chỉ cancel pallet do mình scan; admin/superadmin được xử lý theo quyền admin.
 
-Khi xác nhận:
+### 10.4 Confirm batch + tạo phiếu
 
-```text
-pendingWH → processingWH
-```
-
-Hệ thống khóa và kiểm tra toàn bộ pallet trước khi update.
-
-### 8.4 Tạo phiếu nhập kho
-
-Sau khi xác nhận danh sách, module Scan tạo phiếu nhập kho và chuyển pallet:
+Workflow:
 
 ```text
-processingWH → WHdone
+pendingWH → processingWH → WHdone
 ```
 
-Phiếu được ghi vào:
+Trong cùng transaction:
+
+1. validate batch/owner/status;
+2. khóa các pallet;
+3. tạo receipt;
+4. gắn receipt cho pallet;
+5. chuyển `WHdone`.
+
+RPC:
 
 ```text
-wh_receipt
+create_warehouse_receipt_from_scan
 ```
-
-Pallet được liên kết qua:
-
-```text
-pallet_data.wh_receipt
-```
-
-Sau `WHdone`:
-
-- không sửa pallet;
-- không xóa pallet;
-- không trả về Production;
-- không hủy phiếu để đảo dữ liệu;
-- chỉ xem và in lại.
 
 ---
 
-## 9. Module 4 — Lịch sử phiếu nhập kho
+## 11. Module 4 — Lịch sử phiếu nhập kho
 
 Route:
 
@@ -509,66 +614,273 @@ Permission:
 receipt.view
 ```
 
-Position Warehouse được map vào module này. Admin Warehouse vẫn cần được superadmin cấp permission `receipt.view`.
+Module này chỉ:
 
-Chức năng:
+- xem lịch sử;
+- tìm theo ngày;
+- xem chi tiết;
+- in lại PDF.
 
-- Hiển thị phiếu 7 ngày gần nhất.
-- Tìm theo ngày phiếu.
-- In lại PDF.
-- Xem chi tiết pallet của từng phiếu.
+Không reverse sau `WHdone`.
 
-Chi tiết phiếu hiển thị:
-
-```text
-pallet_id
-wo
-itemcode
-product_name
-customer
-quantity
-```
-
-API:
-
-| API | Chức năng |
-|---|---|
-| `/api/warehouse-receipt/list` | Danh sách phiếu |
-| `/api/warehouse-receipt/detail` | Danh sách pallet của phiếu |
-| `/api/warehouse-receipt/reprint` | In lại PDF |
-
-### 9.1 Receipt day
-
-`wh_receipt.receipt_date` dùng cùng rule working day:
-
-```text
-06:00 hôm nay → trước 06:00 hôm sau
-```
-
-Ví dụ:
-
-- Tạo phiếu lúc `05:30 ngày 21/07` → `receipt_date = 20/07`
-- Tạo lúc `06:00 ngày 21/07` → `receipt_date = 21/07`
-
-Số phiếu chạy theo `receipt_date`:
+Receipt ID:
 
 ```text
 WH-DDMMYY-001
 WH-DDMMYY-002
+...
 ```
 
-Phiếu tạo trước 06:00 tiếp tục chuỗi số của working day hôm trước.
+`receipt_date` dùng cùng cutoff 06:00.
 
 ---
 
-## 10. Trạng thái pallet
+## 12. Dashboard sản xuất
+
+Permission cho toàn bộ các tab/API:
+
+```text
+dashboard.view
+```
+
+Tabs:
+
+```text
+Dashboard | Check FIFO | Check item
+```
+
+### 12.1 Dashboard chính
+
+Route:
+
+```text
+/production-dashboard
+```
+
+Filter:
+
+- một ngày;
+- khoảng ngày;
+- view theo WO;
+- view theo Item.
+
+#### Pagination theo 7 ngày
+
+Main table không phân trang theo số dòng. Mỗi page là:
+
+```text
+7 ngày lịch liên tiếp trong range user chọn
+```
+
+Ví dụ range `01/08 → 31/08`:
+
+```text
+Page 1: 01/08 → 07/08
+Page 2: 08/08 → 14/08
+...
+```
+
+Rule:
+
+- `TOTAL` trong table chỉ tính 7 ngày đang hiển thị;
+- popup chi tiết từ Dashboard cũng chỉ query đúng 7 ngày của page;
+- query pallet theo batch `1000` dòng để tránh PostgREST max-row truncation;
+- pagination link dùng `prefetch={false}` để tránh egress không cần thiết.
+
+#### Summary toàn range
+
+Top summary **không thay đổi khi chuyển page**.
+
+RPC:
+
+```text
+dashboard_summary(date,date)
+```
+
+Summary toàn range gồm:
+
+```text
+Quan order
+Pallet active
+Đã sản xuất
+Đã scan
+Đã nhập kho
+```
+
+Aggregate chạy tại PostgreSQL, không tải cả range về Vercel để cộng.
+
+#### Deleted pallet
+
+Dashboard load cả:
+
+```text
+active rows: effect_to is null
+terminal delete rows: effect_to is not null AND note like delete:%
+```
+
+Deleted pallet:
+
+- giữ context WO/item/order/history;
+- có warning `!`;
+- không cộng vào active pallet count;
+- không cộng Produced/Scanned/Warehouse.
+
+### 12.2 Check FIFO
+
+Route:
+
+```text
+/production-dashboard/check-fifo
+```
+
+Dùng tìm pallet chưa đi tới process tiếp theo.
+
+Filter thời gian:
+
+```text
+Theo ngày
+Khoảng ngày
+Tất cả
+```
+
+Process:
+
+```text
+Sản xuất → status = production
+Scan → status = pendingWH hoặc processingWH
+```
+
+`WHdone` không thuộc FIFO.
+
+An toàn query `Tất cả`:
+
+- tối đa 200 pallet/page;
+- lấy thêm 1 row để biết còn page sau;
+- không load toàn backlog;
+- không `count(*)` toàn backlog chỉ để render UI;
+- sort `working_day` tăng dần, pallet cũ nhất trước.
+
+Số ngày delay:
+
+```text
+ngày hiện tại Việt Nam - working_day
+```
+
+Button `Xem tiến độ` gọi API/RPC aggregate theo WO hoặc Item:
+
+```text
+dashboard_progress
+```
+
+### 12.3 Check item
+
+Route:
+
+```text
+/production-dashboard/check-item
+```
+
+Mục tiêu: tra toàn bộ lịch sử của **một itemcode** mà không phải tải toàn bộ pallet nhiều tháng/năm về Vercel.
+
+UI chỉ có một ô search:
+
+```text
+itemcode
+```
+
+RPC:
+
+```text
+dashboard_check_item(text)
+```
+
+Database:
+
+1. tìm toàn bộ data của item;
+2. giữ active row + terminal delete context;
+3. group trực tiếp theo `WO`;
+4. trả mỗi WO một dòng aggregate.
+
+Summary đặt phía trên:
+
+```text
+Itemcode
+Product name
+Customer
+Quan order
+Pallet active
+Đã sản xuất
+Đã scan
+Đã nhập kho
+```
+
+Bảng phía dưới group theo WO:
+
+```text
+WO
+Quan order
+Số pallet
+Đã sản xuất
+Đã scan
+Đã nhập kho
+Chi tiết
+```
+
+Mỗi WO vẫn có `Xem pallet`. Popup sử dụng cùng component/history flow với Dashboard.
+
+RPC trả thêm:
+
+```text
+first_working_day
+last_working_day
+```
+
+để popup chi tiết chỉ query khoảng thời gian item thực sự tồn tại thay vì dùng date range giả rất lớn.
+
+### 12.4 Popup pallet và history
+
+Mỗi pallet có:
+
+```text
+Pallet ID
+WO
+Itemcode
+Quantity
+Status
+Working day
+Created at
+WH receipt
+History
+```
+
+Flow chính:
+
+```text
+Tạo pallet
+→ Scan pallet
+→ Nhập kho
+```
+
+History riêng:
+
+```text
+EDIT
+RETURN
+DELETE
+```
+
+Actor được resolve sang `full_name`, username/employee code khi có profile.
+
+---
+
+## 13. Trạng thái pallet
 
 | Status | Ý nghĩa |
 |---|---|
-| `production` | Pallet thuộc Production |
-| `pendingWH` | Đã scan, chưa xác nhận danh sách |
-| `processingWH` | Đã xác nhận scan, đang tạo phiếu |
-| `WHdone` | Đã hoàn tất nhập kho |
+| `production` | Production |
+| `pendingWH` | Đã scan, chờ confirm |
+| `processingWH` | Đang xử lý tạo phiếu |
+| `WHdone` | Hoàn tất nhập kho |
 
 Luồng hợp lệ:
 
@@ -579,7 +891,7 @@ pendingWH → processingWH
 processingWH → WHdone
 ```
 
-Không có luồng nghiệp vụ:
+Không cho phép:
 
 ```text
 WHdone → production
@@ -587,11 +899,20 @@ WHdone → production
 
 ---
 
-## 11. Các bảng database chính
+## 14. Database chính
 
 ### `profiles`
 
-Thông tin tài khoản, role, position và trạng thái hoạt động.
+```text
+id
+username
+email
+full_name
+employee_code
+role
+position
+is_active
+```
 
 ### `permissions`
 
@@ -599,25 +920,25 @@ Danh mục permission hợp lệ.
 
 ### `user_permissions`
 
-Permission được cấp cho admin và user.
+Permission cấp riêng cho user.
 
 ### `position_page_access`
 
-Mapping position với route.
+Mapping position ↔ route.
 
 ### `planning_inject`
 
-Kế hoạch sản xuất được import.
+Planning được import.
 
 ### `item_pallet_config`
 
-Số lượng chuẩn trên mỗi pallet theo item.
+Quantity chuẩn/pallet theo item.
 
 ### `pallet_data`
 
-Dữ liệu pallet và version history.
+Dữ liệu pallet + version chain.
 
-Các field quan trọng:
+Field quan trọng:
 
 ```text
 id
@@ -647,13 +968,11 @@ working_day
 
 ### `pallet_change_history`
 
-Hiện dùng cho sự kiện `scan_return`.
+Hiện chủ yếu lưu event `scan_return`.
 
-Lịch sử sửa/xóa pallet được theo dõi bằng version trong `pallet_data` và `old_data_refer`.
+Edit/delete được audit bằng version chain trong `pallet_data`.
 
 ### `wh_receipt`
-
-Thông tin phiếu nhập kho:
 
 ```text
 receipt_id
@@ -661,94 +980,277 @@ receipt_date
 total_pallet
 total_quantity
 uid_user
+user_id
 status
 created_at
 ```
 
 ---
 
-## 12. Supabase SQL
+## 15. Supabase migrations
 
 Thư mục:
 
 ```text
-supabase/
+supabase/migrations/
 ```
 
-Hiện tại database production vẫn sử dụng chuỗi migration lịch sử. Không chạy lại các migration đã áp dụng.
+Rule:
 
-Các migration gần đây:
+- chỉ chạy migration chưa applied;
+- luôn đọc file trước `db push`;
+- không chạy lại destructive migration trên production;
+- backup trước thay đổi lớn;
+- đổi RPC signature thì phải đổi API cùng commit;
+- future object phải explicit GRANT vì Data API baseline là fail-closed.
+
+Các migration mới cần nhớ:
 
 ```text
-008_pallet_data_versioning.sql
-009_edit_flags_and_scan_return_history.sql
-010_remove_legacy_return_triggers.sql
-011_receipt_view_permission.sql
-012_assign_admin_permissions.sql
-013_pallet_working_day.sql
-014_wh_receipt_working_day.sql
+20260810144500_harden_business_rpcs.sql
+20260810155000_dashboard_summary_rpc.sql
+20260810162000_scan_batch_guard.sql
+20260810163500_harden_data_api_surface.sql
+20260810165500_dashboard_check_item_rpc.sql
 ```
 
-Lưu ý:
+Ý nghĩa:
 
-- Chỉ chạy file migration mới chưa áp dụng.
-- Đọc nội dung file trước khi chạy.
-- Không chạy `000_clean_install_full_schema.sql` trên production vì file này có thể drop và tạo lại bảng.
-- Tạo backup trước các migration thay đổi cấu trúc lớn.
-- Kế hoạch gom migration thành bộ consolidated đang tạm hoãn; database hiện tại giữ nguyên.
+- harden permission/ownership business RPC;
+- aggregate summary toàn range Dashboard;
+- scan/confirm max 200 pallet;
+- thu hẹp direct Supabase Data API exposure;
+- Check item aggregate toàn lịch sử theo WO.
 
----
-
-## 13. Navigation và đăng xuất
-
-Header hiển thị icon theo permission:
-
-| Module | Permission |
-|---|---|
-| Planning | `planning.upload` |
-| Pallet | `pallet.create` |
-| Scan QR | `scan.standard` |
-| Phiếu nhập kho | `receipt.view` |
-
-Đăng xuất:
-
-1. POST `/auth/signout`.
-2. Xóa session Supabase local.
-3. Redirect về `/login`.
-4. Response dùng `Cache-Control: no-store` để tránh quay lại trang đã đăng nhập từ cache.
-
----
-
-## 14. Kiểm thử tối thiểu trước deploy
+Kiểm tra migration:
 
 ```bash
-npm run build
+npx supabase migration list
+npx supabase db push --dry-run
+npx supabase db push
+```
+
+> `db push` chỉ áp dụng database migration. Auth config như disable signup/password policy không phải database migration.
+
+---
+
+## 16. PWA và Camera
+
+App hỗ trợ standalone trên mobile/desktop.
+
+```text
+app/manifest.ts
+app/pwa/icon/[size]/route.tsx
+app/layout.tsx
+```
+
+Manifest:
+
+```text
+name = SVN Warehouse
+start_url = /dashboard
+display = standalone
+scope = /
+```
+
+Không có service worker/offline cache/background sync.
+
+Camera Scan QR:
+
+- dùng camera sau `facingMode: environment`;
+- production cần HTTPS;
+- user phải cấp camera permission;
+- cần internet;
+- thư viện scan hiện tải từ CDN `unpkg`, nên mạng nội bộ chặn CDN có thể làm camera không khởi tạo.
+
+---
+
+## 17. Deploy Vercel
+
+Env cần có:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SERVICE_ROLE_KEY
 ```
 
 Checklist:
 
-1. Đăng nhập các role/position.
-2. Superadmin cấp và thu hồi permission admin.
-3. Navigation chỉ hiện module được cấp quyền.
-4. Import planning.
-5. Tạo pallet và PDF.
-6. Kiểm tra `working_day` trước/sau 06:00.
-7. Sửa pallet và kiểm tra version, `edit_count`.
-8. Xóa pallet Production.
-9. Scan QR và hủy scan.
-10. Kiểm tra `pallet_change_history` khi hủy scan.
-11. Xác nhận và tạo phiếu.
-12. Kiểm tra `receipt_date` trước/sau 06:00.
-13. Xem danh sách phiếu.
-14. Xem chi tiết pallet của phiếu.
-15. In lại PDF.
-16. Đăng xuất và kiểm tra session đã xóa.
+1. `git switch dev`
+2. `git pull origin dev`
+3. `npm install` nếu dependency đổi
+4. `npm run build`
+5. test Preview/local
+6. kiểm tra migration remote
+7. smoke test nghiệp vụ
+8. chỉ sau đó merge/deploy production
 
 ---
 
-## 15. Các lỗi thường gặp
+## 18. Smoke test tối thiểu
 
-### Thiếu Supabase service-role key
+### Auth/permission
+
+- login superadmin/admin/user;
+- inactive user bị chặn;
+- public signup bị tắt trên hosted Supabase;
+- password tạo/reset tối thiểu 8 ký tự;
+- user không permission gọi direct protected API phải bị chặn.
+
+### Planning/Production
+
+- import/replace planning;
+- WO `0`/trống không sang pallet;
+- tạo pallet không trùng ID;
+- edit version + reason + working day giữ nguyên;
+- delete terminal version;
+- không edit/delete ngoài `production`;
+- PDF/QR hoạt động.
+
+### Scan/Warehouse
+
+- user chỉ thấy own pending scans;
+- admin thấy pending theo rule hiện hành;
+- indicator xuất hiện từ 150 pallet;
+- pallet thứ 201 bị chặn cả frontend và DB;
+- cancel trả `production` + history;
+- confirm tối đa 200 pallet;
+- receipt thành công → `WHdone`;
+- `WHdone` không reverse.
+
+### Dashboard
+
+- summary toàn range không đổi khi chuyển page;
+- table page đúng 7 ngày;
+- TOTAL chỉ tính page;
+- WO/Item aggregate đúng;
+- deleted pallet giữ warning/context nhưng không cộng KPI;
+- popup flow/history đúng;
+- Check FIFO max 200/page;
+- Check item search item toàn lịch sử, group theo WO và popup pallet hoạt động.
+
+### Security
+
+- `anon` không đọc business public tables;
+- authenticated direct DML public tables bị chặn;
+- `wh_receipt` direct SELECT bị chặn;
+- non-dashboard user không đọc `pallet_change_history`;
+- approved RPC hoạt động;
+- non-whitelisted helper RPC bị từ chối.
+
+---
+
+## 19. Go-live — xóa data test, giữ Super Admin
+
+**Không dùng `supabase db reset` trên hosted production.**  
+**Không tạo migration để xóa test data.**
+
+Mục tiêu trước go-live:
+
+```text
+Giữ schema + migrations + RLS + RPC + permission config
+Giữ duy nhất Super Admin thật
+Xóa business data test
+Xóa Auth user test
+```
+
+### 19.1 Backup trước khi xóa
+
+Tạo backup/database dump trước cutover theo công cụ Supabase CLI phù hợp với project hiện tại và lưu file ngoài môi trường tạm thời.
+
+### 19.2 Kiểm tra số record business
+
+Supabase SQL Editor:
+
+```sql
+select 'planning_inject' as table_name, count(*) from public.planning_inject
+union all
+select 'pallet_data', count(*) from public.pallet_data
+union all
+select 'pallet_change_history', count(*) from public.pallet_change_history
+union all
+select 'wh_receipt', count(*) from public.wh_receipt;
+```
+
+### 19.3 Xóa business test data
+
+Chạy một lần trong SQL Editor:
+
+```sql
+begin;
+
+truncate table
+  public.pallet_change_history,
+  public.pallet_data,
+  public.wh_receipt,
+  public.planning_inject
+restart identity;
+
+commit;
+```
+
+Sau đó chạy lại query count và xác nhận 4 bảng = `0`.
+
+Không truncate:
+
+```text
+profiles
+permissions
+user_permissions
+position_page_access
+item_pallet_config
+```
+
+`item_pallet_config` chỉ xóa nếu xác nhận toàn bộ dữ liệu trong đó cũng là test; nếu là master data thật thì giữ.
+
+### 19.4 Xóa user test
+
+Dùng:
+
+```text
+Supabase Dashboard
+→ Authentication
+→ Users
+```
+
+Xóa từng tài khoản test và **giữ đúng Super Admin thật**.
+
+Không dùng SQL thủ công để delete `auth.users` nếu không cần thiết.
+
+Verify:
+
+```sql
+select id, username, full_name, role, position, is_active
+from public.profiles
+order by created_at;
+```
+
+Kết quả mong muốn trước khi tạo account production:
+
+```text
+profiles = 1 Super Admin active
+business tables = 0
+permissions = giữ nguyên
+position_page_access = giữ nguyên
+item_pallet_config = giữ nếu là master data thật
+```
+
+Sau đó:
+
+```text
+Super Admin login
+→ tạo Admin thật
+→ tạo User thật
+→ import Planning thật
+→ bắt đầu production
+```
+
+---
+
+## 20. Lỗi thường gặp
+
+### Missing service-role key
 
 ```text
 Missing Supabase admin environment variables
@@ -760,54 +1262,57 @@ Kiểm tra:
 SUPABASE_SERVICE_ROLE_KEY
 ```
 
-Sau khi sửa env cần restart server hoặc redeploy Vercel.
-
-### PDF không tìm thấy font
+### PDF font
 
 ```text
 ENOENT ... Roboto-Regular.ttf
+Unknown font format
 ```
 
-Kiểm tra file font trong:
+Kiểm tra font TTF thật trong:
 
 ```text
 assets/fonts/
 ```
 
-và đường dẫn dùng `process.cwd()`.
+và dùng `process.cwd()` khi resolve path.
 
-### Unknown font format
-
-Đảm bảo dùng font TTF hợp lệ và đăng ký `fontkit` trước khi embed custom font.
-
-### Trigger tham chiếu cột return cũ
+### Legacy trigger
 
 ```text
 record "new" has no field "returned_at"
 ```
 
-Chạy migration dọn legacy trigger:
+Kiểm tra migration loại bỏ legacy return trigger.
 
-```text
-010_remove_legacy_return_triggers.sql
-```
-
-### Permission key không tồn tại
+### Permission key FK
 
 ```text
 violates foreign key constraint user_permissions_permission_key_fkey
 ```
 
-Permission phải được tạo trong bảng `permissions` trước khi insert vào `user_permissions`.
+Permission phải tồn tại trong `permissions` trước khi insert `user_permissions`.
+
+### `supabase config push` yêu cầu paid tier
+
+Project hiện tại không dùng CLI config push cho Auth config. Chỉnh hosted Auth setting thủ công trong Supabase Dashboard và giữ `supabase/config.toml` làm baseline local/repo.
 
 ---
 
-## 16. Nguyên tắc phát triển tiếp theo
+## 21. Nguyên tắc thay đổi sau baseline
 
 - Không chỉnh trực tiếp pallet `WHdone`.
-- Không tái sử dụng permission cũ `receipt.create` hoặc `receipt.edit`.
-- Admin permission phải lấy từ `user_permissions`.
-- Mọi logic ngày vận hành dùng giờ Việt Nam và mốc 06:00.
-- Khi thêm field versioned, phải bảo đảm RPC edit sao chép field đó sang version mới.
-- Khi đổi RPC, giữ tên/signature nếu API hiện tại đang phụ thuộc, hoặc cập nhật API trong cùng commit.
-- Luôn cập nhật README khi thay đổi nghiệp vụ hoặc database.
+- Không thêm state transition ngoài workflow đã chốt nếu chưa review nghiệp vụ.
+- Không tái sử dụng `receipt.create`/`receipt.edit`.
+- Mọi ngày vận hành dùng timezone Việt Nam + cutoff 06:00.
+- Field versioned mới phải được copy đúng qua edit/delete version.
+- Không dùng service-role ở client.
+- Không mở lại direct authenticated DML chỉ để tiện frontend.
+- SECURITY DEFINER RPC mới phải tự kiểm tra auth/permission/ownership và explicit GRANT.
+- Check FIFO không query toàn backlog trong một request.
+- Dashboard range aggregate/Check item phải aggregate tại PostgreSQL.
+- Scan batch không vượt 200 pallet.
+- Không thêm offline operation nếu chưa có thiết kế chống duplicate/sync transaction.
+- Không dùng destructive reset migration để chuẩn bị go-live.
+- Luôn sửa trên `dev`, build/test trước khi merge `main`.
+- Luôn cập nhật README khi workflow/database/security thay đổi.

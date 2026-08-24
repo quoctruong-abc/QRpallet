@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
-import { getCurrentProfile } from "@/lib/auth";
+import { authorizePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+
+const DATABASE_ERROR_MESSAGE = "Không thể tải dữ liệu. Vui lòng thử lại.";
 
 type PalletDetailRow = {
   id: number;
@@ -22,6 +24,7 @@ type PalletDetailRow = {
   updated_at: string;
   scanned_at: string | null;
   wh_receipt: string | null;
+  is_deleted: boolean;
 };
 
 type PalletVersionRow = {
@@ -38,6 +41,9 @@ type PalletVersionRow = {
   has_been_edited: boolean | null;
   edit_count: number | null;
   has_been_return: boolean | null;
+  scanned_by: string | null;
+  scanned_at: string | null;
+  wh_receipt: string | null;
 };
 
 type ReturnHistoryRow = {
@@ -58,9 +64,16 @@ type ProfileRow = {
   employee_code: string | null;
 };
 
+type ReceiptRow = {
+  receipt_id: string;
+  user_id: string | null;
+  uid_user: string | null;
+  created_at: string;
+};
+
 type HistoryEvent = {
   id: string;
-  type: "edit" | "return";
+  type: "edit" | "return" | "delete";
   occurredAt: string;
   actor: string;
   title: string;
@@ -72,42 +85,20 @@ function isValidDate(value: string | null) {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
 
-function extractEditReason(note: string | null) {
+function extractPrefixedReason(note: string | null, prefix: "edit" | "delete") {
   if (!note) return null;
+  const marker = `${prefix}:`;
   const matches = note
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.toLowerCase().startsWith("edit:"));
+    .filter((line) => line.toLowerCase().startsWith(marker));
   if (!matches.length) return null;
-  return matches[matches.length - 1].slice(5).trim() || null;
+  return matches[matches.length - 1].slice(marker.length).trim() || null;
 }
 
 function fallbackActor(userId: string | null) {
   if (!userId) return "Không xác định";
   return `User ${userId.slice(0, 8)}`;
-}
-
-async function authorizeAdmin() {
-  const profile = await getCurrentProfile();
-  if (!profile) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { success: false, error: "Phiên đăng nhập đã hết hạn." },
-        { status: 401 },
-      ),
-    };
-  }
-  if (!profile.is_active || !["admin", "superadmin"].includes(profile.role)) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { success: false, error: "Bạn không có quyền xem dashboard." },
-        { status: 403 },
-      ),
-    };
-  }
-  return { ok: true as const };
 }
 
 async function loadPalletDetails(url: URL) {
@@ -130,37 +121,59 @@ async function loadPalletDetails(url: URL) {
   const supabase = await createClient();
   const rows: PalletDetailRow[] = [];
   const pageSize = 1000;
+  const detailFields =
+    "id,pallet_id,itemcode,product_name,customer,wo,quanorder,quantity,status,note,has_been_edited,edit_count,has_been_return,working_day,created_at,updated_at,scanned_at,wh_receipt";
 
-  for (let offset = 0; ; offset += pageSize) {
-    let query = supabase
-      .from("pallet_data")
-      .select(
-        "id,pallet_id,itemcode,product_name,customer,wo,quanorder,quantity,status,note,has_been_edited,edit_count,has_been_return,working_day,created_at,updated_at,scanned_at,wh_receipt",
-      )
-      .is("effect_to", null)
-      .gte("working_day", startDate)
-      .lte("working_day", endDate)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + pageSize - 1);
+  async function appendRows(isDeleted: boolean) {
+    for (let offset = 0; ; offset += pageSize) {
+      let query = supabase
+        .from("pallet_data")
+        .select(detailFields)
+        .gte("working_day", startDate)
+        .lte("working_day", endDate)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + pageSize - 1);
 
-    query = mode === "item" ? query.eq("itemcode", key) : query.eq("wo", key);
-    const { data, error } = await query;
+      query = isDeleted
+        ? query.not("effect_to", "is", null).ilike("note", "delete:%")
+        : query.is("effect_to", null);
+      query = mode === "item" ? query.eq("itemcode", key) : query.eq("wo", key);
 
-    if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      const { data, error } = await query;
+      if (error) {
+        console.error("Dashboard pallet detail database error", {
+          mode,
+          key,
+          startDate,
+          endDate,
+          isDeleted,
+          message: error.message,
+        });
+        return false;
+      }
+
+      const pageRows = (data ?? []) as Omit<PalletDetailRow, "is_deleted">[];
+      rows.push(...pageRows.map((row) => ({ ...row, is_deleted: isDeleted })));
+      if (pageRows.length < pageSize) break;
     }
 
-    const pageRows = (data ?? []) as PalletDetailRow[];
-    rows.push(...pageRows);
-    if (pageRows.length < pageSize) break;
+    return true;
   }
+
+  if (!(await appendRows(false)) || !(await appendRows(true))) {
+    return NextResponse.json({ success: false, error: DATABASE_ERROR_MESSAGE }, { status: 500 });
+  }
+
+  rows.sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
 
   return NextResponse.json({
     success: true,
     pallets: rows.map((row) => ({
       ...row,
       quantity: Number(row.quantity) || 0,
-      status: row.status ?? "",
+      status: row.is_deleted ? "deleted" : row.status ?? "",
       has_been_edited: Boolean(row.has_been_edited),
       edit_count: Number(row.edit_count) || 0,
       has_been_return: Boolean(row.has_been_return),
@@ -174,7 +187,7 @@ async function loadPalletHistory(palletId: string) {
     supabase
       .from("pallet_data")
       .select(
-        "id,pallet_id,quantity,status,note,old_data_refer,created_by,created_at,updated_at,effect_to,has_been_edited,edit_count,has_been_return",
+        "id,pallet_id,quantity,status,note,old_data_refer,created_by,created_at,updated_at,effect_to,has_been_edited,edit_count,has_been_return,scanned_by,scanned_at,wh_receipt",
       )
       .eq("pallet_id", palletId)
       .order("created_at", { ascending: true }),
@@ -185,15 +198,14 @@ async function loadPalletHistory(palletId: string) {
       .order("cancelled_at", { ascending: true }),
   ]);
 
-  if (versionResult.error) {
+  if (versionResult.error || returnResult.error) {
+    console.error("Dashboard pallet history database error", {
+      palletId,
+      versionError: versionResult.error?.message ?? null,
+      returnError: returnResult.error?.message ?? null,
+    });
     return NextResponse.json(
-      { success: false, error: versionResult.error.message },
-      { status: 500 },
-    );
-  }
-  if (returnResult.error) {
-    return NextResponse.json(
-      { success: false, error: returnResult.error.message },
+      { success: false, error: DATABASE_ERROR_MESSAGE },
       { status: 500 },
     );
   }
@@ -204,9 +216,36 @@ async function loadPalletHistory(palletId: string) {
     return NextResponse.json({ success: false, error: "Không tìm thấy pallet." }, { status: 404 });
   }
 
+  const original = versions[0];
+  const current = versions[versions.length - 1];
+  const adminSupabase = createAdminClient();
+
+  let receipt: ReceiptRow | null = null;
+  if (current.wh_receipt) {
+    const { data: receiptData, error: receiptError } = await adminSupabase
+      .from("wh_receipt")
+      .select("receipt_id,user_id,uid_user,created_at")
+      .eq("receipt_id", current.wh_receipt)
+      .maybeSingle();
+
+    if (receiptError) {
+      console.error("Dashboard receipt lookup failed", {
+        palletId,
+        receiptId: current.wh_receipt,
+        message: receiptError.message,
+      });
+    } else {
+      receipt = receiptData as ReceiptRow | null;
+    }
+  }
+
+  const receiptActorId = receipt?.user_id ?? receipt?.uid_user ?? null;
   const actorIds = Array.from(
     new Set(
       [
+        original.created_by,
+        current.scanned_by,
+        receiptActorId,
         ...versions.map((row) => row.created_by),
         ...returns.map((row) => row.scanned_by),
         ...returns.map((row) => row.cancelled_by),
@@ -216,7 +255,6 @@ async function loadPalletHistory(palletId: string) {
 
   const profileMap = new Map<string, ProfileRow>();
   if (actorIds.length) {
-    const adminSupabase = createAdminClient();
     const { data: profiles, error: profileError } = await adminSupabase
       .from("profiles")
       .select("id,username,full_name,employee_code")
@@ -230,7 +268,7 @@ async function loadPalletHistory(palletId: string) {
   }
 
   const actorName = (userId: string | null) => {
-    if (!userId) return fallbackActor(userId);
+    if (!userId) return "Chưa có";
     const profile = profileMap.get(userId);
     if (!profile) return fallbackActor(userId);
 
@@ -245,7 +283,22 @@ async function loadPalletHistory(palletId: string) {
   for (const version of versions) {
     if (!version.old_data_refer) continue;
     const previous = byId.get(version.old_data_refer);
-    const reason = extractEditReason(version.note);
+    const deleteReason = extractPrefixedReason(version.note, "delete");
+
+    if (deleteReason) {
+      events.push({
+        id: `delete-${version.id}`,
+        type: "delete",
+        occurredAt: version.effect_to || version.created_at,
+        actor: actorName(version.created_by),
+        title: "Xóa pallet",
+        description: `Pallet đã bị xóa khỏi dữ liệu active. Số lượng tại thời điểm xóa: ${previous?.quantity ?? version.quantity ?? "—"}.`,
+        reason: deleteReason,
+      });
+      continue;
+    }
+
+    const reason = extractPrefixedReason(version.note, "edit");
     if (!reason && !version.has_been_edited) continue;
 
     events.push({
@@ -260,7 +313,6 @@ async function loadPalletHistory(palletId: string) {
   }
 
   if (!events.some((event) => event.type === "edit")) {
-    const current = versions[versions.length - 1];
     const fallbackReasons = (current.note ?? "")
       .split("\n")
       .map((line) => line.trim())
@@ -297,12 +349,40 @@ async function loadPalletHistory(palletId: string) {
     (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
   );
 
-  return NextResponse.json({ success: true, palletId, events });
+  return NextResponse.json({
+    success: true,
+    palletId,
+    flow: {
+      created: {
+        actor: actorName(original.created_by),
+        at: original.created_at,
+      },
+      scanned: current.scanned_at
+        ? {
+            actor: actorName(current.scanned_by),
+            at: current.scanned_at,
+          }
+        : null,
+      warehouse: current.wh_receipt
+        ? {
+            actor: receipt ? actorName(receiptActorId) : "Không xác định",
+            at: receipt?.created_at ?? null,
+            receiptId: current.wh_receipt,
+          }
+        : null,
+    },
+    events,
+  });
 }
 
 export async function GET(request: Request) {
-  const authorization = await authorizeAdmin();
-  if (!authorization.ok) return authorization.response;
+  const authorization = await authorizePermission("dashboard.view");
+  if (!authorization.ok) {
+    return NextResponse.json(
+      { success: false, error: authorization.error },
+      { status: authorization.status },
+    );
+  }
 
   try {
     const url = new URL(request.url);
@@ -312,10 +392,7 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error("Production dashboard details failed", error);
     return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Không thể tải chi tiết dashboard.",
-      },
+      { success: false, error: DATABASE_ERROR_MESSAGE },
       { status: 500 },
     );
   }

@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: palletData, error: palletError } = await supabase
     .from("pallet_data")
-    .select("pallet_id,itemcode,customer,product_name,quantity")
+    .select("pallet_id,itemcode,customer,product_name,quantity,wo,working_day")
     .in("pallet_id", palletIds)
     .is("effect_to", null)
     .eq("status", "processingWH");

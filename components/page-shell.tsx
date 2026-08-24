@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { hasPermission } from "@/lib/auth";
+import { POSITION_ROUTES } from "@/lib/routes";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { PermissionKey, Profile } from "@/lib/types";
 import { ChangePasswordDialog } from "@/components/change-password-dialog";
 import { LogoutButton } from "@/components/logout-button";
@@ -10,22 +12,47 @@ const modules: Array<{
   label: string;
   icon: string;
   permissions: PermissionKey[];
-  adminOnly?: boolean;
 }> = [
   {
     path: "/production-dashboard",
     label: "Dashboard sản xuất",
     icon: "📊",
-    permissions: [],
-    adminOnly: true,
+    permissions: ["dashboard.view"],
   },
-  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload"] },
-  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create"] },
+  { path: "/planning-inject", label: "Update kế hoạch", icon: "📋", permissions: ["planning.upload", "planning.change"] },
+  { path: "/pallet-label", label: "In tem pallet", icon: "🏭", permissions: ["pallet.create", "pallet.edit"] },
   { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permissions: ["scan.standard"] },
-  { path: "/warehouse-receipt", label: "Xem phiếu nhập kho", icon: "📦", permissions: ["receipt.view"] },
+  {
+    path: "/warehouse-receipt",
+    label: "Xem phiếu nhập kho",
+    icon: "📦",
+    permissions: ["receipt.view"],
+  },
 ];
 
-export function PageShell({
+async function loadMappedPaths(profile: Profile) {
+  if (profile.role === "superadmin") {
+    return new Set(modules.map((module) => module.path));
+  }
+  if (!profile.position) return new Set<string>();
+
+  const fallback = new Set(POSITION_ROUTES[profile.position]);
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
+    .from("position_page_access")
+    .select("path,is_enabled")
+    .eq("position", profile.position);
+
+  if (error || !data) return fallback;
+
+  const mapped = new Set<string>();
+  for (const row of data) {
+    if (row.is_enabled) mapped.add(String(row.path));
+  }
+  return mapped;
+}
+
+export async function PageShell({
   profile,
   title,
   children,
@@ -34,57 +61,53 @@ export function PageShell({
   title: string;
   children: ReactNode;
 }) {
+  const mappedPaths = await loadMappedPaths(profile);
   const visibleModules = modules.filter((module) => {
-    if (module.adminOnly) return profile.role === "admin" || profile.role === "superadmin";
-    return module.permissions.some((permission) => hasPermission(profile, permission));
+    if (module.path === "/production-dashboard") {
+      return hasPermission(profile, "dashboard.view");
+    }
+
+    const mapped = profile.role === "superadmin" || mappedPaths.has(module.path);
+    const permitted = module.permissions.some((permission) => hasPermission(profile, permission));
+    return mapped && permitted;
   });
+  const userInitial = profile.full_name.trim().charAt(0).toUpperCase() || "U";
+  const homePath = profile.role === "superadmin" || profile.role === "admin"
+    ? "/admin"
+    : "/dashboard";
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <Link className="brand" href={profile.role === "admin" ? "/admin" : "/dashboard"}>
+        <div className="topbar-brand-area">
+          <Link className="brand" href={homePath}>
             SVN Warehouse
           </Link>
-          <p className="muted topbar-subtitle">{title}</p>
+          <p className="muted topbar-subtitle" title={title}>{title}</p>
         </div>
 
-        <div className="topbar-user">
-          {visibleModules.length ? (
-            <nav
-              aria-label="Điều hướng module"
-              style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}
-            >
-              {visibleModules.map((module) => (
-                <Link
-                  aria-label={module.label}
-                  href={module.path}
-                  key={module.path}
-                  title={module.label}
-                  style={{
-                    alignItems: "center",
-                    background: "rgba(255,255,255,0.72)",
-                    border: "1px solid rgba(148,163,184,0.45)",
-                    borderRadius: "0.7rem",
-                    display: "inline-flex",
-                    fontSize: "1.25rem",
-                    height: "2.5rem",
-                    justifyContent: "center",
-                    lineHeight: 1,
-                    textDecoration: "none",
-                    width: "2.5rem",
-                  }}
-                >
-                  <span aria-hidden="true">{module.icon}</span>
-                </Link>
-              ))}
-            </nav>
-          ) : null}
+        {visibleModules.length ? (
+          <nav aria-label="Điều hướng module" className="topbar-nav">
+            {visibleModules.map((module) => (
+              <Link
+                aria-label={module.label}
+                className="topbar-module-link"
+                href={module.path}
+                key={module.path}
+                title={module.label}
+              >
+                <span aria-hidden="true" className="topbar-module-icon">{module.icon}</span>
+              </Link>
+            ))}
+          </nav>
+        ) : null}
 
-          <div>
-            <strong>{profile.full_name}</strong>
+        <div className="topbar-account">
+          <div className="topbar-identity" title={profile.full_name}>
+            <span aria-hidden="true" className="topbar-avatar">{userInitial}</span>
+            <strong className="topbar-user-name">{profile.full_name}</strong>
           </div>
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <div className="topbar-actions">
             <ChangePasswordDialog />
             <LogoutButton />
           </div>

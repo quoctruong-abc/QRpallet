@@ -1,5 +1,5 @@
 import { authorizePermission } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(request: Request) {
   const authorization = await authorizePermission("receipt.view");
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("pallet_data")
     .select("pallet_id,wo,itemcode,product_name,customer,quantity")

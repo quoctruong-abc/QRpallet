@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export type PlanItem = {
@@ -31,7 +31,7 @@ export type ActivePallet = {
 
 type Props = { rows: PlanItem[]; pallets: ActivePallet[] };
 type Mode = "full" | "partial";
-type Dialog = "create" | "history" | "edit" | "delete" | "merge" | null;
+type Dialog = "create" | "created" | "history" | "edit" | "delete" | "merge" | null;
 
 function formatNumber(value: number | null) {
   return value === null ? "—" : Number(value).toLocaleString("vi-VN");
@@ -69,14 +69,40 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [searchItem, setSearchItem] = useState("");
   const [historyDays, setHistoryDays] = useState(1);
   const [pending, setPending] = useState(false);
+  const [reprintingPalletId, setReprintingPalletId] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [updatingItemcode, setUpdatingItemcode] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const visibleRows = selectedMachine ? validRows.filter((row) => row.machine === selectedMachine) : [];
 
+  useEffect(() => {
+    if (dialog !== "created") return;
+
+    let closeTimer: number | null = null;
+    const startCloseTimer = () => {
+      if (closeTimer !== null || document.visibilityState !== "visible" || !document.hasFocus()) return;
+      closeTimer = window.setTimeout(() => {
+        setDialog(null);
+        setSelectedPallet(null);
+        setMessage(null);
+        setQuantity("");
+        setReason("");
+      }, 3000);
+    };
+
+    startCloseTimer();
+    document.addEventListener("visibilitychange", startCloseTimer);
+    window.addEventListener("focus", startCloseTimer);
+    return () => {
+      document.removeEventListener("visibilitychange", startCloseTimer);
+      window.removeEventListener("focus", startCloseTimer);
+      if (closeTimer !== null) window.clearTimeout(closeTimer);
+    };
+  }, [dialog]);
+
   function closeDialog() {
-    if (pending) return;
+    if (pending || reprintingPalletId !== null) return;
     setDialog(null);
     setSelectedPallet(null);
     setMessage(null);
@@ -195,7 +221,9 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       const pdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(result.pallet.pallet_id)}`;
       if (pdfWindow) pdfWindow.location.href = pdfUrl;
       else window.location.href = pdfUrl;
-      setMessage({ type: "success", text: `Đã tạo ${result.pallet.pallet_id} và mở PDF.` });
+      setMessage({ type: "success", text: `Đã tạo pallet ${result.pallet.pallet_id} và gửi lệnh in.` });
+      setDialog("created");
+      setQuantity("");
       router.refresh();
     } catch (error) {
       pdfWindow?.close();
@@ -279,14 +307,47 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     }
   }
 
-  function printPallet(palletId: string) {
-    window.open(`/api/pallet-label/pdf?palletId=${encodeURIComponent(palletId)}`, "_blank", "noopener,noreferrer");
+  async function printPallet(palletId: string) {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setMessage({ type: "error", text: "Trình duyệt đang chặn cửa sổ in. Hãy cho phép pop-up rồi thử lại." });
+      return;
+    }
+
+    setReprintingPalletId(palletId);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/pallet-label/reprint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pallet_id: palletId }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error ?? "Không thể ghi nhận lần in lại.");
+      }
+
+      printWindow.location.href = `/api/pallet-label/pdf?palletId=${encodeURIComponent(palletId)}`;
+      const reprintCount = Number(result.pallet?.reprint_count ?? 0);
+      await loadPallets();
+      setMessage({
+        type: "success",
+        text: `Đã gửi lệnh in lại ${palletId}. Số lần in lại: ${reprintCount}.`,
+      });
+    } catch (error) {
+      printWindow.close();
+      setMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Không thể in lại pallet.",
+      });
+    } finally {
+      setReprintingPalletId(null);
+    }
   }
 
   return <>
     <div className="feature-toolbar pallet-main-toolbar">
       <button className="button button-secondary" onClick={() => openHistory()}>Lịch sử in tem</button>
-      <button className="button button-primary" onClick={() => { setWo1(""); setWo2(""); setQuantity(""); setDialog("merge"); }}>Gộp WO</button>
     </div>
 
     <div className="machine-grid">
@@ -316,7 +377,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     </div>
 
     {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className="modal-card modal-card-wide" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2></div><button className="modal-close" onClick={closeDialog}>×</button></div>
+      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2></div><button className="modal-close" onClick={closeDialog}>×</button></div>
 
       {dialog === "create" && selectedRow ? <>
         <div className="pallet-choice-grid">
@@ -325,6 +386,11 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         </div>
         <label>Số lượng<input type="number" min="1" disabled={mode === "full"} value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending} onClick={savePallet}>{pending ? "Đang lưu..." : "Xác nhận & lưu"}</button></div>
+      </> : null}
+
+      {dialog === "created" ? <>
+        {message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
+        <div className="modal-actions"><button className="button button-primary" onClick={closeDialog}>Đóng</button></div>
       </> : null}
 
       {dialog === "history" ? <>
@@ -343,7 +409,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
           {historyPallets.length ? historyPallets.map((pallet) => <tr key={`${pallet.pallet_id}-${pallet.created_at}`}><td><strong>{pallet.pallet_id}</strong></td><td>{pallet.wo}</td><td>{pallet.itemcode}</td><td>{formatNumber(pallet.quantity)}</td><td>{pallet.status}</td><td>{new Date(pallet.created_at).toLocaleString("vi-VN")}</td><td><div className="action-row">
             <button className="button button-secondary button-small" disabled={pallet.status !== "production"} title={pallet.status !== "production" ? "Chỉ sửa được pallet trạng thái production" : undefined} onClick={() => openEdit(pallet)}>Sửa</button>
             <button className="button button-secondary button-small" disabled={pending || pallet.status !== "production"} title={pallet.status !== "production" ? "Chỉ xóa được pallet trạng thái production" : undefined} onClick={() => openDelete(pallet)}>Xóa</button>
-            <button className="button button-primary button-small" onClick={() => printPallet(pallet.pallet_id)}>In lại</button>
+            <button className="button button-primary button-small" disabled={pending || reprintingPalletId !== null} onClick={() => void printPallet(pallet.pallet_id)}>{reprintingPalletId === pallet.pallet_id ? "Đang gửi..." : "In lại"}</button>
           </div></td></tr>) : <tr><td colSpan={7}>Không tìm thấy pallet phù hợp.</td></tr>}
         </tbody></table></div>
       </> : null}
@@ -369,7 +435,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending} onClick={mergePallet}>Xác nhận gộp</button></div>
       </> : null}
 
-      {message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
+      {dialog !== "created" && message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
     </div></div> : null}
   </>;
 }

@@ -14,6 +14,7 @@
     "@supabase/supabase-js": "latest",
     "next": "latest",
     "pdf-lib": "^1.17.1",
+    "qr-scanner": "^1.4.2",
     "qrcode": "^1.5.4",
     "react": "latest",
     "react-dom": "latest",
@@ -26,6 +27,7 @@
     "@types/react-dom": "latest",
     "eslint": "latest",
     "eslint-config-next": "latest",
+    "supabase": "^2.111.0",
     "typescript": "latest"
   }
 }

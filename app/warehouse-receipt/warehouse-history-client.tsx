@@ -10,6 +10,7 @@ type ReceiptRow = {
   status: "active" | "cancelled";
   created_at: string;
   cancelled_at: string | null;
+  creator_name: string;
 };
 
 type ReceiptPalletRow = {
@@ -21,31 +22,31 @@ type ReceiptPalletRow = {
   quantity: number | string | null;
 };
 
-function downloadPdf(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${filename}.pdf`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 export function WarehouseHistoryClient() {
-  const [receiptDate, setReceiptDate] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [receipts, setReceipts] = useState<ReceiptRow[]>([]);
-  const [working, setWorking] = useState<"history" | "reprint" | "detail" | null>(null);
+  const [working, setWorking] = useState<"history" | "reprint" | "detail" | "excel" | null>(null);
   const [activeReceiptId, setActiveReceiptId] = useState<string | null>(null);
   const [detailReceiptId, setDetailReceiptId] = useState<string | null>(null);
   const [detailRows, setDetailRows] = useState<ReceiptPalletRow[]>([]);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  async function loadReceipts(date = receiptDate) {
+  async function loadReceipts(from = "", to = "") {
+    if ((from && !to) || (!from && to)) {
+      setNotice({ type: "error", text: "Vui lòng chọn đầy đủ Từ ngày và Đến ngày." });
+      return;
+    }
+
     setWorking("history");
     setNotice(null);
     try {
-      const query = date ? `?date=${encodeURIComponent(date)}` : "";
+      const params = new URLSearchParams();
+      if (from && to) {
+        params.set("from", from);
+        params.set("to", to);
+      }
+      const query = params.toString() ? `?${params.toString()}` : "";
       const response = await fetch(`/api/warehouse-receipt/list${query}`, { cache: "no-store" });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || "Không thể tải lịch sử phiếu.");
@@ -80,50 +81,90 @@ export function WarehouseHistoryClient() {
     }
   }
 
-  async function reprintReceipt(receiptId: string) {
+  function reprintReceipt(receiptId: string) {
     setWorking("reprint");
     setActiveReceiptId(receiptId);
     setNotice(null);
+
+    const printWindow = window.open(
+      `/api/warehouse-receipt/reprint?receiptId=${encodeURIComponent(receiptId)}`,
+      "_blank",
+    );
+
+    if (!printWindow) {
+      setNotice({ type: "error", text: "Trình duyệt đã chặn cửa sổ in. Vui lòng cho phép pop-up rồi thử lại." });
+    } else {
+      printWindow.opener = null;
+      setNotice({ type: "success", text: `Đã mở phiếu ${receiptId} và chuẩn bị hộp thoại in.` });
+    }
+
+    setWorking(null);
+    setActiveReceiptId(null);
+  }
+
+  async function downloadExcel(receiptId: string) {
+    setWorking("excel");
+    setActiveReceiptId(receiptId);
+    setNotice(null);
+
     try {
-      const response = await fetch("/api/warehouse-receipt/reprint", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ receiptId }),
-      });
+      const response = await fetch(
+        `/api/warehouse-receipt/excel?receiptId=${encodeURIComponent(receiptId)}`,
+        { cache: "no-store" },
+      );
+
       if (!response.ok) {
         const result = await response.json().catch(() => null);
-        throw new Error(result?.error || "Không thể in lại phiếu.");
+        throw new Error(result?.error || "Không thể xuất Excel.");
       }
-      downloadPdf(await response.blob(), receiptId);
-      setNotice({ type: "success", text: `Đã tải lại phiếu ${receiptId}.` });
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${receiptId}.xlsx`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice({ type: "success", text: `Đã tải file Excel phiếu ${receiptId}.` });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể in lại phiếu." });
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Không thể xuất Excel." });
     } finally {
       setWorking(null);
       setActiveReceiptId(null);
     }
   }
 
-  useEffect(() => { void loadReceipts(""); }, []);
+  useEffect(() => { void loadReceipts(); }, []);
+
+  const rangeReady = Boolean(fromDate && toDate);
 
   return (
     <section className="warehouse-page">
       <div className="hero-row">
-        <div><h1>Lịch sử phiếu nhập kho</h1><p className="muted">Module này chỉ dùng để xem lịch sử, xem pallet chi tiết và in lại phiếu. Việc tạo phiếu được thực hiện tại module Scan nhập kho.</p></div>
+        <div><h1>Lịch sử phiếu nhập kho</h1><p className="muted">Mặc định hiển thị 10 phiếu nhập kho gần nhất. Có thể lọc theo khoảng ngày để xem lịch sử cũ hơn.</p></div>
         <div className="stat-card"><span className="stat-number">{receipts.length}</span><span className="muted">Phiếu đang hiển thị</span></div>
       </div>
 
       <div className="warehouse-filter-card">
-        <label><span>Ngày phiếu</span><input type="date" value={receiptDate} onChange={(event) => setReceiptDate(event.target.value)} /></label>
-        <button className="button button-primary" type="button" disabled={working === "history"} onClick={() => loadReceipts()}>{working === "history" ? "Đang tải..." : "Tìm theo ngày"}</button>
-        <button className="button button-secondary" type="button" disabled={working === "history"} onClick={() => { setReceiptDate(""); void loadReceipts(""); }}>7 ngày gần nhất</button>
+        <label><span>Từ ngày</span><input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
+        <label><span>Đến ngày</span><input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
+        <button
+          className="button button-primary"
+          type="button"
+          disabled={working === "history" || !rangeReady}
+          onClick={() => loadReceipts(fromDate, toDate)}
+        >
+          {working === "history" ? "Đang tải..." : "Tìm khoảng ngày"}
+        </button>
       </div>
 
       {notice ? <div className={`alert ${notice.type === "error" ? "alert-error" : "alert-success"}`}>{notice.text}</div> : null}
 
       <div className="scan-table-card">
-        {!receipts.length ? <div className="scan-empty">Không có phiếu nhập kho phù hợp.</div> : <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Số phiếu</th><th>Ngày</th><th>Tổng pallet</th><th>Tổng số lượng</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>
-          {receipts.map((receipt) => <tr key={receipt.receipt_id}><td><strong>{receipt.receipt_id}</strong></td><td>{receipt.receipt_date}</td><td>{Number(receipt.total_pallet).toLocaleString("vi-VN")}</td><td>{Number(receipt.total_quantity).toLocaleString("vi-VN")}</td><td>{receipt.status === "cancelled" ? "Đã hủy" : "Hoạt động"}</td><td><div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}><button className="button button-primary" type="button" disabled={working === "detail"} onClick={() => loadReceiptDetail(receipt.receipt_id)}>{working === "detail" && activeReceiptId === receipt.receipt_id ? "Đang tải..." : "Xem chi tiết"}</button><button className="button button-secondary" type="button" disabled={working === "reprint"} onClick={() => reprintReceipt(receipt.receipt_id)}>{working === "reprint" && activeReceiptId === receipt.receipt_id ? "Đang in..." : "In lại"}</button></div></td></tr>)}
+        {!receipts.length ? <div className="scan-empty">Không có phiếu nhập kho phù hợp.</div> : <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Số phiếu</th><th>Ngày</th><th>Người tạo phiếu</th><th>Tổng pallet</th><th>Tổng số lượng</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>
+          {receipts.map((receipt) => <tr key={receipt.receipt_id}><td><strong>{receipt.receipt_id}</strong></td><td>{receipt.receipt_date}</td><td>{receipt.creator_name || "—"}</td><td>{Number(receipt.total_pallet).toLocaleString("vi-VN")}</td><td>{Number(receipt.total_quantity).toLocaleString("vi-VN")}</td><td>{receipt.status === "cancelled" ? "Đã hủy" : "Hoạt động"}</td><td><div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}><button className="button button-primary" type="button" disabled={working === "detail"} onClick={() => loadReceiptDetail(receipt.receipt_id)}>{working === "detail" && activeReceiptId === receipt.receipt_id ? "Đang tải..." : "Xem chi tiết"}</button><button className="button button-secondary" type="button" disabled={working === "reprint"} onClick={() => reprintReceipt(receipt.receipt_id)}>{working === "reprint" && activeReceiptId === receipt.receipt_id ? "Đang in..." : "In lại"}</button><button className="button button-secondary" type="button" disabled={working === "excel" || receipt.status === "cancelled"} onClick={() => downloadExcel(receipt.receipt_id)}>{working === "excel" && activeReceiptId === receipt.receipt_id ? "Đang tải..." : "Excel"}</button></div></td></tr>)}
         </tbody></table></div>}
       </div>
 

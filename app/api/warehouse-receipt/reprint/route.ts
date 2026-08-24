@@ -1,21 +1,10 @@
 import { authorizePermission } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createPdfPrintPage } from "@/lib/pdf-print-page";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createReceiptPdf, safeReceiptFilename, type ReceiptPalletRow } from "@/lib/warehouse-receipt/pdf";
 
-export async function POST(request: Request) {
-  const authorization = await authorizePermission("receipt.view");
-  if (!authorization.ok) {
-    return Response.json(
-      { success: false, error: authorization.error },
-      { status: authorization.status },
-    );
-  }
-
-  const body = await request.json().catch(() => null) as { receiptId?: string } | null;
-  const receiptId = body?.receiptId?.trim();
-  if (!receiptId) return Response.json({ success: false, error: "Thiếu mã phiếu." }, { status: 400 });
-
-  const supabase = await createClient();
+async function createReceiptPdfResponse(receiptId: string) {
+  const supabase = createAdminClient();
   const { data: receipt, error: receiptError } = await supabase
     .from("wh_receipt")
     .select("receipt_id,receipt_date,total_pallet,total_quantity,status")
@@ -31,7 +20,7 @@ export async function POST(request: Request) {
 
   const { data: pallets, error: palletError } = await supabase
     .from("pallet_data")
-    .select("itemcode,customer,product_name,quantity")
+    .select("itemcode,customer,product_name,quantity,wo,working_day")
     .eq("wh_receipt", receiptId)
     .is("effect_to", null);
 
@@ -49,8 +38,50 @@ export async function POST(request: Request) {
   return new Response(Buffer.from(pdfBytes), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${safeReceiptFilename(receipt.receipt_id)}.pdf"`,
+      "Content-Disposition": `inline; filename="${safeReceiptFilename(receipt.receipt_id)}.pdf"`,
+      "Cache-Control": "no-store, no-cache, must-revalidate",
       "X-Receipt-Id": receipt.receipt_id,
     },
   });
+}
+
+export async function GET(request: Request) {
+  const authorization = await authorizePermission("receipt.view");
+  if (!authorization.ok) {
+    return Response.json(
+      { success: false, error: authorization.error },
+      { status: authorization.status },
+    );
+  }
+
+  const url = new URL(request.url);
+  const receiptId = url.searchParams.get("receiptId")?.trim();
+  if (!receiptId) {
+    return Response.json({ success: false, error: "Thiếu mã phiếu." }, { status: 400 });
+  }
+
+  if (url.searchParams.get("raw") === "1") {
+    return createReceiptPdfResponse(receiptId);
+  }
+
+  const rawPdfUrl = `/api/warehouse-receipt/reprint?receiptId=${encodeURIComponent(receiptId)}&raw=1`;
+  return createPdfPrintPage(rawPdfUrl, `In phiếu nhập kho ${receiptId}`);
+}
+
+export async function POST(request: Request) {
+  const authorization = await authorizePermission("receipt.view");
+  if (!authorization.ok) {
+    return Response.json(
+      { success: false, error: authorization.error },
+      { status: authorization.status },
+    );
+  }
+
+  const body = await request.json().catch(() => null) as { receiptId?: string } | null;
+  const receiptId = body?.receiptId?.trim();
+  if (!receiptId) {
+    return Response.json({ success: false, error: "Thiếu mã phiếu." }, { status: 400 });
+  }
+
+  return createReceiptPdfResponse(receiptId);
 }

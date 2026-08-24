@@ -11,7 +11,10 @@ export type AdminActionState = { error: string; success: string };
 
 const validRoles: AppRole[] = ["superadmin", "admin", "user"];
 const validPositions: Position[] = ["planning", "production", "warehouse"];
-const validPermissions = new Set<PermissionKey>(Object.values(POSITION_PERMISSIONS).flat());
+const validPermissions = new Set<PermissionKey>([
+  ...Object.values(POSITION_PERMISSIONS).flat(),
+  "dashboard.view",
+]);
 
 function canManageTarget(
   actor: Awaited<ReturnType<typeof requireAdmin>>,
@@ -62,11 +65,15 @@ export async function createEmployee(
   }
 
   const adminClient = createAdminClient();
-  const { data: existingProfile } = await adminClient
+  const { data: existingProfile, error: existingError } = await adminClient
     .from("profiles")
     .select("id")
     .eq("username", username)
     .maybeSingle();
+
+  if (existingError) {
+    return { error: `Không thể kiểm tra tên đăng nhập: ${existingError.message}`, success: "" };
+  }
   if (existingProfile) {
     return { error: "Tên đăng nhập đã tồn tại.", success: "" };
   }
@@ -96,9 +103,21 @@ export async function createEmployee(
     return { error: `Không thể lưu profile: ${profileError.message}`, success: "" };
   }
 
-  await adminClient.from("user_permissions").delete().eq("user_id", created.user.id);
+  const { error: permissionCleanupError } = await adminClient
+    .from("user_permissions")
+    .delete()
+    .eq("user_id", created.user.id);
+
+  if (permissionCleanupError) {
+    return {
+      error: `Đã tạo tài khoản nhưng không thể khởi tạo quyền: ${permissionCleanupError.message}`,
+      success: "",
+    };
+  }
+
   revalidatePath("/admin");
-  return { error: "", success: `Đã tạo tài khoản ${username}.` };
+  revalidatePath("/superadmin");
+  return { error: "", success: `Đã tạo tài khoản ${username} thành công.` };
 }
 
 export async function toggleEmployeeStatus(formData: FormData) {
@@ -154,38 +173,103 @@ export async function resetEmployeePassword(formData: FormData) {
   revalidatePath("/admin");
 }
 
-export async function updateUserPermissions(formData: FormData) {
+export async function updateUserPermissions(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
   const actor = await requireAdmin();
-  const userId = String(formData.get("user_id") ?? "");
-  const requested = formData.getAll("permissions").map(String) as PermissionKey[];
-  if (!userId) return;
+  const userId = String(formData.get("user_id") ?? "").trim();
+  const requested = Array.from(new Set(
+    formData.getAll("permissions").map(String),
+  )) as PermissionKey[];
+
+  if (!userId) {
+    return { error: "Không xác định được tài khoản cần lưu quyền.", success: "" };
+  }
 
   const adminClient = createAdminClient();
-  const { data: target } = await adminClient
+  const { data: target, error: targetError } = await adminClient
     .from("profiles")
-    .select("id,role,position")
+    .select("id,username,full_name,role,position")
     .eq("id", userId)
     .maybeSingle();
+
+  if (targetError) {
+    return { error: `Không thể đọc tài khoản: ${targetError.message}`, success: "" };
+  }
   if (!target || !canManageTarget(actor, target as { id: string; role: AppRole; position: Position | null })) {
-    throw new Error("Bạn không có quyền chỉnh permissions của tài khoản này.");
+    return { error: "Bạn không có quyền chỉnh permissions của tài khoản này.", success: "" };
   }
 
   const targetPosition = target.position as Position | null;
-  const allowed = actor.role === "superadmin"
-    ? requested.filter((permission) => validPermissions.has(permission))
-    : requested.filter((permission) =>
-        Boolean(targetPosition && POSITION_PERMISSIONS[targetPosition].includes(permission)),
-      );
+  const manageablePermissions = actor.role === "superadmin"
+    ? validPermissions
+    : new Set<PermissionKey>(targetPosition ? POSITION_PERMISSIONS[targetPosition] : []);
 
-  await adminClient.from("user_permissions").delete().eq("user_id", userId);
-  if (allowed.length > 0) {
-    await adminClient.from("user_permissions").insert(
-      allowed.map((permission_key) => ({
+  const allowed = requested.filter((permission) => manageablePermissions.has(permission));
+
+  const { data: existingRows, error: existingError } = await adminClient
+    .from("user_permissions")
+    .select("permission_key")
+    .eq("user_id", userId);
+
+  if (existingError) {
+    return { error: `Không thể đọc quyền hiện tại: ${existingError.message}`, success: "" };
+  }
+
+  const existing = new Set(
+    (existingRows ?? []).map((row) => String(row.permission_key) as PermissionKey),
+  );
+  const allowedSet = new Set(allowed);
+  const toAdd = allowed.filter((permission) => !existing.has(permission));
+  const toDelete = Array.from(existing).filter(
+    (permission) => manageablePermissions.has(permission) && !allowedSet.has(permission),
+  );
+
+  if (toAdd.length > 0) {
+    const { error: insertError } = await adminClient.from("user_permissions").insert(
+      toAdd.map((permission_key) => ({
         user_id: userId,
         permission_key,
         granted_by: actor.id,
       })),
     );
+
+    if (insertError) {
+      return {
+        error: `Không thể thêm quyền cho ${target.full_name || target.username}: ${insertError.message}`,
+        success: "",
+      };
+    }
   }
+
+  if (toDelete.length > 0) {
+    const { error: deleteError } = await adminClient
+      .from("user_permissions")
+      .delete()
+      .eq("user_id", userId)
+      .in("permission_key", toDelete);
+
+    if (deleteError) {
+      if (toAdd.length > 0) {
+        await adminClient
+          .from("user_permissions")
+          .delete()
+          .eq("user_id", userId)
+          .in("permission_key", toAdd);
+      }
+      return {
+        error: `Không thể gỡ quyền của ${target.full_name || target.username}: ${deleteError.message}`,
+        success: "",
+      };
+    }
+  }
+
   revalidatePath("/admin");
+  revalidatePath("/superadmin");
+
+  return {
+    error: "",
+    success: `Đã lưu ${allowed.length} quyền cho ${target.full_name || target.username}.`,
+  };
 }

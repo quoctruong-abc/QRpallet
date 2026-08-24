@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
+import { POSITION_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { POSITION_ROUTES } from "@/lib/routes";
 import type { AppRole, PermissionKey, Position, Profile } from "@/lib/types";
 
 type LegacyPosition = Position | "pallet" | "scanner";
@@ -13,25 +14,46 @@ function normalizePosition(position: LegacyPosition): Position {
 
 async function loadPermissions(profile: Profile): Promise<PermissionKey[]> {
   if (profile.role === "superadmin") return [];
-  const supabase = await createClient();
-  const { data } = await supabase
+
+  // Permissions are managed by admins and may be protected by RLS. Read them
+  // with the server-only service-role client after the signed-in user has been
+  // identified, so granted permissions are not silently returned as an empty list.
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
     .from("user_permissions")
     .select("permission_key")
     .eq("user_id", profile.id);
+
+  if (error) {
+    console.error("loadPermissions failed", {
+      userId: profile.id,
+      message: error.message,
+    });
+    return [];
+  }
+
   return (data ?? []).map((row) => row.permission_key as PermissionKey);
 }
 
 export async function getCurrentProfile(): Promise<Profile | null> {
   const supabase = await createClient();
-  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
-  const userId = claimsData?.claims?.sub;
-  if (claimsError || !userId) return null;
 
-  const { data, error } = await supabase
+  // getUser() asks Supabase Auth for the current user instead of trusting only
+  // the JWT claims. This is important after a user has been deleted or a
+  // server-side session has been revoked while an old JWT still exists locally.
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (userError || !userId) return null;
+
+  // Once Auth has confirmed the user, load the application profile with the
+  // server-only admin client. This keeps page authorization consistent with
+  // proxy.ts and prevents profile RLS differences from causing redirect loops.
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
     .from("profiles")
     .select("*")
     .eq("id", userId)
-    .single();
+    .maybeSingle();
   if (error || !data) return null;
 
   const profile = data as Profile;
@@ -50,14 +72,41 @@ export function hasRole(profile: Profile, roles: AppRole | AppRole[]) {
   return (Array.isArray(roles) ? roles : [roles]).includes(profile.role);
 }
 
-export function hasPosition(profile: Profile, position: LegacyPosition) {
-  const normalized = normalizePosition(position);
-  return profile.role === "superadmin" || profile.position === normalized;
-}
-
 export function hasPermission(profile: Profile, permission: PermissionKey) {
   if (profile.role === "superadmin") return true;
+
+  // Dashboard is a role-level default for every admin. User accounts only get
+  // access when Super Admin grants dashboard.view in user_permissions.
+  if (profile.role === "admin" && permission === "dashboard.view") return true;
+
+  // Department admins receive the standard permissions of their position.
+  // Extra permissions granted by Super Admin remain available through
+  // profile.permissions below.
+  if (
+    profile.role === "admin"
+    && profile.position
+    && POSITION_PERMISSIONS[profile.position].includes(permission)
+  ) {
+    return true;
+  }
+
   return profile.permissions?.includes(permission) ?? false;
+}
+
+export function hasAnyPermission(profile: Profile, permissions: PermissionKey[]) {
+  return permissions.some((permission) => hasPermission(profile, permission));
+}
+
+export function hasPosition(profile: Profile, position: LegacyPosition) {
+  const normalized = normalizePosition(position);
+  if (profile.role === "superadmin" || profile.position === normalized) return true;
+
+  // Page mapping may intentionally expose a module to another position. In
+  // that case the matching granted permission is the second access layer;
+  // proxy.ts still enforces whether that position is mapped to the page.
+  return POSITION_PERMISSIONS[normalized].some((permission) =>
+    hasPermission(profile, permission),
+  );
 }
 
 export function canAccessPath(profile: Profile, pathname: string) {
@@ -91,16 +140,28 @@ export async function requirePermission(permission: PermissionKey): Promise<Prof
   return profile;
 }
 
+export async function requireAnyPermission(permissions: PermissionKey[]): Promise<Profile> {
+  const profile = await requireProfile();
+  if (!hasAnyPermission(profile, permissions)) redirect("/dashboard");
+  return profile;
+}
+
 export type ApiAuthorization =
   | { ok: true; profile: Profile }
   | { ok: false; status: 401 | 403; error: string };
 
-export async function authorizePermission(permission: PermissionKey): Promise<ApiAuthorization> {
+export async function authorizeProfile(): Promise<ApiAuthorization> {
   const profile = await getCurrentProfile();
   if (!profile) return { ok: false, status: 401, error: "Phiên đăng nhập đã hết hạn." };
   if (!profile.is_active) return { ok: false, status: 403, error: "Tài khoản đã bị khóa." };
-  if (!hasPermission(profile, permission)) {
+  return { ok: true, profile };
+}
+
+export async function authorizePermission(permission: PermissionKey): Promise<ApiAuthorization> {
+  const authorization = await authorizeProfile();
+  if (!authorization.ok) return authorization;
+  if (!hasPermission(authorization.profile, permission)) {
     return { ok: false, status: 403, error: "Bạn không có quyền thực hiện chức năng này." };
   }
-  return { ok: true, profile };
+  return authorization;
 }
