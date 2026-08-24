@@ -11,6 +11,7 @@ function escapeHtml(value: string) {
 
 type PdfPrintPageOptions = {
   closeAfterPrint?: boolean;
+  printJobId?: string | null;
 };
 
 export function createPdfPrintPage(
@@ -21,6 +22,7 @@ export function createPdfPrintPage(
   const safeTitle = escapeHtml(title);
   const serializedPdfUrl = JSON.stringify(pdfUrl).replaceAll("<", "\\u003c");
   const closeAfterPrint = options.closeAfterPrint === true;
+  const serializedPrintJobId = JSON.stringify(options.printJobId ?? null).replaceAll("<", "\\u003c");
 
   const html = `<!doctype html>
 <html lang="vi">
@@ -86,16 +88,42 @@ export function createPdfPrintPage(
       const button = document.getElementById("print-button");
       const status = document.getElementById("print-status");
       const closeAfterPrint = ${closeAfterPrint};
+      const printJobId = ${serializedPrintJobId};
       let printStarted = false;
       let printFinished = false;
+
+      function notifyHost(printStatus, message) {
+        if (!printJobId) return;
+        const payload = {
+          source: "qr-pallet-print-page",
+          jobId: printJobId,
+          status: printStatus,
+          message: message || null,
+        };
+
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(payload, window.location.origin);
+        }
+        if (window.parent !== window) {
+          window.parent.postMessage(payload, window.location.origin);
+        }
+      }
 
       function finishPrint() {
         if (printFinished) return;
         printFinished = true;
         status.textContent = "Đã gửi lệnh in.";
-        if (closeAfterPrint) {
+        notifyHost("sent");
+        if (closeAfterPrint && window.opener && !window.opener.closed) {
           window.setTimeout(() => window.close(), 150);
         }
+      }
+
+      function failPrint() {
+        printStarted = false;
+        button.disabled = false;
+        status.textContent = "Không thể gửi lệnh in. Hãy nhấn In ngay để thử lại.";
+        notifyHost("error", "Không thể gửi lệnh in tới trình duyệt.");
       }
 
       function openPrintDialog() {
@@ -106,16 +134,14 @@ export function createPdfPrintPage(
         try {
           frame.contentWindow.focus();
           frame.contentWindow.print();
-          if (closeAfterPrint) window.setTimeout(finishPrint, 1500);
+          window.setTimeout(finishPrint, 250);
         } catch (error) {
           try {
             window.focus();
             window.print();
-            if (closeAfterPrint) window.setTimeout(finishPrint, 1500);
+            window.setTimeout(finishPrint, 250);
           } catch (fallbackError) {
-            printStarted = false;
-            button.disabled = false;
-            status.textContent = "Không thể mở chức năng in. Hãy nhấn In ngay để thử lại.";
+            failPrint();
           }
         }
       }
