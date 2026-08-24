@@ -108,8 +108,14 @@ export async function GET(request: Request) {
     }
 
     if (requestUrl.searchParams.get("raw") !== "1") {
-      const rawPdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(palletId)}&raw=1`;
-      return createPdfPrintPage(rawPdfUrl, `In tem pallet ${palletId}`);
+      const printJobId = requestUrl.searchParams.get("printJobId")?.trim().slice(0, 128) || null;
+      const rawPdfParams = new URLSearchParams({ palletId, raw: "1" });
+      if (printJobId) rawPdfParams.set("printJobId", printJobId);
+      const rawPdfUrl = `/api/pallet-label/pdf?${rawPdfParams.toString()}`;
+      return createPdfPrintPage(rawPdfUrl, `In tem pallet ${palletId}`, {
+        closeAfterPrint: true,
+        printJobId,
+      });
     }
 
     const supabase = await createClient();
