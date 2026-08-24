@@ -91,6 +91,7 @@ export function createPdfPrintPage(
       const printJobId = ${serializedPrintJobId};
       let printStarted = false;
       let printFinished = false;
+      let fallbackFinishTimer = null;
 
       function notifyHost(printStatus, message) {
         if (!printJobId) return;
@@ -112,6 +113,7 @@ export function createPdfPrintPage(
       function finishPrint() {
         if (printFinished) return;
         printFinished = true;
+        if (fallbackFinishTimer !== null) window.clearTimeout(fallbackFinishTimer);
         status.textContent = "Đã gửi lệnh in.";
         notifyHost("sent");
         if (closeAfterPrint && window.opener && !window.opener.closed) {
@@ -134,12 +136,12 @@ export function createPdfPrintPage(
         try {
           frame.contentWindow.focus();
           frame.contentWindow.print();
-          window.setTimeout(finishPrint, 250);
+          fallbackFinishTimer = window.setTimeout(finishPrint, 5000);
         } catch (error) {
           try {
             window.focus();
             window.print();
-            window.setTimeout(finishPrint, 250);
+            fallbackFinishTimer = window.setTimeout(finishPrint, 5000);
           } catch (fallbackError) {
             failPrint();
           }

@@ -35,13 +35,16 @@ type Dialog = "create" | "created" | "history" | "edit" | "delete" | "merge" | n
 type FeedbackMessage = { type: "loading" | "success" | "error"; text: string };
 
 const SILENT_PRINT_TIMEOUT_MS = 30_000;
+const SILENT_PRINT_CLEANUP_DELAY_MS = 1_000;
+const SILENT_PRINT_COOLDOWN_MS = 1_500;
+let silentPrintQueue: Promise<void> = Promise.resolve();
 
 function createPrintJobId() {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function sendSilentPrint(pdfUrl: string) {
+function executeSilentPrint(pdfUrl: string) {
   return new Promise<void>((resolve, reject) => {
     const jobId = createPrintJobId();
     const printUrl = new URL(pdfUrl, window.location.origin);
@@ -62,17 +65,21 @@ function sendSilentPrint(pdfUrl: string) {
     });
 
     let settled = false;
-    const cleanup = () => {
+    const cleanup = (delayFrameRemoval = false) => {
       window.removeEventListener("message", handleMessage);
       window.clearTimeout(timeoutId);
-      frame.remove();
+      if (delayFrameRemoval) window.setTimeout(() => frame.remove(), SILENT_PRINT_CLEANUP_DELAY_MS);
+      else frame.remove();
     };
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      cleanup();
-      if (error) reject(error);
-      else resolve();
+      cleanup(!error);
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
     };
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin || event.source !== frame.contentWindow) return;
@@ -97,6 +104,15 @@ function sendSilentPrint(pdfUrl: string) {
     frame.src = printUrl.toString();
     document.body.appendChild(frame);
   });
+}
+
+function sendSilentPrint(pdfUrl: string) {
+  const printTask = silentPrintQueue.then(async () => {
+    await executeSilentPrint(pdfUrl);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, SILENT_PRINT_COOLDOWN_MS));
+  });
+  silentPrintQueue = printTask.catch(() => undefined);
+  return printTask;
 }
 
 function FeedbackAlert({ message }: { message: FeedbackMessage }) {
