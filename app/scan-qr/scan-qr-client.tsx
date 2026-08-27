@@ -139,6 +139,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   const qrOutlineLabelRef = useRef<HTMLDivElement | null>(null);
   const qrOutlineTimerRef = useRef<number | null>(null);
   const [rows, setRows] = useState(initialRows);
+  const [searchTerm, setSearchTerm] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [liveScans, setLiveScans] = useState<LiveScanItem[]>(() => initialRows.map((row, index) => ({
@@ -158,6 +159,18 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
   const showScanLimitIndicator = rows.length >= SCAN_LIMIT_WARNING_AT;
   const scanLimitReached = rows.length >= MAX_SCAN_PALLETS;
+  const visibleRows = useMemo(() => {
+    const query = searchTerm.trim().toLocaleLowerCase("vi");
+    if (!query) return rows;
+    return rows.filter((row) => (
+      row.pallet_id.toLocaleLowerCase("vi").includes(query)
+      || row.itemcode.toLocaleLowerCase("vi").includes(query)
+    ));
+  }, [rows, searchTerm]);
+  const visibleQuantity = useMemo(
+    () => visibleRows.reduce((sum, row) => sum + Number(row.quantity), 0),
+    [visibleRows],
+  );
 
   const summary = useMemo<SummaryRow[]>(() => {
     const map = new Map<string, SummaryRow>();
@@ -513,6 +526,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
       const receiptId = result.receiptId as string;
       setRows([]);
+      setSearchTerm("");
       setLiveScans([]);
       scannedIdsRef.current.clear();
       duplicateLoggedAtRef.current.clear();
@@ -574,10 +588,28 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       <div className="scan-table-card">
         <div className="scan-table-title">
           <h2>Pallet đã scan</h2>
-          <span>{rows.reduce((sum, row) => sum + Number(row.quantity), 0).toLocaleString("vi-VN")} pcs</span>
+          <span>
+            {searchTerm.trim() ? `${visibleRows.length}/${rows.length} pallet · ` : ""}
+            {visibleQuantity.toLocaleString("vi-VN")} pcs
+          </span>
         </div>
+        {rows.length ? (
+          <div className="scan-table-search">
+            <label htmlFor="scan-pallet-search">Tìm pallet</label>
+            <input
+              id="scan-pallet-search"
+              type="search"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Nhập Pallet ID hoặc Itemcode"
+              autoComplete="off"
+            />
+          </div>
+        ) : null}
         {!rows.length ? (
           <div className="scan-empty">Chưa có pallet nào được scan.</div>
+        ) : !visibleRows.length ? (
+          <div className="scan-empty">Không tìm thấy Pallet ID hoặc Itemcode phù hợp.</div>
         ) : (
           <div className="scan-table-wrap">
             <table className="scan-table">
@@ -585,7 +617,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                 <tr><th>ID pallet</th><th>WO</th><th>Quantity</th><th>Product name</th><th>Customer</th><th>Itemcode</th><th>Thao tác</th></tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {visibleRows.map((row) => (
                   <tr key={row.pallet_id}>
                     <td><strong>{row.pallet_id}</strong></td>
                     <td>{row.wo}</td>

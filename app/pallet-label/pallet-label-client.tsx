@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export type PlanItem = {
@@ -32,97 +32,6 @@ export type ActivePallet = {
 type Props = { rows: PlanItem[]; pallets: ActivePallet[] };
 type Mode = "full" | "partial";
 type Dialog = "create" | "created" | "history" | "edit" | "delete" | "merge" | null;
-type FeedbackMessage = { type: "loading" | "success" | "error"; text: string };
-
-const SILENT_PRINT_TIMEOUT_MS = 30_000;
-const SILENT_PRINT_CLEANUP_DELAY_MS = 1_000;
-const SILENT_PRINT_COOLDOWN_MS = 1_500;
-let silentPrintQueue: Promise<void> = Promise.resolve();
-
-function createPrintJobId() {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function executeSilentPrint(pdfUrl: string) {
-  return new Promise<void>((resolve, reject) => {
-    const jobId = createPrintJobId();
-    const printUrl = new URL(pdfUrl, window.location.origin);
-    printUrl.searchParams.set("printJobId", jobId);
-
-    const frame = document.createElement("iframe");
-    frame.title = "In tem pallet ngầm";
-    frame.setAttribute("aria-hidden", "true");
-    Object.assign(frame.style, {
-      position: "fixed",
-      left: "-10000px",
-      top: "0",
-      width: "800px",
-      height: "600px",
-      border: "0",
-      opacity: "0",
-      pointerEvents: "none",
-    });
-
-    let settled = false;
-    const cleanup = (delayFrameRemoval = false) => {
-      window.removeEventListener("message", handleMessage);
-      window.clearTimeout(timeoutId);
-      if (delayFrameRemoval) window.setTimeout(() => frame.remove(), SILENT_PRINT_CLEANUP_DELAY_MS);
-      else frame.remove();
-    };
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      cleanup(!error);
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    };
-    const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin || event.source !== frame.contentWindow) return;
-      const data = event.data as {
-        source?: unknown;
-        jobId?: unknown;
-        status?: unknown;
-        message?: unknown;
-      } | null;
-      if (data?.source !== "qr-pallet-print-page" || data.jobId !== jobId) return;
-      if (data.status === "sent") finish();
-      else if (data.status === "error") {
-        finish(new Error(typeof data.message === "string" ? data.message : "Không thể gửi lệnh in."));
-      }
-    };
-    const timeoutId = window.setTimeout(() => {
-      finish(new Error("Quá thời gian chờ phản hồi từ chức năng in."));
-    }, SILENT_PRINT_TIMEOUT_MS);
-
-    window.addEventListener("message", handleMessage);
-    frame.addEventListener("error", () => finish(new Error("Không thể tải trang in.")), { once: true });
-    frame.src = printUrl.toString();
-    document.body.appendChild(frame);
-  });
-}
-
-function sendSilentPrint(pdfUrl: string) {
-  const printTask = silentPrintQueue.then(async () => {
-    await executeSilentPrint(pdfUrl);
-    await new Promise<void>((resolve) => window.setTimeout(resolve, SILENT_PRINT_COOLDOWN_MS));
-  });
-  silentPrintQueue = printTask.catch(() => undefined);
-  return printTask;
-}
-
-function FeedbackAlert({ message }: { message: FeedbackMessage }) {
-  const className = message.type === "error" ? "alert alert-error" : "alert alert-success";
-  return (
-    <p className={className} role="status" aria-live="polite" aria-busy={message.type === "loading"}>
-      {message.type === "loading" ? "⏳ " : null}{message.text}
-    </p>
-  );
-}
 
 function formatNumber(value: number | null) {
   return value === null ? "—" : Number(value).toLocaleString("vi-VN");
@@ -138,6 +47,49 @@ function QuantityProgress({ value, total }: { value: number; total: number | nul
       <small>{validTotal ? `${Math.round(percent)}%` : "Chưa có order"}</small>
     </div>
   );
+}
+
+function ProjectedQuantityProgress({
+  current,
+  addition,
+  total,
+}: {
+  current: number;
+  addition: number;
+  total: number | null;
+}) {
+  const validTotal = total !== null && total > 0;
+  const safeCurrent = Math.max(current, 0);
+  const safeAddition = Number.isFinite(addition) ? Math.max(addition, 0) : 0;
+  const projected = safeCurrent + safeAddition;
+  const currentWidth = validTotal
+    ? Math.min((safeCurrent / total) * 100, 100)
+    : 0;
+  const projectedWidth = validTotal
+    ? Math.max(Math.min((projected / total) * 100, 100) - currentWidth, 0)
+    : 0;
+
+  return (
+    <div className="quantity-progress pallet-projected-progress">
+      <div className="quantity-progress-label">
+        <strong>{formatNumber(safeCurrent)}</strong>
+        <span>+ {formatNumber(safeAddition)} = {formatNumber(projected)} / {formatNumber(total)}</span>
+      </div>
+      <div className="quantity-progress-track quantity-progress-track-projected" aria-hidden="true">
+        <span className="quantity-progress-current" style={{ width: `${currentWidth}%` }} />
+        <span className="quantity-progress-added" style={{ width: `${projectedWidth}%` }} />
+      </div>
+      <small>{validTotal ? `Sau khi tạo: ${Math.round((projected / total) * 100)}%` : "Chưa có order"}</small>
+    </div>
+  );
+}
+
+function previousVietnamWorkingDay() {
+  // Vietnam working day is local time minus the 06:00 boundary, equivalent
+  // to UTC + 1 hour. The different-date default is one working day earlier.
+  const shifted = new Date(Date.now() + 60 * 60 * 1000);
+  shifted.setUTCDate(shifted.getUTCDate() - 1);
+  return shifted.toISOString().slice(0, 10);
 }
 
 export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
@@ -159,38 +111,15 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [searchWo, setSearchWo] = useState("");
   const [searchItem, setSearchItem] = useState("");
   const [historyDays, setHistoryDays] = useState(1);
+  const [differentWorkingDay, setDifferentWorkingDay] = useState(false);
+  const [workingDay, setWorkingDay] = useState("");
   const [pending, setPending] = useState(false);
   const [reprintingPalletId, setReprintingPalletId] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [updatingItemcode, setUpdatingItemcode] = useState<string | null>(null);
-  const [message, setMessage] = useState<FeedbackMessage | null>(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const visibleRows = selectedMachine ? validRows.filter((row) => row.machine === selectedMachine) : [];
-
-  useEffect(() => {
-    if (dialog !== "created" || message?.type !== "success") return;
-
-    let closeTimer: number | null = null;
-    const startCloseTimer = () => {
-      if (closeTimer !== null || document.visibilityState !== "visible" || !document.hasFocus()) return;
-      closeTimer = window.setTimeout(() => {
-        setDialog(null);
-        setSelectedPallet(null);
-        setMessage(null);
-        setQuantity("");
-        setReason("");
-      }, 3000);
-    };
-
-    startCloseTimer();
-    document.addEventListener("visibilitychange", startCloseTimer);
-    window.addEventListener("focus", startCloseTimer);
-    return () => {
-      document.removeEventListener("visibilitychange", startCloseTimer);
-      window.removeEventListener("focus", startCloseTimer);
-      if (closeTimer !== null) window.clearTimeout(closeTimer);
-    };
-  }, [dialog, message?.type]);
 
   function closeDialog() {
     if (pending || reprintingPalletId !== null) return;
@@ -199,6 +128,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     setMessage(null);
     setQuantity("");
     setReason("");
+    setDifferentWorkingDay(false);
+    setWorkingDay("");
   }
 
   function openCreate(row: PlanItem) {
@@ -206,6 +137,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     setMode("full");
     setQuantity("");
     setReason("");
+    setDifferentWorkingDay(false);
+    setWorkingDay("");
     setMessage(null);
     setDialog("create");
   }
@@ -299,31 +232,37 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       setMessage({ type: "error", text: "Vui lòng nhập số lượng hợp lệ." });
       return;
     }
-    let createdPalletId: string | null = null;
+    if (differentWorkingDay && !workingDay) {
+      setMessage({ type: "error", text: "Vui lòng chọn ngày trên tem." });
+      return;
+    }
+    const pdfWindow = window.open("", "_blank");
     setPending(true);
     try {
       const response = await fetch("/api/pallet-label/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...selectedRow, quantity: finalQuantity }),
+        body: JSON.stringify({
+          ...selectedRow,
+          quantity: finalQuantity,
+          even_pallet: mode === "full",
+          working_day: differentWorkingDay ? workingDay : null,
+        }),
       });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error ?? "Không thể lưu pallet.");
-      createdPalletId = String(result.pallet.pallet_id);
+      const pdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(result.pallet.pallet_id)}`;
+      if (pdfWindow) pdfWindow.location.href = pdfUrl;
+      else window.location.href = pdfUrl;
+      setMessage({ type: "success", text: `Đã tạo pallet ${result.pallet.pallet_id}. File PDF đã được mở ở tab mới.` });
       setDialog("created");
-      setMessage({ type: "loading", text: `Đang gửi lệnh in pallet ${createdPalletId}...` });
       setQuantity("");
+      setDifferentWorkingDay(false);
+      setWorkingDay("");
       router.refresh();
-      await sendSilentPrint(`/api/pallet-label/pdf?palletId=${encodeURIComponent(createdPalletId)}`);
-      setMessage({ type: "success", text: `Đã gửi lệnh in pallet ${createdPalletId} thành công.` });
     } catch (error) {
-      const detail = error instanceof Error ? error.message : "Không thể lưu pallet.";
-      setMessage({
-        type: "error",
-        text: createdPalletId
-          ? `Đã tạo pallet ${createdPalletId} nhưng gửi lệnh in thất bại: ${detail}`
-          : detail,
-      });
+      pdfWindow?.close();
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "Không thể lưu pallet." });
     } finally {
       setPending(false);
     }
@@ -341,28 +280,23 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       return;
     }
 
-    let editedPalletId: string | null = null;
+    const pdfWindow = window.open("", "_blank");
     setPending(true);
     try {
       const result = await postAction({ action: "edit", pallet_id: selectedPallet.pallet_id, quantity: newQuantity, reason: reason.trim() });
-      const palletIdToPrint = String(result.pallet?.pallet_id || selectedPallet.pallet_id);
-      editedPalletId = palletIdToPrint;
+      const editedPalletId = result.pallet?.pallet_id || selectedPallet.pallet_id;
+      const pdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(editedPalletId)}`;
+      if (pdfWindow) pdfWindow.location.href = pdfUrl;
+      else window.location.href = pdfUrl;
+      setMessage({ type: "success", text: `Đã sửa ${editedPalletId} và mở PDF mới.` });
+      await loadPallets();
       setDialog("history");
       setSelectedPallet(null);
       setReason("");
-      setMessage({ type: "loading", text: `Đang gửi lệnh in pallet ${palletIdToPrint}...` });
-      await sendSilentPrint(`/api/pallet-label/pdf?palletId=${encodeURIComponent(palletIdToPrint)}`);
-      await loadPallets();
-      setMessage({ type: "success", text: `Đã sửa và gửi lệnh in pallet ${palletIdToPrint} thành công.` });
       router.refresh();
     } catch (error) {
-      const detail = error instanceof Error ? error.message : "Không thể sửa pallet.";
-      setMessage({
-        type: "error",
-        text: editedPalletId
-          ? `Đã sửa pallet ${editedPalletId} nhưng gửi lệnh in thất bại: ${detail}`
-          : detail,
-      });
+      pdfWindow?.close();
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "Không thể sửa pallet." });
     } finally {
       setPending(false);
     }
@@ -409,8 +343,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   }
 
   async function printPallet(palletId: string) {
+    const pdfWindow = window.open("", "_blank");
     setReprintingPalletId(palletId);
-    setMessage({ type: "loading", text: `Đang gửi lệnh in lại pallet ${palletId}...` });
     try {
       const response = await fetch("/api/pallet-label/reprint", {
         method: "POST",
@@ -423,13 +357,16 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       }
 
       const reprintCount = Number(result.pallet?.reprint_count ?? 0);
-      await sendSilentPrint(`/api/pallet-label/pdf?palletId=${encodeURIComponent(palletId)}`);
+      const pdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(palletId)}`;
+      if (pdfWindow) pdfWindow.location.href = pdfUrl;
+      else router.push(pdfUrl);
       await loadPallets();
       setMessage({
         type: "success",
-        text: `Đã gửi lệnh in lại ${palletId} thành công. Số lần in lại: ${reprintCount}.`,
+        text: `Đã mở PDF in lại ${palletId}. Số lần in lại: ${reprintCount}.`,
       });
     } catch (error) {
+      pdfWindow?.close();
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Không thể in lại pallet.",
@@ -471,20 +408,44 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     </div>
 
     {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className="modal-card modal-card-wide" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? message?.type === "loading" ? "Đang in tem" : message?.type === "error" ? "Tạo tem xong – lỗi in" : "In tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2></div><button className="modal-close" disabled={pending} onClick={closeDialog}>×</button></div>
+      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2>{dialog === "create" && selectedRow ? <p className="pallet-modal-order">SL đặt hàng: <strong>{formatNumber(selectedRow.quanorder)}</strong></p> : null}</div><button className="modal-close" onClick={closeDialog}>×</button></div>
 
       {dialog === "create" && selectedRow ? <>
         <div className="pallet-choice-grid">
           <label className={`choice-card ${mode === "full" ? "choice-card-active" : ""}`}><input type="radio" checked={mode === "full"} onChange={() => setMode("full")} /><span><strong>Pallet chẵn</strong><small>Lấy số lượng chuẩn</small></span></label>
           <label className={`choice-card ${mode === "partial" ? "choice-card-active" : ""}`}><input type="radio" checked={mode === "partial"} onChange={() => setMode("partial")} /><span><strong>Pallet lẻ</strong><small>Nhập số lượng thực tế</small></span></label>
         </div>
-        <label>Số lượng<input type="number" min="1" disabled={mode === "full"} value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+        <div className="pallet-quantity-grid">
+          <label>Số lượng<input type="number" min="1" disabled={mode === "full"} value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+          <ProjectedQuantityProgress
+            current={selectedRow.produced_quantity}
+            addition={mode === "full" ? selectedRow.quantity_per_pallet ?? 0 : Number(quantity)}
+            total={selectedRow.quanorder}
+          />
+        </div>
+        <div className="pallet-date-section">
+          <label className="pallet-date-toggle">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={differentWorkingDay}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setDifferentWorkingDay(checked);
+                setWorkingDay(checked ? previousVietnamWorkingDay() : "");
+              }}
+            />
+            <span className="pallet-switch" aria-hidden="true" />
+            <span><strong>Tem khác ngày</strong><small>Bật để chọn ngày sản xuất trên tem</small></span>
+          </label>
+          {differentWorkingDay ? <label className="pallet-date-input">Ngày trên tem<input type="date" value={workingDay} onChange={(event) => setWorkingDay(event.target.value)} /></label> : null}
+        </div>
         <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending} onClick={savePallet}>{pending ? "Đang lưu..." : "Xác nhận & lưu"}</button></div>
       </> : null}
 
       {dialog === "created" ? <>
-        {message ? <FeedbackAlert message={message} /> : null}
-        <div className="modal-actions"><button className="button button-primary" disabled={pending} onClick={closeDialog}>{pending ? "Đang in..." : "Đóng"}</button></div>
+        {message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
+        <div className="modal-actions"><button className="button button-primary" onClick={closeDialog}>Đóng</button></div>
       </> : null}
 
       {dialog === "history" ? <>
@@ -503,7 +464,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
           {historyPallets.length ? historyPallets.map((pallet) => <tr key={`${pallet.pallet_id}-${pallet.created_at}`}><td><strong>{pallet.pallet_id}</strong></td><td>{pallet.wo}</td><td>{pallet.itemcode}</td><td>{formatNumber(pallet.quantity)}</td><td>{pallet.status}</td><td>{new Date(pallet.created_at).toLocaleString("vi-VN")}</td><td><div className="action-row">
             <button className="button button-secondary button-small" disabled={pallet.status !== "production"} title={pallet.status !== "production" ? "Chỉ sửa được pallet trạng thái production" : undefined} onClick={() => openEdit(pallet)}>Sửa</button>
             <button className="button button-secondary button-small" disabled={pending || pallet.status !== "production"} title={pallet.status !== "production" ? "Chỉ xóa được pallet trạng thái production" : undefined} onClick={() => openDelete(pallet)}>Xóa</button>
-            <button className="button button-primary button-small" disabled={pending || reprintingPalletId !== null} onClick={() => void printPallet(pallet.pallet_id)}>{reprintingPalletId === pallet.pallet_id ? "Đang gửi..." : "In lại"}</button>
+            <button className="button button-primary button-small" disabled={pending || reprintingPalletId !== null} onClick={() => void printPallet(pallet.pallet_id)}>{reprintingPalletId === pallet.pallet_id ? "Đang mở..." : "In lại"}</button>
           </div></td></tr>) : <tr><td colSpan={7}>Không tìm thấy pallet phù hợp.</td></tr>}
         </tbody></table></div>
       </> : null}
@@ -529,7 +490,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending} onClick={mergePallet}>Xác nhận gộp</button></div>
       </> : null}
 
-      {dialog !== "created" && message ? <FeedbackAlert message={message} /> : null}
+      {dialog !== "created" && message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
     </div></div> : null}
   </>;
 }

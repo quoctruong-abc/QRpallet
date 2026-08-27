@@ -2,6 +2,20 @@ import { NextResponse } from "next/server";
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
+function normalizeDateOnly(value: unknown): string | null | undefined {
+  if (value === null || value === undefined || value === "") return null;
+
+  const date = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined;
+
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    return undefined;
+  }
+
+  return date;
+}
+
 export async function POST(request: Request) {
   const authorization = await authorizePermission("pallet.create");
   if (!authorization.ok) {
@@ -15,6 +29,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Số lượng pallet phải là số nguyên lớn hơn 0." }, { status: 400 });
     }
 
+    const workingDay = normalizeDateOnly(body.working_day);
+    if (workingDay === undefined) {
+      return NextResponse.json({ error: "Ngày trên tem không hợp lệ." }, { status: 400 });
+    }
+
+    const configuredQuantity = Number(body.quantity_per_pallet);
+    const evenPallet = typeof body.even_pallet === "boolean"
+      ? body.even_pallet
+      : Number.isInteger(configuredQuantity) && configuredQuantity > 0 && quantity === configuredQuantity;
+
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("create_pallet_record", {
       p_itemcode: String(body.itemcode ?? "").trim(),
@@ -25,6 +49,8 @@ export async function POST(request: Request) {
       p_machine: body.machine ? String(body.machine) : null,
       p_quantity: quantity,
       p_note: body.note ? String(body.note) : null,
+      p_working_day: workingDay,
+      p_even_pallet: evenPallet,
     });
 
     if (error) {

@@ -28,7 +28,10 @@ export default async function PalletLabelPage() {
       .not("itemcode", "is", null)
       .not("wo", "is", null)
       .order("machine", { ascending: true }),
-    supabase.from("pallet_data").select("wo,quantity,status"),
+    supabase
+      .from("pallet_data")
+      .select("wo,quantity,status")
+      .is("effect_to", null),
     supabase.from("item_pallet_config").select("itemcode,quantity_per_pallet"),
   ]);
 

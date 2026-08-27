@@ -38,16 +38,17 @@ async function loadPermissions(profile: Profile): Promise<PermissionKey[]> {
 export async function getCurrentProfile(): Promise<Profile | null> {
   const supabase = await createClient();
 
-  // getUser() asks Supabase Auth for the current user instead of trusting only
-  // the JWT claims. This is important after a user has been deleted or a
-  // server-side session has been revoked while an old JWT still exists locally.
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  const userId = userData.user?.id;
-  if (userError || !userId) return null;
+  // Verify the access token locally from Supabase's signing keys. Unlike
+  // getUser(), getClaims() does not make an Auth API request for every page or
+  // route when the project uses asymmetric JWT signing keys.
+  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
+  const userId = claimsData?.claims.sub;
+  if (claimsError || typeof userId !== "string") return null;
 
-  // Once Auth has confirmed the user, load the application profile with the
+  // Once the token has been verified, load the application profile with the
   // server-only admin client. This keeps page authorization consistent with
-  // proxy.ts and prevents profile RLS differences from causing redirect loops.
+  // proxy.ts, catches deleted users through the auth.users foreign key, and
+  // prevents profile RLS differences from causing redirect loops.
   const adminClient = createAdminClient();
   const { data, error } = await adminClient
     .from("profiles")
