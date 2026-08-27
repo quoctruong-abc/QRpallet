@@ -44,6 +44,47 @@ function QuantityProgress({ value, total }: { value: number; total: number | nul
   );
 }
 
+function ProjectedQuantityProgress({
+  current,
+  addition,
+  total,
+}: {
+  current: number;
+  addition: number;
+  total: number | null;
+}) {
+  const validTotal = total !== null && total > 0;
+  const safeCurrent = Math.max(current, 0);
+  const safeAddition = Number.isFinite(addition) ? Math.max(addition, 0) : 0;
+  const projected = safeCurrent + safeAddition;
+  const currentWidth = validTotal
+    ? Math.min((safeCurrent / total) * 100, 100)
+    : 0;
+  const projectedWidth = validTotal
+    ? Math.max(Math.min((projected / total) * 100, 100) - currentWidth, 0)
+    : 0;
+
+  return (
+    <div className="quantity-progress pallet-projected-progress">
+      <div className="quantity-progress-label">
+        <strong>{formatNumber(safeCurrent)}</strong>
+        <span>+ {formatNumber(safeAddition)} = {formatNumber(projected)} / {formatNumber(total)}</span>
+      </div>
+      <div className="quantity-progress-track quantity-progress-track-projected" aria-hidden="true">
+        <span className="quantity-progress-current" style={{ width: `${currentWidth}%` }} />
+        <span className="quantity-progress-added" style={{ width: `${projectedWidth}%` }} />
+      </div>
+      <small>{validTotal ? `Sau khi tạo: ${Math.round((projected / total) * 100)}%` : "Chưa có order"}</small>
+    </div>
+  );
+}
+
+function previousVietnamWorkingDay() {
+  const shifted = new Date(Date.now() + 60 * 60 * 1000);
+  shifted.setUTCDate(shifted.getUTCDate() - 1);
+  return shifted.toISOString().slice(0, 10);
+}
+
 export function PalletLabelClient({ rows }: Props) {
   const router = useRouter();
   const machines = useMemo(
@@ -54,6 +95,8 @@ export function PalletLabelClient({ rows }: Props) {
   const [selectedRow, setSelectedRow] = useState<PlanItem | null>(null);
   const [mode, setMode] = useState<Mode>("full");
   const [partialQuantity, setPartialQuantity] = useState("");
+  const [differentWorkingDay, setDifferentWorkingDay] = useState(false);
+  const [workingDay, setWorkingDay] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -63,6 +106,8 @@ export function PalletLabelClient({ rows }: Props) {
     setSelectedRow(row);
     setMode("full");
     setPartialQuantity("");
+    setDifferentWorkingDay(false);
+    setWorkingDay("");
     setMessage(null);
   }
 
@@ -70,6 +115,8 @@ export function PalletLabelClient({ rows }: Props) {
     if (pending) return;
     setSelectedRow(null);
     setMessage(null);
+    setDifferentWorkingDay(false);
+    setWorkingDay("");
   }
 
   async function savePallet() {
@@ -88,13 +135,22 @@ export function PalletLabelClient({ rows }: Props) {
       });
       return;
     }
+    if (differentWorkingDay && !workingDay) {
+      setMessage({ type: "error", text: "Vui lòng chọn ngày trên tem." });
+      return;
+    }
 
     setPending(true);
     try {
       const response = await fetch("/api/pallet-label/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...selectedRow, quantity }),
+        body: JSON.stringify({
+          ...selectedRow,
+          quantity,
+          even_pallet: mode === "full",
+          working_day: differentWorkingDay ? workingDay : null,
+        }),
       });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error ?? "Không thể lưu pallet.");
@@ -202,6 +258,7 @@ export function PalletLabelClient({ rows }: Props) {
               <div>
                 <p className="eyebrow">TẠO PALLET</p>
                 <h2 id="pallet-modal-title">{selectedRow.wo} · {selectedRow.itemcode}</h2>
+                <p className="pallet-modal-order">SL đặt hàng: <strong>{formatNumber(selectedRow.quanorder)}</strong></p>
               </div>
               <button className="modal-close" type="button" onClick={closeModal} aria-label="Đóng">×</button>
             </div>
@@ -223,18 +280,48 @@ export function PalletLabelClient({ rows }: Props) {
               </label>
             </div>
 
-            <label>
-              Số lượng pallet
-              <input
-                type="number"
-                min="1"
-                step="1"
-                disabled={mode === "full"}
-                value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : partialQuantity}
-                onChange={(event) => setPartialQuantity(event.target.value)}
-                placeholder={mode === "full" ? "Chưa cấu hình" : "Nhập số lượng pallet lẻ"}
+            <div className="pallet-quantity-grid">
+              <label>
+                Số lượng pallet
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  disabled={mode === "full"}
+                  value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : partialQuantity}
+                  onChange={(event) => setPartialQuantity(event.target.value)}
+                  placeholder={mode === "full" ? "Chưa cấu hình" : "Nhập số lượng pallet lẻ"}
+                />
+              </label>
+              <ProjectedQuantityProgress
+                current={selectedRow.produced_quantity}
+                addition={mode === "full" ? selectedRow.quantity_per_pallet ?? 0 : Number(partialQuantity)}
+                total={selectedRow.quanorder}
               />
-            </label>
+            </div>
+
+            <div className="pallet-date-section">
+              <label className="pallet-date-toggle">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={differentWorkingDay}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setDifferentWorkingDay(checked);
+                    setWorkingDay(checked ? previousVietnamWorkingDay() : "");
+                  }}
+                />
+                <span className="pallet-switch" aria-hidden="true" />
+                <span><strong>Tem khác ngày</strong><small>Bật để chọn ngày sản xuất trên tem</small></span>
+              </label>
+              {differentWorkingDay ? (
+                <label className="pallet-date-input">
+                  Ngày trên tem
+                  <input type="date" value={workingDay} onChange={(event) => setWorkingDay(event.target.value)} />
+                </label>
+              ) : null}
+            </div>
 
             {message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
 

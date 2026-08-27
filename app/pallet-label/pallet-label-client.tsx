@@ -49,6 +49,49 @@ function QuantityProgress({ value, total }: { value: number; total: number | nul
   );
 }
 
+function ProjectedQuantityProgress({
+  current,
+  addition,
+  total,
+}: {
+  current: number;
+  addition: number;
+  total: number | null;
+}) {
+  const validTotal = total !== null && total > 0;
+  const safeCurrent = Math.max(current, 0);
+  const safeAddition = Number.isFinite(addition) ? Math.max(addition, 0) : 0;
+  const projected = safeCurrent + safeAddition;
+  const currentWidth = validTotal
+    ? Math.min((safeCurrent / total) * 100, 100)
+    : 0;
+  const projectedWidth = validTotal
+    ? Math.max(Math.min((projected / total) * 100, 100) - currentWidth, 0)
+    : 0;
+
+  return (
+    <div className="quantity-progress pallet-projected-progress">
+      <div className="quantity-progress-label">
+        <strong>{formatNumber(safeCurrent)}</strong>
+        <span>+ {formatNumber(safeAddition)} = {formatNumber(projected)} / {formatNumber(total)}</span>
+      </div>
+      <div className="quantity-progress-track quantity-progress-track-projected" aria-hidden="true">
+        <span className="quantity-progress-current" style={{ width: `${currentWidth}%` }} />
+        <span className="quantity-progress-added" style={{ width: `${projectedWidth}%` }} />
+      </div>
+      <small>{validTotal ? `Sau khi tạo: ${Math.round((projected / total) * 100)}%` : "Chưa có order"}</small>
+    </div>
+  );
+}
+
+function previousVietnamWorkingDay() {
+  // Vietnam working day is local time minus the 06:00 boundary, equivalent
+  // to UTC + 1 hour. The different-date default is one working day earlier.
+  const shifted = new Date(Date.now() + 60 * 60 * 1000);
+  shifted.setUTCDate(shifted.getUTCDate() - 1);
+  return shifted.toISOString().slice(0, 10);
+}
+
 export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const router = useRouter();
   const validRows = useMemo(() => rows.filter((row) => row.wo.trim() !== "" && row.wo.trim() !== "0"), [rows]);
@@ -68,6 +111,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [searchWo, setSearchWo] = useState("");
   const [searchItem, setSearchItem] = useState("");
   const [historyDays, setHistoryDays] = useState(1);
+  const [differentWorkingDay, setDifferentWorkingDay] = useState(false);
+  const [workingDay, setWorkingDay] = useState("");
   const [pending, setPending] = useState(false);
   const [reprintingPalletId, setReprintingPalletId] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
@@ -83,6 +128,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     setMessage(null);
     setQuantity("");
     setReason("");
+    setDifferentWorkingDay(false);
+    setWorkingDay("");
   }
 
   function openCreate(row: PlanItem) {
@@ -90,6 +137,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     setMode("full");
     setQuantity("");
     setReason("");
+    setDifferentWorkingDay(false);
+    setWorkingDay("");
     setMessage(null);
     setDialog("create");
   }
@@ -183,13 +232,22 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       setMessage({ type: "error", text: "Vui lòng nhập số lượng hợp lệ." });
       return;
     }
+    if (differentWorkingDay && !workingDay) {
+      setMessage({ type: "error", text: "Vui lòng chọn ngày trên tem." });
+      return;
+    }
     const pdfWindow = window.open("", "_blank");
     setPending(true);
     try {
       const response = await fetch("/api/pallet-label/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...selectedRow, quantity: finalQuantity }),
+        body: JSON.stringify({
+          ...selectedRow,
+          quantity: finalQuantity,
+          even_pallet: mode === "full",
+          working_day: differentWorkingDay ? workingDay : null,
+        }),
       });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error ?? "Không thể lưu pallet.");
@@ -199,6 +257,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       setMessage({ type: "success", text: `Đã tạo pallet ${result.pallet.pallet_id}. File PDF đã được mở ở tab mới.` });
       setDialog("created");
       setQuantity("");
+      setDifferentWorkingDay(false);
+      setWorkingDay("");
       router.refresh();
     } catch (error) {
       pdfWindow?.close();
@@ -348,14 +408,38 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     </div>
 
     {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className="modal-card modal-card-wide" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2></div><button className="modal-close" onClick={closeDialog}>×</button></div>
+      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2>{dialog === "create" && selectedRow ? <p className="pallet-modal-order">SL đặt hàng: <strong>{formatNumber(selectedRow.quanorder)}</strong></p> : null}</div><button className="modal-close" onClick={closeDialog}>×</button></div>
 
       {dialog === "create" && selectedRow ? <>
         <div className="pallet-choice-grid">
           <label className={`choice-card ${mode === "full" ? "choice-card-active" : ""}`}><input type="radio" checked={mode === "full"} onChange={() => setMode("full")} /><span><strong>Pallet chẵn</strong><small>Lấy số lượng chuẩn</small></span></label>
           <label className={`choice-card ${mode === "partial" ? "choice-card-active" : ""}`}><input type="radio" checked={mode === "partial"} onChange={() => setMode("partial")} /><span><strong>Pallet lẻ</strong><small>Nhập số lượng thực tế</small></span></label>
         </div>
-        <label>Số lượng<input type="number" min="1" disabled={mode === "full"} value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+        <div className="pallet-quantity-grid">
+          <label>Số lượng<input type="number" min="1" disabled={mode === "full"} value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+          <ProjectedQuantityProgress
+            current={selectedRow.produced_quantity}
+            addition={mode === "full" ? selectedRow.quantity_per_pallet ?? 0 : Number(quantity)}
+            total={selectedRow.quanorder}
+          />
+        </div>
+        <div className="pallet-date-section">
+          <label className="pallet-date-toggle">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={differentWorkingDay}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setDifferentWorkingDay(checked);
+                setWorkingDay(checked ? previousVietnamWorkingDay() : "");
+              }}
+            />
+            <span className="pallet-switch" aria-hidden="true" />
+            <span><strong>Tem khác ngày</strong><small>Bật để chọn ngày sản xuất trên tem</small></span>
+          </label>
+          {differentWorkingDay ? <label className="pallet-date-input">Ngày trên tem<input type="date" value={workingDay} onChange={(event) => setWorkingDay(event.target.value)} /></label> : null}
+        </div>
         <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending} onClick={savePallet}>{pending ? "Đang lưu..." : "Xác nhận & lưu"}</button></div>
       </> : null}
 
