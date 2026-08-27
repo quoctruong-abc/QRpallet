@@ -80,7 +80,7 @@ export async function PageShell({
     <main className="app-shell">
       <header className="topbar">
         <div className="topbar-brand-area">
-          <Link className="brand" href={homePath}>
+          <Link className="brand" href={homePath} prefetch={false}>
             SVN Warehouse
           </Link>
           <p className="muted topbar-subtitle" title={title}>{title}</p>
@@ -94,6 +94,7 @@ export async function PageShell({
                 className="topbar-module-link"
                 href={module.path}
                 key={module.path}
+                prefetch={false}
                 title={module.label}
               >
                 <span aria-hidden="true" className="topbar-module-icon">{module.icon}</span>
