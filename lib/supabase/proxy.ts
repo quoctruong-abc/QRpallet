@@ -31,6 +31,15 @@ function redirectWithSessionCookies(
 }
 
 export async function updateSession(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  // Every API route authorizes itself through the helpers in lib/auth.ts.
+  // Skipping it here prevents the same request from validating the session
+  // twice and avoids running page-only profile and permission routing logic.
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -52,14 +61,13 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  const pathname = request.nextUrl.pathname;
   const isPublicRoute = pathname === "/login" || pathname === "/inactive";
 
-  // Ask Supabase Auth for the current user instead of relying only on JWT
-  // claims. A deleted user can still have a locally valid JWT until expiry.
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  const userId = userData.user?.id;
-  const isLoggedIn = !userError && Boolean(userId);
+  // Verify the token locally from Supabase's signing keys. This avoids a
+  // blocking /auth/v1/user network request on every matched page request.
+  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
+  const userId = claimsData?.claims.sub;
+  const isLoggedIn = !claimsError && typeof userId === "string";
 
   if (!isLoggedIn) {
     // Clear stale local auth cookies so the next login starts cleanly.
@@ -77,11 +85,7 @@ export async function updateSession(request: NextRequest) {
     return redirectResponse;
   }
 
-  // API authorization is handled by the API route helpers. Keep the proxy
-  // focused on page/session routing.
-  if (pathname.startsWith("/api/")) return response;
-
-  // Auth has confirmed the user. Load the application profile with the
+  // The verified token identifies the user. Load the application profile with the
   // server-only admin client so proxy routing and server-page authorization
   // use exactly the same profile row regardless of RLS policy differences.
   const adminClient = createAdminClient();

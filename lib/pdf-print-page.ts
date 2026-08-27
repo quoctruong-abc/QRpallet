@@ -9,20 +9,9 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#039;");
 }
 
-type PdfPrintPageOptions = {
-  closeAfterPrint?: boolean;
-  printJobId?: string | null;
-};
-
-export function createPdfPrintPage(
-  pdfUrl: string,
-  title: string,
-  options: PdfPrintPageOptions = {},
-) {
+export function createPdfPrintPage(pdfUrl: string, title: string) {
   const safeTitle = escapeHtml(title);
   const serializedPdfUrl = JSON.stringify(pdfUrl).replaceAll("<", "\\u003c");
-  const closeAfterPrint = options.closeAfterPrint === true;
-  const serializedPrintJobId = JSON.stringify(options.printJobId ?? null).replaceAll("<", "\\u003c");
 
   const html = `<!doctype html>
 <html lang="vi">
@@ -87,76 +76,19 @@ export function createPdfPrintPage(
       const frame = document.getElementById("pdf-frame");
       const button = document.getElementById("print-button");
       const status = document.getElementById("print-status");
-      const closeAfterPrint = ${closeAfterPrint};
-      const printJobId = ${serializedPrintJobId};
-      let printStarted = false;
-      let printFinished = false;
-      let fallbackFinishTimer = null;
-
-      function notifyHost(printStatus, message) {
-        if (!printJobId) return;
-        const payload = {
-          source: "qr-pallet-print-page",
-          jobId: printJobId,
-          status: printStatus,
-          message: message || null,
-        };
-
-        if (window.opener && !window.opener.closed) {
-          window.opener.postMessage(payload, window.location.origin);
-        }
-        if (window.parent !== window) {
-          window.parent.postMessage(payload, window.location.origin);
-        }
-      }
-
-      function finishPrint() {
-        if (printFinished) return;
-        printFinished = true;
-        if (fallbackFinishTimer !== null) window.clearTimeout(fallbackFinishTimer);
-        status.textContent = "Đã gửi lệnh in.";
-        notifyHost("sent");
-        if (closeAfterPrint && window.opener && !window.opener.closed) {
-          window.setTimeout(() => window.close(), 150);
-        }
-      }
-
-      function failPrint() {
-        printStarted = false;
-        button.disabled = false;
-        status.textContent = "Không thể gửi lệnh in. Hãy nhấn In ngay để thử lại.";
-        notifyHost("error", "Không thể gửi lệnh in tới trình duyệt.");
-      }
 
       function openPrintDialog() {
-        if (printStarted) return;
-        printStarted = true;
-        button.disabled = true;
-        status.textContent = "Đang gửi lệnh in...";
         try {
           frame.contentWindow.focus();
           frame.contentWindow.print();
-          fallbackFinishTimer = window.setTimeout(finishPrint, 5000);
         } catch (error) {
-          try {
-            window.focus();
-            window.print();
-            fallbackFinishTimer = window.setTimeout(finishPrint, 5000);
-          } catch (fallbackError) {
-            failPrint();
-          }
+          window.focus();
+          window.print();
         }
       }
 
-      window.addEventListener("afterprint", finishPrint);
-
       button.addEventListener("click", openPrintDialog);
       frame.addEventListener("load", () => {
-        try {
-          frame.contentWindow.addEventListener("afterprint", finishPrint);
-        } catch (error) {
-          // The fallback timer in openPrintDialog still closes this print page.
-        }
         button.disabled = false;
         status.textContent = "PDF đã sẵn sàng. Nếu hộp thoại chưa mở, nhấn In ngay.";
         window.setTimeout(openPrintDialog, 900);
@@ -165,7 +97,7 @@ export function createPdfPrintPage(
       frame.src = ${serializedPdfUrl};
 
       window.setTimeout(() => {
-        if (!printStarted && button.disabled) {
+        if (button.disabled) {
           button.disabled = false;
           status.textContent = "PDF đang tải chậm. Có thể nhấn In ngay để thử lại.";
         }

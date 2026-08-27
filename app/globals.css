@@ -505,6 +505,30 @@ td { font-size: .9rem; }
 .quantity-progress-label span, .quantity-progress small { color: var(--muted); font-size: .76rem; }
 .quantity-progress-track { height: 8px; overflow: hidden; border-radius: 999px; background: #eaecf0; }
 .quantity-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--primary); }
+.pallet-modal-order { margin: 7px 0 0; color: var(--muted); font-size: .88rem; }
+.pallet-modal-order strong { color: var(--text); }
+.pallet-quantity-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: end; }
+.pallet-projected-progress { min-width: 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-soft); }
+.quantity-progress-track-projected { display: flex; }
+.quantity-progress-track-projected span { flex: 0 0 auto; border-radius: 0; }
+.quantity-progress-track-projected .quantity-progress-current { background: var(--primary); }
+.quantity-progress-track-projected .quantity-progress-added { background: #f79009; }
+.pallet-date-section { display: grid; gap: 12px; margin-top: 18px; }
+.pallet-date-toggle { display: flex; align-items: center; gap: 11px; width: fit-content; cursor: pointer; }
+.pallet-date-toggle input { position: absolute; width: 1px; height: 1px; min-height: 0; opacity: 0; pointer-events: none; }
+.pallet-date-toggle > span:last-child { display: grid; gap: 2px; }
+.pallet-date-toggle small { color: var(--muted); font-weight: 400; }
+.pallet-switch { position: relative; width: 46px; height: 26px; flex: 0 0 46px; border-radius: 999px; background: #d0d5dd; transition: .18s ease; }
+.pallet-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgba(16,24,40,.25); transition: .18s ease; }
+.pallet-date-toggle input:checked + .pallet-switch { background: var(--primary); }
+.pallet-date-toggle input:checked + .pallet-switch::after { transform: translateX(20px); }
+.pallet-date-toggle input:focus-visible + .pallet-switch { box-shadow: 0 0 0 3px rgba(21,94,239,.18); }
+.pallet-date-input { width: calc(50% - 9px); }
+
+@media (max-width: 640px) {
+  .pallet-quantity-grid { grid-template-columns: 1fr; }
+  .pallet-date-input { width: 100%; }
+}
 
 /* Scan QR mobile */
 .scan-page { display: grid; gap: 18px; }

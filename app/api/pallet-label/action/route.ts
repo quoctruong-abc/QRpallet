@@ -103,6 +103,8 @@ export async function POST(request: Request) {
         p_machine: plan.machine,
         p_quantity: quantity,
         p_note: `merge: ${wo1} + ${wo2}`,
+        p_working_day: null,
+        p_even_pallet: false,
       });
       if (error) throw error;
       return NextResponse.json({ success: true, pallet: data });
