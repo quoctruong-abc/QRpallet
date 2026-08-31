@@ -1,5 +1,9 @@
 import { Buffer } from "node:buffer";
-import { summarizeReceiptPallets, type ReceiptPalletRow } from "@/lib/warehouse-receipt/pdf";
+import {
+  summarizeReceiptPalletsByItem,
+  summarizeReceiptPalletsByWo,
+  type ReceiptPalletRow,
+} from "@/lib/warehouse-receipt/pdf";
 
 function cleanXmlText(value: unknown) {
   return String(value ?? "")
@@ -105,8 +109,13 @@ export function safeExcelFilename(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
-export function createReceiptExcel(receiptId: string, receiptDate: string, pallets: ReceiptPalletRow[]) {
-  const rows = summarizeReceiptPallets(pallets);
+type ExcelSummaryRow = ReturnType<typeof summarizeReceiptPalletsByWo>[number];
+
+function createWorksheetXml(
+  receiptId: string,
+  receiptDate: string,
+  rows: ExcelSummaryRow[],
+) {
   const header = [
     "STT",
     "Khách hàng",
@@ -144,7 +153,7 @@ export function createReceiptExcel(receiptId: string, receiptDate: string, palle
     );
   });
 
-  const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <cols>
     <col min="1" max="1" width="8" customWidth="1"/>
@@ -158,10 +167,26 @@ export function createReceiptExcel(receiptId: string, receiptDate: string, palle
   </cols>
   <sheetData>${sheetRows.join("")}</sheetData>
 </worksheet>`;
+}
+
+export function createReceiptExcel(receiptId: string, receiptDate: string, pallets: ReceiptPalletRow[]) {
+  const woSheetXml = createWorksheetXml(
+    receiptId,
+    receiptDate,
+    summarizeReceiptPalletsByWo(pallets),
+  );
+  const itemSheetXml = createWorksheetXml(
+    receiptId,
+    receiptDate,
+    summarizeReceiptPalletsByItem(pallets),
+  );
 
   const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheets><sheet name="Phiếu nhập kho" sheetId="1" r:id="rId1"/></sheets>
+  <sheets>
+    <sheet name="Theo WO (PDF)" sheetId="1" r:id="rId1"/>
+    <sheet name="Theo Item" sheetId="2" r:id="rId2"/>
+  </sheets>
 </workbook>`;
 
   const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -183,7 +208,8 @@ export function createReceiptExcel(receiptId: string, receiptDate: string, palle
   const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`;
 
   const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -197,6 +223,7 @@ export function createReceiptExcel(receiptId: string, receiptDate: string, palle
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
   <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
   <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>`;
 
@@ -206,6 +233,7 @@ export function createReceiptExcel(receiptId: string, receiptDate: string, palle
     { name: "xl/workbook.xml", data: Buffer.from(workbookXml, "utf8") },
     { name: "xl/_rels/workbook.xml.rels", data: Buffer.from(workbookRels, "utf8") },
     { name: "xl/styles.xml", data: Buffer.from(stylesXml, "utf8") },
-    { name: "xl/worksheets/sheet1.xml", data: Buffer.from(sheetXml, "utf8") },
+    { name: "xl/worksheets/sheet1.xml", data: Buffer.from(woSheetXml, "utf8") },
+    { name: "xl/worksheets/sheet2.xml", data: Buffer.from(itemSheetXml, "utf8") },
   ]);
 }

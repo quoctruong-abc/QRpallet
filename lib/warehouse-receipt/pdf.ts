@@ -56,30 +56,48 @@ function mergeUnique(current: string, next: string) {
   return values.join(" / ");
 }
 
-export function summarizeReceiptPallets(pallets: ReceiptPalletRow[]) {
+function summarizeReceiptPalletsBy(
+  pallets: ReceiptPalletRow[],
+  groupBy: "wo" | "itemcode",
+) {
   const grouped = new Map<string, SummaryRow>();
   for (const pallet of pallets) {
     const productionDate = pallet.working_day?.slice(0, 10) ?? "";
-    const key = [pallet.itemcode, productionDate].join("::");
+    const wo = pallet.wo?.trim() ?? "";
+    const itemcode = pallet.itemcode.trim();
+    const key = [groupBy === "wo" ? wo : itemcode, productionDate].join("::");
     const current = grouped.get(key) ?? {
       wo: "",
-      itemcode: pallet.itemcode,
+      itemcode: "",
       customer: "",
       productName: "",
       productionDate,
       palletCount: 0,
       totalQuantity: 0,
     };
-    current.wo = mergeUnique(current.wo, pallet.wo ?? "");
+    current.wo = mergeUnique(current.wo, wo);
+    current.itemcode = mergeUnique(current.itemcode, itemcode);
     current.customer = mergeUnique(current.customer, pallet.customer ?? "");
     current.productName = mergeUnique(current.productName, pallet.product_name ?? "");
     current.palletCount += 1;
     current.totalQuantity += Number(pallet.quantity) || 0;
     grouped.set(key, current);
   }
-  return Array.from(grouped.values()).sort((a, b) =>
-    a.itemcode.localeCompare(b.itemcode) || a.productionDate.localeCompare(b.productionDate),
-  );
+  return Array.from(grouped.values()).sort((a, b) => {
+    const primaryA = groupBy === "wo" ? a.wo : a.itemcode;
+    const primaryB = groupBy === "wo" ? b.wo : b.itemcode;
+    return primaryA.localeCompare(primaryB) ||
+      a.productionDate.localeCompare(b.productionDate) ||
+      a.itemcode.localeCompare(b.itemcode);
+  });
+}
+
+export function summarizeReceiptPalletsByWo(pallets: ReceiptPalletRow[]) {
+  return summarizeReceiptPalletsBy(pallets, "wo");
+}
+
+export function summarizeReceiptPalletsByItem(pallets: ReceiptPalletRow[]) {
+  return summarizeReceiptPalletsBy(pallets, "itemcode");
 }
 
 function drawCenteredText(page: PDFPage, font: PDFFont, text: string, size: number, x: number, y: number, width: number) {
@@ -98,7 +116,7 @@ function drawMultilineCell(page: PDFPage, font: PDFFont, lines: string[], size: 
 }
 
 export async function createReceiptPdf(receiptId: string, receiptDate: string, pallets: ReceiptPalletRow[], totals?: { pallets: number; quantity: number }) {
-  const rows = summarizeReceiptPallets(pallets);
+  const rows = summarizeReceiptPalletsByWo(pallets);
   const calculatedTotals = totals ?? { pallets: pallets.length, quantity: pallets.reduce((sum, pallet) => sum + Number(pallet.quantity || 0), 0) };
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
