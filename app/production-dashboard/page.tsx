@@ -548,9 +548,9 @@ export default async function ProductionDashboardPage({
         </div>
 
         <div className="dashboard-view-tabs" aria-label="Dashboard tabs">
-          <Link className="dashboard-view-tab dashboard-view-tab-active" href="/production-dashboard">Dashboard</Link>
-          <Link className="dashboard-view-tab" href="/production-dashboard/check-fifo">Check FIFO</Link>
-          <Link className="dashboard-view-tab" href="/production-dashboard/check-item">Check item</Link>
+          <Link className="dashboard-view-tab dashboard-view-tab-active" href="/production-dashboard" prefetch={false}>Dashboard</Link>
+          <Link className="dashboard-view-tab" href="/production-dashboard/check-fifo" prefetch={false}>Check FIFO</Link>
+          <Link className="dashboard-view-tab" href="/production-dashboard/check-item" prefetch={false}>Check item</Link>
         </div>
 
         <div className="dashboard-filter-grid">
@@ -630,12 +630,14 @@ export default async function ProductionDashboardPage({
               <Link
                 className={`dashboard-tab ${mode === "wo" ? "dashboard-tab-active" : ""}`}
                 href={`/production-dashboard?${woParams.toString()}`}
+                prefetch={false}
               >
                 Theo WO
               </Link>
               <Link
                 className={`dashboard-tab ${mode === "item" ? "dashboard-tab-active" : ""}`}
                 href={`/production-dashboard?${itemParams.toString()}`}
+                prefetch={false}
               >
                 Theo Item
               </Link>
