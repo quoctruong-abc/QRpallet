@@ -42,6 +42,49 @@ function fitText(font: PDFFont, value: string, maxWidth: number, size: number) {
   return `${result}...`;
 }
 
+function wrapText(font: PDFFont, value: string, maxWidth: number, size: number) {
+  const text = value || "-";
+  const lines: string[] = [];
+
+  for (const paragraph of text.split(/\r?\n/)) {
+    const words = paragraph.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      lines.push("");
+      continue;
+    }
+
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (textWidth(font, candidate, size) <= maxWidth) {
+        line = candidate;
+        continue;
+      }
+
+      if (line) lines.push(line);
+      if (textWidth(font, word, size) <= maxWidth) {
+        line = word;
+        continue;
+      }
+
+      let chunk = "";
+      for (const character of word) {
+        const nextChunk = `${chunk}${character}`;
+        if (chunk && textWidth(font, nextChunk, size) > maxWidth) {
+          lines.push(chunk);
+          chunk = character;
+        } else {
+          chunk = nextChunk;
+        }
+      }
+      line = chunk;
+    }
+    if (line) lines.push(line);
+  }
+
+  return lines.length ? lines : ["-"];
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) return "";
   const raw = value.slice(0, 10);
@@ -129,14 +172,54 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
   const logo = await pdf.embedPng(Buffer.from(LOGO_PNG_BASE64, "base64"));
 
   const pageWidth = 841.89, pageHeight = 595.28, margin = 22, topY = pageHeight - 18;
-  const titleHeight = 50, infoHeight = 25, tableHeaderHeight = 30, rowHeight = 20, signatureHeight = 90, codeFooterHeight = 15;
-  const footerHeight = signatureHeight + codeFooterHeight;
+  const titleHeight = 50, infoHeight = 25, tableHeaderHeight = 30, minimumRowHeight = 20, totalRowHeight = 20, signatureHeight = 90, codeFooterHeight = 15;
+  const productTextSize = 7.3, productLineHeight = productTextSize + 2, productVerticalPadding = 6;
   const columns = [22, 70, 70, 75, 320, 70, 50, 70, 50];
   const totalColumnsWidth = columns.reduce((sum, value) => sum + value, 0);
   const startX = margin + ((pageWidth - margin * 2) - totalColumnsWidth) / 2;
   const tableTop = topY - titleHeight - infoHeight;
-  const rowsPerPage = Math.max(1, Math.floor((tableTop - tableHeaderHeight - margin - footerHeight) / rowHeight));
-  const pageCount = Math.max(1, Math.ceil(rows.length / rowsPerPage));
+  const headerY = tableTop - tableHeaderHeight;
+  const signatureBottom = margin + codeFooterHeight;
+  const signatureTop = signatureBottom + signatureHeight;
+  const totalY = signatureTop + 3;
+  const regularPageCapacity = headerY - (margin + codeFooterHeight + 3);
+  const finalPageCapacity = headerY - (totalY + totalRowHeight);
+
+  const layoutRows = rows.map((row, index) => {
+    const productLines = wrapText(regular, row.productName || "-", columns[4] - 6, productTextSize);
+    return {
+      row,
+      index,
+      productLines,
+      height: Math.max(minimumRowHeight, productLines.length * productLineHeight + productVerticalPadding),
+    };
+  });
+
+  let finalPageStart = layoutRows.length;
+  let finalPageHeight = 0;
+  for (let index = layoutRows.length - 1; index >= 0; index -= 1) {
+    const nextHeight = finalPageHeight + layoutRows[index].height;
+    if (nextHeight > finalPageCapacity) break;
+    finalPageHeight = nextHeight;
+    finalPageStart = index;
+  }
+
+  const pages: Array<typeof layoutRows> = [];
+  let rowIndex = 0;
+  while (rowIndex < finalPageStart) {
+    const pageRows: typeof layoutRows = [];
+    let usedHeight = 0;
+    while (rowIndex < finalPageStart) {
+      const nextRow = layoutRows[rowIndex];
+      if (pageRows.length && usedHeight + nextRow.height > regularPageCapacity) break;
+      pageRows.push(nextRow);
+      usedHeight += nextRow.height;
+      rowIndex += 1;
+    }
+    pages.push(pageRows);
+  }
+  pages.push(layoutRows.slice(finalPageStart));
+  const pageCount = pages.length;
 
   const drawHeader = (page: PDFPage) => {
     const titleBottom = topY - titleHeight;
@@ -159,8 +242,8 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
     headers.forEach((lines, index) => { drawMultilineCell(page, bold, lines, index === 0 ? 7.2 : 7, x, y, columns[index], tableHeaderHeight, true); x += columns[index]; });
   };
 
-  const drawFooter = (page: PDFPage, pageNumber: number) => {
-    const footerBottom = margin + codeFooterHeight;
+  const drawSignatureFooter = (page: PDFPage) => {
+    const footerBottom = signatureBottom;
     const productionWidth = totalColumnsWidth * 0.64, warehouseWidth = totalColumnsWidth - productionWidth;
     const halfProd = productionWidth / 2, halfWh = warehouseWidth / 2;
     page.drawRectangle({ x: startX, y: footerBottom, width: totalColumnsWidth, height: signatureHeight, borderColor: BORDER, borderWidth: 0.8 });
@@ -178,6 +261,9 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
       drawCenteredText(page, regular, "Kí-ghi rõ họ tên/ Sign-full name", 7.2, cell.x, footerBottom + 7, cell.width);
       drawCenteredText(page, regular, "........../......../..............", 7.5, cell.x, footerBottom + 1, cell.width);
     });
+  };
+
+  const drawCodeFooter = (page: PDFPage, pageNumber: number) => {
     page.drawText("Kí hiệu/ Code: QP-PRO-06-FM-03", { x: startX, y: margin + 5, size: 7.5, font: regular });
     drawCenteredText(page, regular, "Hiệu lực/ Eff. date: 24.07.2026     Lần soát xét/ Eff. date: 05", 7.5, startX + 220, margin + 5, 390);
     page.drawText(`Trang/page: ${pageNumber}/${pageCount}`, { x: startX + totalColumnsWidth - 78, y: margin + 5, size: 7.5, font: regular });
@@ -186,38 +272,50 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
   for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
     const page = pdf.addPage([pageWidth, pageHeight]);
     drawHeader(page);
-    const headerY = tableTop - tableHeaderHeight;
     drawTableHeader(page, headerY);
-    const chunk = rows.slice(pageIndex * rowsPerPage, (pageIndex + 1) * rowsPerPage);
-    let y = headerY - rowHeight;
-    chunk.forEach((row, localIndex) => {
-      const values = [String(pageIndex * rowsPerPage + localIndex + 1), row.customer || "-", row.wo || "-", row.itemcode, row.productName || "-", row.totalQuantity.toLocaleString("vi-VN"), String(row.palletCount), formatDate(row.productionDate), ""];
+    const pageRows = pages[pageIndex];
+    let y = headerY;
+    pageRows.forEach(({ row, index: globalIndex, productLines, height }) => {
+      const rowBottom = y - height;
+      const values = [String(globalIndex + 1), row.customer || "-", row.wo || "-", row.itemcode, row.productName || "-", row.totalQuantity.toLocaleString("vi-VN"), String(row.palletCount), formatDate(row.productionDate), ""];
       let x = startX;
       values.forEach((value, index) => {
-        page.drawRectangle({ x, y, width: columns[index], height: rowHeight, borderColor: BORDER, borderWidth: 0.65 });
-        const size = index === 4 ? 7.3 : 7.6;
+        page.drawRectangle({ x, y: rowBottom, width: columns[index], height, borderColor: BORDER, borderWidth: 0.65 });
+        const size = index === 4 ? productTextSize : 7.6;
+        if (index === 4) {
+          const blockHeight = productLines.length * productLineHeight - 2;
+          let textY = rowBottom + (height + blockHeight) / 2 - size;
+          productLines.forEach((line) => {
+            page.drawText(line, { x: x + 3, y: textY, size, font: regular });
+            textY -= productLineHeight;
+          });
+          x += columns[index];
+          return;
+        }
         const display = fitText(regular, value, columns[index] - 6, size);
-        const tx = index !== 4 ? x + Math.max(3, (columns[index] - textWidth(regular, display, size)) / 2) : x + 3;
-        page.drawText(display, { x: tx, y: y + 9.5, size, font: regular });
+        const tx = x + Math.max(3, (columns[index] - textWidth(regular, display, size)) / 2);
+        const textY = rowBottom + (height - size) / 2 + 3.2;
+        page.drawText(display, { x: tx, y: textY, size, font: regular });
         x += columns[index];
       });
-      y -= rowHeight;
+      y = rowBottom;
     });
     if (pageIndex === pageCount - 1) {
-      const totalY = Math.max(margin + footerHeight + 3, y);
+      const pageTotalY = Math.max(totalY, y - totalRowHeight);
       let x = startX;
       const firstWidth = columns.slice(0, 5).reduce((a, b) => a + b, 0);
-      page.drawRectangle({ x, y: totalY, width: firstWidth, height: rowHeight, borderColor: BORDER, borderWidth: 0.7 });
-      drawCenteredText(page, bold, "TỔNG CỘNG/ TOTAL", 8, x, totalY + 9, firstWidth);
+      page.drawRectangle({ x, y: pageTotalY, width: firstWidth, height: totalRowHeight, borderColor: BORDER, borderWidth: 0.7 });
+      drawCenteredText(page, bold, "TỔNG CỘNG/ TOTAL", 8, x, pageTotalY + 9, firstWidth);
       x += firstWidth;
       [calculatedTotals.quantity.toLocaleString("vi-VN"), String(calculatedTotals.pallets), "", ""].forEach((value, index) => {
         const width = columns[index + 5];
-        page.drawRectangle({ x, y: totalY, width, height: rowHeight, borderColor: BORDER, borderWidth: 0.7 });
-        drawCenteredText(page, bold, value, 8, x, totalY + 9, width);
+        page.drawRectangle({ x, y: pageTotalY, width, height: totalRowHeight, borderColor: BORDER, borderWidth: 0.7 });
+        drawCenteredText(page, bold, value, 8, x, pageTotalY + 9, width);
         x += width;
       });
+      drawSignatureFooter(page);
     }
-    drawFooter(page, pageIndex + 1);
+    drawCodeFooter(page, pageIndex + 1);
   }
   return pdf.save();
 }
