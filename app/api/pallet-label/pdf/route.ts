@@ -35,6 +35,7 @@ type TextLayout = {
 };
 
 const MM_TO_POINT = 72 / 25.4;
+const CUSTOMER_FONT_SIZES = [95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30, 25, 20] as const;
 
 function mm(value: number): number {
   return value * MM_TO_POINT;
@@ -86,7 +87,7 @@ const LABEL_LAYOUT = {
   itemcode: { x: 18, y: 100, size: 25, bold: true, maxWidth: 150 },
   wo: { x: 18, y: 115, size: 20, bold: false, maxWidth: 150 },
   productName: { x: 18, y: 57, size: 25, bold: true, maxWidth: 270 },
-  customer: { x: 18, y: 40, size: 92, bold: true, maxWidth: 185 },
+  customer: { x: 18, y: 40, size: 95, bold: false, maxWidth: 260 },
   machine: { x: 18, y: 130, size: 20, bold: false, maxWidth: 100 },
   quantity: { x: 18, y: 180, size: 40, bold: true, maxWidth: 140 },
   quanorder: { x: 18, y: 145, size: 20, bold: false, maxWidth: 100 },
@@ -184,6 +185,11 @@ export async function GET(request: Request) {
     });
     const qrImage = await pdfDoc.embedPng(qrBuffer);
 
+    const customerText = withPrefix(LABEL_PREFIX.customer, pallet.customer);
+    const customerFontSize = CUSTOMER_FONT_SIZES.find(
+      (size) => regularFont.widthOfTextAtSize(customerText, size) <= mm(LABEL_LAYOUT.customer.maxWidth),
+    ) ?? CUSTOMER_FONT_SIZES[CUSTOMER_FONT_SIZES.length - 1];
+
     drawText(
       withPrefix(LABEL_PREFIX.workingDay, formatWorkingDay(pallet.working_day)),
       LABEL_LAYOUT.workingDay,
@@ -191,7 +197,7 @@ export async function GET(request: Request) {
     drawText(withPrefix(LABEL_PREFIX.itemcode, pallet.itemcode), LABEL_LAYOUT.itemcode);
     drawText(withPrefix(LABEL_PREFIX.wo, pallet.wo), LABEL_LAYOUT.wo);
     drawText(withPrefix(LABEL_PREFIX.productName, pallet.product_name), LABEL_LAYOUT.productName);
-    drawText(withPrefix(LABEL_PREFIX.customer, pallet.customer), LABEL_LAYOUT.customer);
+    drawText(customerText, { ...LABEL_LAYOUT.customer, size: customerFontSize });
     drawText(withPrefix(LABEL_PREFIX.machine, pallet.machine), LABEL_LAYOUT.machine);
     drawText(withPrefix(LABEL_PREFIX.quantity, formatNumber(pallet.quantity)), LABEL_LAYOUT.quantity);
     drawText(withPrefix(LABEL_PREFIX.quanorder, formatNumber(pallet.quanorder)), LABEL_LAYOUT.quanorder);
