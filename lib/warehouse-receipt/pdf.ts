@@ -195,21 +195,12 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
     };
   });
 
-  let finalPageStart = layoutRows.length;
-  let finalPageHeight = 0;
-  for (let index = layoutRows.length - 1; index >= 0; index -= 1) {
-    const nextHeight = finalPageHeight + layoutRows[index].height;
-    if (nextHeight > finalPageCapacity) break;
-    finalPageHeight = nextHeight;
-    finalPageStart = index;
-  }
-
   const pages: Array<typeof layoutRows> = [];
   let rowIndex = 0;
-  while (rowIndex < finalPageStart) {
+  while (rowIndex < layoutRows.length) {
     const pageRows: typeof layoutRows = [];
     let usedHeight = 0;
-    while (rowIndex < finalPageStart) {
+    while (rowIndex < layoutRows.length) {
       const nextRow = layoutRows[rowIndex];
       if (pageRows.length && usedHeight + nextRow.height > regularPageCapacity) break;
       pageRows.push(nextRow);
@@ -218,7 +209,18 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
     }
     pages.push(pageRows);
   }
-  pages.push(layoutRows.slice(finalPageStart));
+
+  if (!pages.length) {
+    pages.push([]);
+  } else {
+    const lastPage = pages[pages.length - 1];
+    const lastPageHeight = lastPage.reduce((sum, row) => sum + row.height, 0);
+    if (lastPageHeight > finalPageCapacity) {
+      const finalRow = lastPage.pop();
+      if (!lastPage.length) pages.pop();
+      if (finalRow) pages.push([finalRow]);
+    }
+  }
   const pageCount = pages.length;
 
   const drawHeader = (page: PDFPage) => {
