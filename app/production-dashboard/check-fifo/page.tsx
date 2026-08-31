@@ -232,9 +232,9 @@ export default async function CheckFifoPage({
         </div>
 
         <div className="dashboard-view-tabs" aria-label="Dashboard tabs">
-          <Link className="dashboard-view-tab" href="/production-dashboard">Dashboard</Link>
-          <Link className="dashboard-view-tab dashboard-view-tab-active" href="/production-dashboard/check-fifo">Check FIFO</Link>
-          <Link className="dashboard-view-tab" href="/production-dashboard/check-item">Check item</Link>
+          <Link className="dashboard-view-tab" href="/production-dashboard" prefetch={false}>Dashboard</Link>
+          <Link className="dashboard-view-tab dashboard-view-tab-active" href="/production-dashboard/check-fifo" prefetch={false}>Check FIFO</Link>
+          <Link className="dashboard-view-tab" href="/production-dashboard/check-item" prefetch={false}>Check item</Link>
         </div>
 
         <FifoFilterForm
@@ -323,8 +323,8 @@ export default async function CheckFifoPage({
             <div className="fifo-pagination">
               <span className="muted small">Trang {page} · tối đa {FIFO_PAGE_SIZE} pallet/trang</span>
               <div className="fifo-pagination-actions">
-                {page > 1 ? <Link className="button button-secondary" href={fifoPageHref(page - 1)}>Trang trước</Link> : null}
-                {hasNextPage ? <Link className="button button-primary" href={fifoPageHref(page + 1)}>Trang sau</Link> : null}
+                {page > 1 ? <Link className="button button-secondary" href={fifoPageHref(page - 1)} prefetch={false}>Trang trước</Link> : null}
+                {hasNextPage ? <Link className="button button-primary" href={fifoPageHref(page + 1)} prefetch={false}>Trang sau</Link> : null}
               </div>
             </div>
           ) : null}
