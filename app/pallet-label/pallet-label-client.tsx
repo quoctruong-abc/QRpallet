@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { WoPalletHistoryDialog } from "./wo-pallet-history-dialog";
 
 export type PlanItem = {
   machine: string;
@@ -101,6 +102,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<PlanItem | null>(null);
   const [selectedPallet, setSelectedPallet] = useState<ActivePallet | null>(null);
+  const [historyWo, setHistoryWo] = useState<string | null>(null);
   const [historyPallets, setHistoryPallets] = useState<ActivePallet[]>(initialPallets);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [mode, setMode] = useState<Mode>("full");
@@ -377,6 +379,13 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   }
 
   return <>
+    <style>{`
+      .pallet-wo-cell { display: inline-flex; align-items: center; gap: 7px; }
+      .pallet-wo-eye-button { width: 30px; height: 30px; display: inline-grid; place-items: center; padding: 0; border: 1px solid #d0d5dd; border-radius: 9px; color: #344054; background: #fff; cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease, transform .15s ease; }
+      .pallet-wo-eye-button:hover { border-color: #84adff; color: #175cd3; background: #eff8ff; transform: translateY(-1px); }
+      .pallet-wo-eye-button:focus-visible { outline: 3px solid rgba(47, 128, 237, .22); outline-offset: 1px; }
+      .pallet-wo-eye-button svg { width: 17px; height: 17px; }
+    `}</style>
     <div className="feature-toolbar pallet-main-toolbar">
       <button className="button button-secondary" onClick={() => openHistory()}>Lịch sử in tem</button>
     </div>
@@ -399,13 +408,15 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
               <thead><tr><th>In tem</th><th>Itemcode</th><th>WO</th><th>Product name</th><th>Customer</th><th>Quan order</th><th>Đã chạy</th><th>Đã nhập kho</th></tr></thead>
               <tbody>{visibleRows.map((row) => <tr key={`${row.machine}-${row.wo}-${row.itemcode}`}>
                 <td><div className="action-row"><button className="button button-primary button-small" onClick={() => openCreate(row)}>In tem</button>{row.quantity_per_pallet === null ? <button className="button button-secondary button-small" disabled={updatingItemcode === row.itemcode} onClick={() => updatePalletConfig(row)}>{updatingItemcode === row.itemcode ? "Đang cập nhật..." : "Cập nhật"}</button> : null}</div></td>
-                <td><strong>{row.itemcode}</strong></td><td><span className="badge">{row.wo}</span></td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td>{formatNumber(row.quanorder)}</td><td><QuantityProgress value={row.produced_quantity} total={row.quanorder} /></td><td><QuantityProgress value={row.warehouse_quantity} total={row.quanorder} /></td>
+                <td><strong>{row.itemcode}</strong></td><td><span className="pallet-wo-cell"><span className="badge">{row.wo}</span><button aria-label={`Xem lịch sử in tem của WO ${row.wo}`} className="pallet-wo-eye-button" onClick={() => setHistoryWo(row.wo)} title="Xem lịch sử in tem của WO" type="button"><svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><circle cx="12" cy="12" r="2.75" stroke="currentColor" strokeWidth="1.8"/></svg></button></span></td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td>{formatNumber(row.quanorder)}</td><td><QuantityProgress value={row.produced_quantity} total={row.quanorder} /></td><td><QuantityProgress value={row.warehouse_quantity} total={row.quanorder} /></td>
               </tr>)}</tbody>
             </table></div>
           </section> : null}
         </div>;
       })}
     </div>
+
+    {historyWo ? <WoPalletHistoryDialog key={historyWo} onClose={() => setHistoryWo(null)} wo={historyWo} /> : null}
 
     {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className="modal-card modal-card-wide" onMouseDown={(event) => event.stopPropagation()}>
       <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2>{dialog === "create" && selectedRow ? <p className="pallet-modal-order">SL đặt hàng: <strong>{formatNumber(selectedRow.quanorder)}</strong></p> : null}</div><button className="modal-close" onClick={closeDialog}>×</button></div>
