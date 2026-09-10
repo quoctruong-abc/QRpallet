@@ -166,3 +166,14 @@ export async function authorizePermission(permission: PermissionKey): Promise<Ap
   }
   return authorization;
 }
+
+export async function authorizeAnyPermission(
+  permissions: PermissionKey[],
+): Promise<ApiAuthorization> {
+  const authorization = await authorizeProfile();
+  if (!authorization.ok) return authorization;
+  if (!hasAnyPermission(authorization.profile, permissions)) {
+    return { ok: false, status: 403, error: "Bạn không có quyền thực hiện chức năng này." };
+  }
+  return authorization;
+}

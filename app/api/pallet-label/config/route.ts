@@ -2,6 +2,42 @@ import { NextResponse } from "next/server";
 import { authorizePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+export async function GET(request: Request) {
+  const authorization = await authorizePermission("pallet.create");
+  if (!authorization.ok) {
+    return NextResponse.json({ error: authorization.error }, { status: authorization.status });
+  }
+
+  const url = new URL(request.url);
+  const search = (url.searchParams.get("itemcode") ?? "").trim();
+  if (!search) {
+    return NextResponse.json({ error: "Vui lòng nhập Itemcode cần tìm." }, { status: 400 });
+  }
+
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient
+    .from("item_pallet_config")
+    .select("itemcode,quantity_per_pallet,updated_at")
+    .ilike("itemcode", `%${search}%`)
+    .order("itemcode", { ascending: true })
+    .limit(50);
+
+  if (error) {
+    return NextResponse.json(
+      { error: `Không thể tải cấu hình pallet: ${error.message}` },
+      { status: 500 },
+    );
+  }
+
+  const configs = (data ?? []).sort((left, right) => {
+    const leftExact = left.itemcode.toLowerCase() === search.toLowerCase();
+    const rightExact = right.itemcode.toLowerCase() === search.toLowerCase();
+    return Number(rightExact) - Number(leftExact);
+  });
+
+  return NextResponse.json({ success: true, configs });
+}
+
 export async function POST(request: Request) {
   const authorization = await authorizePermission("pallet.create");
   if (!authorization.ok) {

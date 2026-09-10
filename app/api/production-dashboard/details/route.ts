@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authorizePermission } from "@/lib/auth";
+import { authorizeAnyPermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -106,16 +106,17 @@ async function loadPalletDetails(url: URL) {
   const key = (url.searchParams.get("key") ?? "").trim();
   const requestedFrom = url.searchParams.get("from");
   const requestedTo = url.searchParams.get("to");
+  const allDates = url.searchParams.get("allDates") === "1";
 
-  if (!key || !isValidDate(requestedFrom) || !isValidDate(requestedTo)) {
+  if (!key || (!allDates && (!isValidDate(requestedFrom) || !isValidDate(requestedTo)))) {
     return NextResponse.json(
       { success: false, error: "Bộ lọc chi tiết pallet không hợp lệ." },
       { status: 400 },
     );
   }
 
-  let startDate = requestedFrom!;
-  let endDate = requestedTo!;
+  let startDate = requestedFrom ?? "";
+  let endDate = requestedTo ?? "";
   if (startDate > endDate) [startDate, endDate] = [endDate, startDate];
 
   const supabase = await createClient();
@@ -129,10 +130,12 @@ async function loadPalletDetails(url: URL) {
       let query = supabase
         .from("pallet_data")
         .select(detailFields)
-        .gte("working_day", startDate)
-        .lte("working_day", endDate)
         .order("created_at", { ascending: false })
         .range(offset, offset + pageSize - 1);
+
+      if (!allDates) {
+        query = query.gte("working_day", startDate).lte("working_day", endDate);
+      }
 
       query = isDeleted
         ? query.not("effect_to", "is", null).ilike("note", "delete:%")
@@ -146,6 +149,7 @@ async function loadPalletDetails(url: URL) {
           key,
           startDate,
           endDate,
+          allDates,
           isDeleted,
           message: error.message,
         });
@@ -376,7 +380,7 @@ async function loadPalletHistory(palletId: string) {
 }
 
 export async function GET(request: Request) {
-  const authorization = await authorizePermission("dashboard.view");
+  const authorization = await authorizeAnyPermission(["dashboard.view", "pallet.create"]);
   if (!authorization.ok) {
     return NextResponse.json(
       { success: false, error: authorization.error },
