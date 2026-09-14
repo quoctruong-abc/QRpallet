@@ -170,7 +170,6 @@ export function ShiftReportReviewClient() {
       if (uploadMode === "standard") {
         const responseBody = await sendFile(file, "standard", "apply");
         setResult(responseBody as UploadResult);
-        void loadComparison(selectedDate);
         return;
       }
 
@@ -200,7 +199,6 @@ export function ShiftReportReviewClient() {
       setResult(responseBody as UploadResult);
       setAuditPreview(null);
       setAuditDecisions({});
-      void loadComparison(selectedDate);
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Không thể cập nhật audit.");
     } finally {
@@ -319,7 +317,7 @@ export function ShiftReportReviewClient() {
 
         {comparisonError ? <p className="alert alert-error">{comparisonError}</p> : null}
 
-        <div className="table-wrap">
+        <div className="table-wrap shift-comparison-table-wrap">
           <table className="shift-comparison-table">
             <thead>
               <tr>
@@ -327,10 +325,10 @@ export function ShiftReportReviewClient() {
                 <th>WO</th>
                 <th>Itemcode</th>
                 <th className="shift-product-name-column">Tên sản phẩm</th>
-                <th>SL đơn hàng</th>
-                <th>App đã in</th>
-                <th>ERP báo ca</th>
-                <th>Chênh lệch<br /><small>App - ERP</small></th>
+                <th className="shift-number-column">SL đơn hàng</th>
+                <th className="shift-number-column">App đã in</th>
+                <th className="shift-number-column">ERP báo ca</th>
+                <th className="shift-number-column">Chênh lệch<br /><small>App - ERP</small></th>
                 <th>Kết quả</th>
               </tr>
             </thead>
@@ -343,10 +341,10 @@ export function ShiftReportReviewClient() {
                   <td><strong>{row.wo}</strong></td>
                   <td>{row.itemcode || "—"}</td>
                   <td className="shift-product-name-column">{row.productName || "—"}</td>
-                  <td className="number-cell">{formatNumber(row.orderQuantity)}</td>
-                  <td className="number-cell"><strong>{formatNumber(row.appQuantity)}</strong></td>
-                  <td className="number-cell"><strong>{formatNumber(row.erpQuantity)}</strong></td>
-                  <td className={`number-cell shift-difference ${row.difference === 0 ? "shift-difference-zero" : ""}`}>{row.difference > 0 ? "+" : ""}{formatNumber(row.difference)}</td>
+                  <td className="number-cell shift-number-column">{formatNumber(row.orderQuantity)}</td>
+                  <td className="number-cell shift-number-column"><strong>{formatNumber(row.appQuantity)}</strong></td>
+                  <td className="number-cell shift-number-column"><strong>{formatNumber(row.erpQuantity)}</strong></td>
+                  <td className={`number-cell shift-number-column shift-difference ${row.difference === 0 ? "shift-difference-zero" : ""}`}>{row.difference > 0 ? "+" : ""}{formatNumber(row.difference)}</td>
                   <td><span className={`shift-result shift-result-${row.status}`}>{row.result}</span></td>
                 </tr>
               )) : (

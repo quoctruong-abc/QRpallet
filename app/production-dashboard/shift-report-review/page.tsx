@@ -50,9 +50,12 @@ export default async function ShiftReportReviewPage() {
         .shift-comparison-summary .shift-summary-matched { color: #027a48; background: #ecfdf3; }
         .shift-comparison-summary .shift-summary-mismatch { color: #b54708; background: #fffaeb; }
         .shift-comparison-panel > .alert { margin: 0 0 14px; }
-        .shift-comparison-table { width: 100%; min-width: 1220px; }
+        .shift-comparison-table-wrap { max-height: min(66vh,680px); overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+        .shift-comparison-table { width: 100%; min-width: 1080px; }
+        .shift-comparison-table thead th { position: sticky; top: 0; z-index: 2; background: #f8fafc; box-shadow: 0 1px 0 var(--border); }
         .shift-comparison-table th small { color: inherit; font-size: .68rem; font-weight: 650; }
         .shift-comparison-table .shift-product-name-column { width: 190px; max-width: 190px; white-space: normal; overflow-wrap: anywhere; }
+        .shift-comparison-table .shift-number-column { width: 86px; max-width: 86px; padding-left: 7px; padding-right: 7px; text-align: right; white-space: normal; }
         .shift-comparison-table .number-cell { text-align: right; white-space: nowrap; }
         .shift-comparison-row-mismatch { background: #fffcf5; }
         .shift-comparison-row-mismatch:hover { background: #fff7e8; }
