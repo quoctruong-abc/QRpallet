@@ -30,8 +30,15 @@ type DashboardTotals = {
   orderQuantity: number;
   palletCount: number;
   producedQuantity: number;
+  totalProducedQuantity: number;
   scannedQuantity: number;
   warehouseQuantity: number;
+};
+
+type TotalProgressRow = {
+  id: number;
+  wo: string | null;
+  quantity: number | null;
 };
 
 type DashboardSummaryRpcRow = {
@@ -239,6 +246,7 @@ function getTotals(rows: DashboardSummaryRow[]): DashboardTotals {
       orderQuantity: total.orderQuantity + row.orderQuantity,
       palletCount: total.palletCount + row.palletCount,
       producedQuantity: total.producedQuantity + row.producedQuantity,
+      totalProducedQuantity: total.totalProducedQuantity + (row.totalProducedQuantity ?? 0),
       scannedQuantity: total.scannedQuantity + row.scannedQuantity,
       warehouseQuantity: total.warehouseQuantity + row.warehouseQuantity,
     }),
@@ -246,6 +254,7 @@ function getTotals(rows: DashboardSummaryRow[]): DashboardTotals {
       orderQuantity: 0,
       palletCount: 0,
       producedQuantity: 0,
+      totalProducedQuantity: 0,
       scannedQuantity: 0,
       warehouseQuantity: 0,
     },
@@ -257,6 +266,7 @@ function normalizeRangeSummary(row: DashboardSummaryRpcRow | undefined): Dashboa
     orderQuantity: Number(row?.order_quantity) || 0,
     palletCount: Number(row?.pallet_count) || 0,
     producedQuantity: Number(row?.produced_quantity) || 0,
+    totalProducedQuantity: 0,
     scannedQuantity: Number(row?.scanned_quantity) || 0,
     warehouseQuantity: Number(row?.warehouse_quantity) || 0,
   };
@@ -425,8 +435,57 @@ export default async function ProductionDashboardPage({
     }
   }
 
-  const woRows = aggregateByWo(palletRows);
+  let woRows = aggregateByWo(palletRows);
   const itemRows = aggregateByItem(palletRows);
+  const totalProducedByWo = new Map<string, number>();
+
+  if (!queryError && mode === "wo" && woRows.length) {
+    const woKeys = woRows.map((row) => row.key);
+    const keyBatchSize = 100;
+
+    for (let keyOffset = 0; keyOffset < woKeys.length; keyOffset += keyBatchSize) {
+      const keyBatch = woKeys.slice(keyOffset, keyOffset + keyBatchSize);
+
+      for (let offset = 0; ; offset += QUERY_BATCH_SIZE) {
+        const { data, error } = await supabase
+          .from("pallet_data")
+          .select("id,wo,quantity")
+          .is("effect_to", null)
+          .in("wo", keyBatch)
+          .order("id", { ascending: true })
+          .range(offset, offset + QUERY_BATCH_SIZE - 1);
+
+        if (error) {
+          queryError = true;
+          console.error("Dashboard total progress query database error", {
+            woCount: keyBatch.length,
+            message: error.message,
+          });
+          break;
+        }
+
+        const totalRows = (data ?? []) as TotalProgressRow[];
+        for (const row of totalRows) {
+          const wo = row.wo?.trim();
+          if (!wo) continue;
+          totalProducedByWo.set(
+            wo,
+            (totalProducedByWo.get(wo) ?? 0) + (Number(row.quantity) || 0),
+          );
+        }
+
+        if (totalRows.length < QUERY_BATCH_SIZE) break;
+      }
+
+      if (queryError) break;
+    }
+
+    woRows = woRows.map((row) => ({
+      ...row,
+      totalProducedQuantity: totalProducedByWo.get(row.key) ?? 0,
+    }));
+  }
+
   const visibleRows = mode === "item" ? itemRows : woRows;
   const pageTotals = getTotals(visibleRows);
 
@@ -648,6 +707,7 @@ export default async function ProductionDashboardPage({
             endDate={pageEndDate}
             mode={mode}
             rows={visibleRows}
+            showTotalProgress={mode === "wo"}
             startDate={pageStartDate}
             totals={pageTotals}
           />

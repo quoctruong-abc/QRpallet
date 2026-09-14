@@ -13,6 +13,7 @@ export type DashboardSummaryRow = {
   orderQuantity: number;
   palletCount: number;
   producedQuantity: number;
+  totalProducedQuantity?: number;
   scannedQuantity: number;
   warehouseQuantity: number;
   warning: boolean;
@@ -75,9 +76,11 @@ type Props = {
     orderQuantity: number;
     palletCount: number;
     producedQuantity: number;
+    totalProducedQuantity?: number;
     scannedQuantity: number;
     warehouseQuantity: number;
   };
+  showTotalProgress?: boolean;
 };
 
 function formatNumber(value: number | null) {
@@ -145,7 +148,14 @@ function QuantityProgress({ value, total }: { value: number; total: number }) {
   );
 }
 
-export function DashboardTableClient({ rows, mode, startDate, endDate, totals }: Props) {
+export function DashboardTableClient({
+  rows,
+  mode,
+  startDate,
+  endDate,
+  totals,
+  showTotalProgress = false,
+}: Props) {
   const [selectedRow, setSelectedRow] = useState<DashboardSummaryRow | null>(null);
   const [pallets, setPallets] = useState<PalletDetail[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -236,6 +246,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
     <>
       <style>{`
         .dashboard-table { min-width: 1260px; }
+        .dashboard-table-with-total-progress { min-width: 1390px; }
         .dashboard-warning-button { width: 22px; height: 22px; display: inline-grid; place-items: center; margin-left: 7px; padding: 0; border: 0; border-radius: 50%; color: white; background: #d92d20; font-size: .76rem; font-weight: 900; line-height: 1; cursor: pointer; vertical-align: middle; box-shadow: 0 2px 6px rgba(217,45,32,.28); }
         .dashboard-warning-button:hover { transform: translateY(-1px); background: #b42318; }
         .dashboard-total-row td { border-top: 2px solid #98a2b3; background: #f8fafc; font-weight: 800; }
@@ -299,7 +310,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
       `}</style>
 
       <div className="table-wrap">
-        <table className="dashboard-table">
+        <table className={`dashboard-table ${showTotalProgress ? "dashboard-table-with-total-progress" : ""}`}>
           <thead>
             <tr>
               <th>{mode === "wo" ? "WO" : "Itemcode"}</th>
@@ -309,6 +320,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
               <th>Quan order</th>
               <th>Số pallet</th>
               <th>Đã sản xuất</th>
+              {showTotalProgress ? <th>Tổng tiến độ</th> : null}
               <th>Đã scan</th>
               <th>Đã nhập kho</th>
               <th>Chi tiết</th>
@@ -338,6 +350,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
                   <td>{formatNumber(row.orderQuantity)}</td>
                   <td><span className="dashboard-pallet-count">{formatNumber(row.palletCount)}</span></td>
                   <td><QuantityProgress total={row.orderQuantity} value={row.producedQuantity} /></td>
+                  {showTotalProgress ? <td><QuantityProgress total={row.orderQuantity} value={row.totalProducedQuantity ?? 0} /></td> : null}
                   <td><QuantityProgress total={row.orderQuantity} value={row.scannedQuantity} /></td>
                   <td><QuantityProgress total={row.orderQuantity} value={row.warehouseQuantity} /></td>
                   <td>
@@ -353,7 +366,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
               ))
             ) : (
               <tr>
-                <td className="dashboard-empty" colSpan={mode === "wo" ? 10 : 9}>
+                <td className="dashboard-empty" colSpan={(mode === "wo" ? 10 : 9) + (showTotalProgress ? 1 : 0)}>
                   Không có dữ liệu pallet trong khoảng ngày đã chọn.
                 </td>
               </tr>
@@ -368,6 +381,7 @@ export function DashboardTableClient({ rows, mode, startDate, endDate, totals }:
                 <td>{formatNumber(totals.orderQuantity)}</td>
                 <td>{formatNumber(totals.palletCount)}</td>
                 <td><QuantityProgress total={totals.orderQuantity} value={totals.producedQuantity} /></td>
+                {showTotalProgress ? <td><QuantityProgress total={totals.orderQuantity} value={totals.totalProducedQuantity ?? 0} /></td> : null}
                 <td><QuantityProgress total={totals.orderQuantity} value={totals.scannedQuantity} /></td>
                 <td><QuantityProgress total={totals.orderQuantity} value={totals.warehouseQuantity} /></td>
                 <td>—</td>
