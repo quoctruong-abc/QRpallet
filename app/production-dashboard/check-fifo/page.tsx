@@ -235,6 +235,7 @@ export default async function CheckFifoPage({
           <Link className="dashboard-view-tab" href="/production-dashboard" prefetch={false}>Dashboard</Link>
           <Link className="dashboard-view-tab dashboard-view-tab-active" href="/production-dashboard/check-fifo" prefetch={false}>Check FIFO</Link>
           <Link className="dashboard-view-tab" href="/production-dashboard/check-item" prefetch={false}>Check item</Link>
+          <Link className="dashboard-view-tab" href="/production-dashboard/shift-report-review" prefetch={false}>Rà soát báo ca</Link>
         </div>
 
         <FifoFilterForm
