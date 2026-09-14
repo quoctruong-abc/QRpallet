@@ -35,6 +35,27 @@ type AuditPreview = {
   lastDate: string;
 };
 
+type ComparisonRow = {
+  wo: string;
+  machine: string;
+  itemcode: string;
+  productName: string;
+  orderQuantity: number;
+  appQuantity: number;
+  erpQuantity: number;
+  difference: number;
+  itemcodeMatches: boolean;
+  quantityMatches: boolean;
+  result: string;
+  status: "matched" | "mismatch";
+};
+
+type ComparisonSummary = {
+  total: number;
+  matched: number;
+  mismatched: number;
+};
+
 function formatFileSize(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -51,6 +72,18 @@ function formatDate(value: string | null | undefined) {
   return year && month && day ? `${day}/${month}/${year}` : value;
 }
 
+function getCurrentWorkingDay() {
+  const shifted = new Date(Date.now() - 6 * 60 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(shifted);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 export function ShiftReportReviewClient() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploadMode, setUploadMode] = useState<UploadMode>("standard");
@@ -60,6 +93,36 @@ export function ShiftReportReviewClient() {
   const [result, setResult] = useState<UploadResult | null>(null);
   const [auditPreview, setAuditPreview] = useState<AuditPreview | null>(null);
   const [auditDecisions, setAuditDecisions] = useState<Record<string, boolean>>({});
+  const [selectedDate, setSelectedDate] = useState(getCurrentWorkingDay);
+  const [comparedDate, setComparedDate] = useState("");
+  const [comparisonRows, setComparisonRows] = useState<ComparisonRow[]>([]);
+  const [comparisonSummary, setComparisonSummary] = useState<ComparisonSummary>({ total: 0, matched: 0, mismatched: 0 });
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [comparisonError, setComparisonError] = useState("");
+
+  async function loadComparison(date: string) {
+    setComparisonLoading(true);
+    setComparisonError("");
+    try {
+      const response = await fetch(`/api/production-dashboard/shift-report?date=${encodeURIComponent(date)}`, {
+        cache: "no-store",
+      });
+      const responseBody = await response.json();
+      if (!response.ok || !responseBody.success) {
+        throw new Error(responseBody.error ?? "Không thể tải dữ liệu rà soát.");
+      }
+      setComparisonRows(responseBody.rows as ComparisonRow[]);
+      setComparisonSummary(responseBody.summary as ComparisonSummary);
+      setComparedDate(responseBody.reportDate as string);
+    } catch (comparisonLoadError) {
+      setComparisonRows([]);
+      setComparisonSummary({ total: 0, matched: 0, mismatched: 0 });
+      setComparedDate(date);
+      setComparisonError(comparisonLoadError instanceof Error ? comparisonLoadError.message : "Không thể tải dữ liệu rà soát.");
+    } finally {
+      setComparisonLoading(false);
+    }
+  }
 
   function selectMode(mode: UploadMode) {
     setUploadMode(mode);
@@ -107,6 +170,7 @@ export function ShiftReportReviewClient() {
       if (uploadMode === "standard") {
         const responseBody = await sendFile(file, "standard", "apply");
         setResult(responseBody as UploadResult);
+        void loadComparison(selectedDate);
         return;
       }
 
@@ -136,6 +200,7 @@ export function ShiftReportReviewClient() {
       setResult(responseBody as UploadResult);
       setAuditPreview(null);
       setAuditDecisions({});
+      void loadComparison(selectedDate);
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Không thể cập nhật audit.");
     } finally {
@@ -227,27 +292,66 @@ export function ShiftReportReviewClient() {
           <div>
             <p className="eyebrow">SO SÁNH APP / ERP</p>
             <h2>Rà soát dữ liệu báo ca</h2>
-            <p className="muted small">Bảng sẽ đối chiếu số lượng báo ca ERP với số lượng đã ghi nhận trong App.</p>
+            <p className="muted small">Đối chiếu theo WO giữa số lượng pallet đã in và OK goods trong báo ca.</p>
+          </div>
+          <div className="shift-comparison-controls">
+            <label className="shift-comparison-date">
+              <span>Ngày sản xuất</span>
+              <input
+                aria-label="Ngày sản xuất cần rà soát"
+                onChange={(event) => setSelectedDate(event.target.value)}
+                type="date"
+                value={selectedDate}
+              />
+            </label>
+            <button className="button button-primary" disabled={comparisonLoading || !selectedDate} onClick={() => void loadComparison(selectedDate)} type="button">
+              {comparisonLoading ? "Đang rà soát..." : "Rà soát"}
+            </button>
           </div>
         </div>
+
+        <div className="shift-comparison-summary">
+          <span>Ngày rà soát: <strong>{formatDate(comparedDate || selectedDate)}</strong></span>
+          <span>Tổng WO: <strong>{formatNumber(comparisonSummary.total)}</strong></span>
+          <span className="shift-summary-matched">Khớp: <strong>{formatNumber(comparisonSummary.matched)}</strong></span>
+          <span className="shift-summary-mismatch">Cần kiểm tra: <strong>{formatNumber(comparisonSummary.mismatched)}</strong></span>
+        </div>
+
+        {comparisonError ? <p className="alert alert-error">{comparisonError}</p> : null}
 
         <div className="table-wrap">
           <table className="shift-comparison-table">
             <thead>
               <tr>
-                <th>Ngày báo ca</th>
-                <th>Ca</th>
                 <th>Máy</th>
                 <th>WO</th>
                 <th>Itemcode</th>
-                <th>ERP báo ca</th>
+                <th>Tên sản phẩm</th>
+                <th>SL đơn hàng</th>
                 <th>App đã in</th>
-                <th>Chênh lệch</th>
+                <th>ERP báo ca</th>
+                <th>Chênh lệch<br /><small>App - ERP</small></th>
                 <th>Kết quả</th>
               </tr>
             </thead>
             <tbody>
-              <tr><td className="shift-comparison-empty" colSpan={9}>{result ? "Dữ liệu báo ca đã được cập nhật. Logic đối chiếu với App sẽ được nối ở bước tiếp theo." : "Chưa có dữ liệu. Chọn chế độ và upload báo ca để bắt đầu rà soát."}</td></tr>
+              {comparisonLoading ? (
+                <tr><td className="shift-comparison-empty" colSpan={9}>Đang tải dữ liệu rà soát...</td></tr>
+              ) : comparisonRows.length ? comparisonRows.map((row) => (
+                <tr className={row.status === "mismatch" ? "shift-comparison-row-mismatch" : ""} key={row.wo}>
+                  <td>{row.machine || "—"}</td>
+                  <td><strong>{row.wo}</strong></td>
+                  <td>{row.itemcode || "—"}</td>
+                  <td>{row.productName || "—"}</td>
+                  <td className="number-cell">{formatNumber(row.orderQuantity)}</td>
+                  <td className="number-cell"><strong>{formatNumber(row.appQuantity)}</strong></td>
+                  <td className="number-cell"><strong>{formatNumber(row.erpQuantity)}</strong></td>
+                  <td className={`number-cell shift-difference ${row.difference === 0 ? "shift-difference-zero" : ""}`}>{row.difference > 0 ? "+" : ""}{formatNumber(row.difference)}</td>
+                  <td><span className={`shift-result shift-result-${row.status}`}>{row.result}</span></td>
+                </tr>
+              )) : (
+                <tr><td className="shift-comparison-empty" colSpan={9}>{comparedDate ? "Không có dữ liệu pallet hoặc báo ca trong ngày đã chọn." : "Chọn ngày sản xuất và nhấn Rà soát để tải dữ liệu."}</td></tr>
+              )}
             </tbody>
           </table>
         </div>

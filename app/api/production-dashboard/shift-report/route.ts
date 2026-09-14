@@ -36,6 +36,37 @@ type AuditConflict = {
   newReportId: string;
 };
 
+type PalletComparisonSourceRow = {
+  id: number;
+  machine: string | null;
+  itemcode: string | null;
+  product_name: string | null;
+  wo: string | null;
+  quanorder: number | string | null;
+  quantity: number | string | null;
+};
+
+type ReportComparisonSourceRow = {
+  id_report: string;
+  machine: string;
+  itemcode: string;
+  wo: string;
+  ok_goods: number | string;
+};
+
+type ComparisonGroup = {
+  wo: string;
+  palletMachines: Set<string>;
+  palletItemcodes: Set<string>;
+  productNames: Set<string>;
+  orderQuantity: number;
+  appQuantity: number;
+  reportItemcodes: Set<string>;
+  erpQuantity: number;
+  hasAppData: boolean;
+  hasErpData: boolean;
+};
+
 function normalizeSheetName(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
@@ -130,6 +161,179 @@ function parseOkGoods(value: CellPrimitive) {
 
 function stableKey(row: Pick<ShiftReportRow, "report_date" | "machine" | "wo">) {
   return JSON.stringify([row.report_date, row.machine, row.wo]);
+}
+
+function isValidIsoDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  return toIsoDate(year, month, day) === value;
+}
+
+function comparisonKey(value: string | null | undefined) {
+  return value?.trim().toUpperCase() ?? "";
+}
+
+function addCleanValue(target: Set<string>, value: string | null | undefined) {
+  const cleaned = value?.trim();
+  if (cleaned) target.add(cleaned);
+}
+
+function sortedValues(values: Set<string>) {
+  return Array.from(values).sort((a, b) => a.localeCompare(b, "vi", { numeric: true }));
+}
+
+function sameCodeSets(left: Set<string>, right: Set<string>) {
+  const normalizedRight = new Set(Array.from(right, comparisonKey));
+  return left.size === right.size
+    && Array.from(left).every((value) => normalizedRight.has(comparisonKey(value)));
+}
+
+function createComparisonGroup(wo: string): ComparisonGroup {
+  return {
+    wo,
+    palletMachines: new Set<string>(),
+    palletItemcodes: new Set<string>(),
+    productNames: new Set<string>(),
+    orderQuantity: 0,
+    appQuantity: 0,
+    reportItemcodes: new Set<string>(),
+    erpQuantity: 0,
+    hasAppData: false,
+    hasErpData: false,
+  };
+}
+
+async function loadPalletComparisonRows(reportDate: string) {
+  const adminClient = createAdminClient();
+  const rows: PalletComparisonSourceRow[] = [];
+
+  for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+    const { data, error } = await adminClient
+      .from("pallet_data")
+      .select("id,machine,itemcode,product_name,wo,quanorder,quantity")
+      .is("effect_to", null)
+      .eq("working_day", reportDate)
+      .order("id", { ascending: true })
+      .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+    if (error) throw new Error(`Không thể đọc dữ liệu pallet: ${error.message}`);
+    const pageRows = (data ?? []) as PalletComparisonSourceRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < DATABASE_BATCH_SIZE) return rows;
+  }
+}
+
+async function loadReportComparisonRows(reportDate: string) {
+  const adminClient = createAdminClient();
+  const rows: ReportComparisonSourceRow[] = [];
+
+  for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+    const { data, error } = await adminClient
+      .from("shift_report_data")
+      .select("id_report,machine,itemcode,wo,ok_goods")
+      .eq("report_date", reportDate)
+      .order("machine", { ascending: true })
+      .order("wo", { ascending: true })
+      .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+    if (error) throw new Error(`Không thể đọc dữ liệu báo ca: ${error.message}`);
+    const pageRows = (data ?? []) as ReportComparisonSourceRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < DATABASE_BATCH_SIZE) return rows;
+  }
+}
+
+export async function GET(request: Request) {
+  const authorization = await authorizePermission("dashboard.view");
+  if (!authorization.ok) {
+    return NextResponse.json({ success: false, error: authorization.error }, { status: authorization.status });
+  }
+
+  try {
+    const reportDate = new URL(request.url).searchParams.get("date")?.trim() ?? "";
+    if (!isValidIsoDate(reportDate)) {
+      return NextResponse.json({ success: false, error: "Ngày rà soát không hợp lệ." }, { status: 400 });
+    }
+
+    const [palletRows, reportRows] = await Promise.all([
+      loadPalletComparisonRows(reportDate),
+      loadReportComparisonRows(reportDate),
+    ]);
+    const groups = new Map<string, ComparisonGroup>();
+
+    for (const row of palletRows) {
+      const wo = row.wo?.trim() ?? "";
+      const key = comparisonKey(wo);
+      if (!key) continue;
+      const group = groups.get(key) ?? createComparisonGroup(wo);
+      group.hasAppData = true;
+      addCleanValue(group.palletMachines, row.machine);
+      addCleanValue(group.palletItemcodes, row.itemcode);
+      addCleanValue(group.productNames, row.product_name);
+      group.orderQuantity = Math.max(group.orderQuantity, Number(row.quanorder) || 0);
+      group.appQuantity += Number(row.quantity) || 0;
+      groups.set(key, group);
+    }
+
+    for (const row of reportRows) {
+      const wo = row.wo?.trim() ?? "";
+      const key = comparisonKey(wo);
+      if (!key) continue;
+      const group = groups.get(key) ?? createComparisonGroup(wo);
+      group.hasErpData = true;
+      addCleanValue(group.reportItemcodes, row.itemcode);
+      group.erpQuantity += Number(row.ok_goods) || 0;
+      groups.set(key, group);
+    }
+
+    const rows = Array.from(groups.values())
+      .map((group) => {
+        const itemcodeMatches = group.hasAppData
+          && group.hasErpData
+          && sameCodeSets(group.palletItemcodes, group.reportItemcodes);
+        const quantityMatches = group.hasAppData
+          && group.hasErpData
+          && group.appQuantity === group.erpQuantity;
+        const issues: string[] = [];
+
+        if (!group.hasAppData) issues.push("Thiếu dữ liệu App");
+        if (!group.hasErpData) issues.push("Thiếu dữ liệu ERP");
+        if (group.hasAppData && group.hasErpData && !itemcodeMatches) {
+          issues.push(`Lệch Itemcode (ERP: ${sortedValues(group.reportItemcodes).join(" / ") || "—"})`);
+        }
+        if (group.hasAppData && group.hasErpData && !quantityMatches) issues.push("Lệch số lượng");
+
+        return {
+          wo: group.wo,
+          machine: sortedValues(group.palletMachines).join(" / "),
+          itemcode: sortedValues(group.palletItemcodes).join(" / "),
+          productName: sortedValues(group.productNames).join(" / "),
+          orderQuantity: group.orderQuantity,
+          appQuantity: group.appQuantity,
+          erpQuantity: group.erpQuantity,
+          difference: group.appQuantity - group.erpQuantity,
+          itemcodeMatches,
+          quantityMatches,
+          result: issues.length ? issues.join("; ") : "Khớp",
+          status: issues.length ? "mismatch" : "matched",
+        };
+      })
+      .sort((a, b) => a.wo.localeCompare(b.wo, "vi", { numeric: true }));
+
+    return NextResponse.json({
+      success: true,
+      reportDate,
+      rows,
+      summary: {
+        total: rows.length,
+        matched: rows.filter((row) => row.status === "matched").length,
+        mismatched: rows.filter((row) => row.status === "mismatch").length,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Không thể rà soát dữ liệu App và ERP.";
+    return NextResponse.json({ success: false, error: message }, { status: 400 });
+  }
 }
 
 async function parseWorkbook(file: File) {

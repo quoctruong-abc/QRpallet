@@ -40,7 +40,26 @@ export default async function ShiftReportReviewPage() {
         .shift-upload-panel > .alert { margin: 14px 0 0; }
         .shift-review-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
         .shift-comparison-panel { width: 100%; max-width: 100%; overflow: hidden; }
-        .shift-comparison-table { width: 100%; min-width: 1120px; }
+        .shift-comparison-controls { display: flex; align-items: end; gap: 9px; }
+        .shift-comparison-controls > .button { min-height: 42px; }
+        .shift-comparison-date { display: grid; gap: 6px; min-width: 190px; color: #475467; font-size: .78rem; font-weight: 800; }
+        .shift-comparison-date input { width: 100%; min-height: 42px; padding: 8px 11px; border: 1px solid #d0d5dd; border-radius: 9px; color: #101828; background: #fff; font: inherit; font-size: .9rem; }
+        .shift-comparison-date input:focus { border-color: #528bff; outline: 3px solid rgba(82,139,255,.14); }
+        .shift-comparison-summary { display: flex; flex-wrap: wrap; gap: 9px; margin: -2px 0 14px; }
+        .shift-comparison-summary > span { padding: 7px 10px; border-radius: 999px; color: #344054; background: #f2f4f7; font-size: .78rem; }
+        .shift-comparison-summary .shift-summary-matched { color: #027a48; background: #ecfdf3; }
+        .shift-comparison-summary .shift-summary-mismatch { color: #b54708; background: #fffaeb; }
+        .shift-comparison-panel > .alert { margin: 0 0 14px; }
+        .shift-comparison-table { width: 100%; min-width: 1220px; }
+        .shift-comparison-table th small { color: inherit; font-size: .68rem; font-weight: 650; }
+        .shift-comparison-table .number-cell { text-align: right; white-space: nowrap; }
+        .shift-comparison-row-mismatch { background: #fffcf5; }
+        .shift-comparison-row-mismatch:hover { background: #fff7e8; }
+        .shift-difference { color: #b42318; font-weight: 850; }
+        .shift-difference-zero { color: #027a48; }
+        .shift-result { display: inline-block; max-width: 280px; padding: 6px 9px; border-radius: 8px; font-size: .75rem; font-weight: 800; line-height: 1.35; }
+        .shift-result-matched { color: #027a48; background: #ecfdf3; }
+        .shift-result-mismatch { color: #b54708; background: #fffaeb; }
         .shift-comparison-empty { padding: 42px 20px !important; color: var(--muted); text-align: center; }
         .shift-audit-backdrop { z-index: 1100; }
         .shift-audit-modal { width: min(1040px,calc(100% - 24px)); max-height: 90vh; overflow: auto; }
@@ -56,6 +75,9 @@ export default async function ShiftReportReviewPage() {
           .shift-upload-modes, .shift-review-summary { grid-template-columns: 1fr; }
           .shift-selected-file { grid-template-columns: 44px minmax(0,1fr); }
           .shift-file-pending { grid-column: 1 / -1; width: fit-content; }
+          .shift-review-heading { align-items: stretch; flex-direction: column; gap: 14px; }
+          .shift-comparison-controls { width: 100%; align-items: stretch; flex-direction: column; }
+          .shift-comparison-date { width: 100%; }
         }
       `}</style>
 
