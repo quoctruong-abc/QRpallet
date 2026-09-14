@@ -10,6 +10,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_ROWS = 50_000;
 const DATABASE_BATCH_SIZE = 1000;
 const WRITE_BATCH_SIZE = 500;
+const WO_BATCH_SIZE = 100;
 
 type CellPrimitive = CellValue | null | undefined;
 
@@ -50,6 +51,18 @@ type ReportComparisonSourceRow = {
   machine: string;
   itemcode: string;
   product_name: string | null;
+  wo: string;
+  ok_goods: number | string;
+};
+
+type PalletTotalSourceRow = {
+  id: number;
+  wo: string | null;
+  quantity: number | string | null;
+};
+
+type ReportTotalSourceRow = {
+  id_report: string;
   wo: string;
   ok_goods: number | string;
 };
@@ -243,6 +256,63 @@ async function loadReportComparisonRows(reportDate: string) {
   }
 }
 
+async function loadPalletTotalsByWo(workOrders: string[]) {
+  const adminClient = createAdminClient();
+  const totals = new Map<string, number>();
+
+  for (let keyOffset = 0; keyOffset < workOrders.length; keyOffset += WO_BATCH_SIZE) {
+    const keyBatch = workOrders.slice(keyOffset, keyOffset + WO_BATCH_SIZE);
+    for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+      const { data, error } = await adminClient
+        .from("pallet_data")
+        .select("id,wo,quantity")
+        .is("effect_to", null)
+        .in("wo", keyBatch)
+        .order("id", { ascending: true })
+        .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+      if (error) throw new Error(`Không thể đọc tổng số lượng pallet: ${error.message}`);
+      const pageRows = (data ?? []) as PalletTotalSourceRow[];
+      for (const row of pageRows) {
+        const key = comparisonKey(row.wo);
+        if (!key) continue;
+        totals.set(key, (totals.get(key) ?? 0) + (Number(row.quantity) || 0));
+      }
+      if (pageRows.length < DATABASE_BATCH_SIZE) break;
+    }
+  }
+
+  return totals;
+}
+
+async function loadReportTotalsByWo(workOrders: string[]) {
+  const adminClient = createAdminClient();
+  const totals = new Map<string, number>();
+
+  for (let keyOffset = 0; keyOffset < workOrders.length; keyOffset += WO_BATCH_SIZE) {
+    const keyBatch = workOrders.slice(keyOffset, keyOffset + WO_BATCH_SIZE);
+    for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+      const { data, error } = await adminClient
+        .from("shift_report_data")
+        .select("id_report,wo,ok_goods")
+        .in("wo", keyBatch)
+        .order("id_report", { ascending: true })
+        .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+      if (error) throw new Error(`Không thể đọc tổng số lượng báo ca: ${error.message}`);
+      const pageRows = (data ?? []) as ReportTotalSourceRow[];
+      for (const row of pageRows) {
+        const key = comparisonKey(row.wo);
+        if (!key) continue;
+        totals.set(key, (totals.get(key) ?? 0) + (Number(row.ok_goods) || 0));
+      }
+      if (pageRows.length < DATABASE_BATCH_SIZE) break;
+    }
+  }
+
+  return totals;
+}
+
 export async function GET(request: Request) {
   const authorization = await authorizePermission("dashboard.view");
   if (!authorization.ok) {
@@ -286,6 +356,15 @@ export async function GET(request: Request) {
       groups.set(key, group);
     }
 
+    const sourceWorkOrders = Array.from(new Set([
+      ...palletRows.map((row) => row.wo?.trim() ?? ""),
+      ...reportRows.map((row) => row.wo?.trim() ?? ""),
+    ].filter(Boolean)));
+    const [appTotalsByWo, reportTotalsByWo] = await Promise.all([
+      loadPalletTotalsByWo(sourceWorkOrders),
+      loadReportTotalsByWo(sourceWorkOrders),
+    ]);
+
     const rows = Array.from(groups.values())
       .map((group) => {
         const itemcodeMatches = group.hasAppData
@@ -313,6 +392,8 @@ export async function GET(request: Request) {
           orderQuantity: group.orderQuantity,
           appQuantity: group.appQuantity,
           erpQuantity: group.erpQuantity,
+          totalAppQuantity: appTotalsByWo.get(comparisonKey(group.wo)) ?? 0,
+          totalErpQuantity: reportTotalsByWo.get(comparisonKey(group.wo)) ?? 0,
           difference: group.appQuantity - group.erpQuantity,
           itemcodeMatches,
           quantityMatches,

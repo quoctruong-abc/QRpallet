@@ -43,6 +43,8 @@ type ComparisonRow = {
   orderQuantity: number;
   appQuantity: number;
   erpQuantity: number;
+  totalAppQuantity: number;
+  totalErpQuantity: number;
   difference: number;
   itemcodeMatches: boolean;
   quantityMatches: boolean;
@@ -326,6 +328,7 @@ export function ShiftReportReviewClient() {
                 <th>Itemcode</th>
                 <th className="shift-product-name-column">Tên sản phẩm</th>
                 <th className="shift-number-column">SL đơn hàng</th>
+                <th className="shift-total-quantity-column">Tổng SL<br /><small>App/Báo ca</small></th>
                 <th className="shift-number-column">App đã in</th>
                 <th className="shift-number-column">ERP báo ca</th>
                 <th className="shift-number-column">Chênh lệch<br /><small>App - ERP</small></th>
@@ -334,7 +337,7 @@ export function ShiftReportReviewClient() {
             </thead>
             <tbody>
               {comparisonLoading ? (
-                <tr><td className="shift-comparison-empty" colSpan={9}>Đang tải dữ liệu rà soát...</td></tr>
+                <tr><td className="shift-comparison-empty" colSpan={10}>Đang tải dữ liệu rà soát...</td></tr>
               ) : comparisonRows.length ? comparisonRows.map((row) => (
                 <tr className={row.status === "mismatch" ? "shift-comparison-row-mismatch" : ""} key={row.wo}>
                   <td>{row.machine || "—"}</td>
@@ -342,13 +345,14 @@ export function ShiftReportReviewClient() {
                   <td>{row.itemcode || "—"}</td>
                   <td className="shift-product-name-column">{row.productName || "—"}</td>
                   <td className="number-cell shift-number-column">{formatNumber(row.orderQuantity)}</td>
+                  <td className="number-cell shift-total-quantity-column"><strong>{formatNumber(row.totalAppQuantity)} / {formatNumber(row.totalErpQuantity)}</strong></td>
                   <td className="number-cell shift-number-column"><strong>{formatNumber(row.appQuantity)}</strong></td>
                   <td className="number-cell shift-number-column"><strong>{formatNumber(row.erpQuantity)}</strong></td>
                   <td className={`number-cell shift-number-column shift-difference ${row.difference === 0 ? "shift-difference-zero" : ""}`}>{row.difference > 0 ? "+" : ""}{formatNumber(row.difference)}</td>
                   <td><span className={`shift-result shift-result-${row.status}`}>{row.result}</span></td>
                 </tr>
               )) : (
-                <tr><td className="shift-comparison-empty" colSpan={9}>{comparedDate ? "Không có dữ liệu pallet hoặc báo ca trong ngày đã chọn." : "Chọn ngày sản xuất và nhấn Rà soát để tải dữ liệu."}</td></tr>
+                <tr><td className="shift-comparison-empty" colSpan={10}>{comparedDate ? "Không có dữ liệu pallet hoặc báo ca trong ngày đã chọn." : "Chọn ngày sản xuất và nhấn Rà soát để tải dữ liệu."}</td></tr>
               )}
             </tbody>
           </table>
