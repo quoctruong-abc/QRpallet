@@ -52,6 +52,7 @@ export default async function ShiftReportReviewPage() {
         .shift-comparison-panel > .alert { margin: 0 0 14px; }
         .shift-comparison-table { width: 100%; min-width: 1220px; }
         .shift-comparison-table th small { color: inherit; font-size: .68rem; font-weight: 650; }
+        .shift-comparison-table .shift-product-name-column { width: 190px; max-width: 190px; white-space: normal; overflow-wrap: anywhere; }
         .shift-comparison-table .number-cell { text-align: right; white-space: nowrap; }
         .shift-comparison-row-mismatch { background: #fffcf5; }
         .shift-comparison-row-mismatch:hover { background: #fff7e8; }

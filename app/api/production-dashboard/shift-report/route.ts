@@ -18,6 +18,7 @@ type ShiftReportRow = {
   report_date: string;
   machine: string;
   itemcode: string;
+  product_name: string;
   wo: string;
   ok_goods: number;
 };
@@ -38,9 +39,7 @@ type AuditConflict = {
 
 type PalletComparisonSourceRow = {
   id: number;
-  machine: string | null;
   itemcode: string | null;
-  product_name: string | null;
   wo: string | null;
   quanorder: number | string | null;
   quantity: number | string | null;
@@ -50,18 +49,19 @@ type ReportComparisonSourceRow = {
   id_report: string;
   machine: string;
   itemcode: string;
+  product_name: string | null;
   wo: string;
   ok_goods: number | string;
 };
 
 type ComparisonGroup = {
   wo: string;
-  palletMachines: Set<string>;
   palletItemcodes: Set<string>;
-  productNames: Set<string>;
   orderQuantity: number;
   appQuantity: number;
+  reportMachines: Set<string>;
   reportItemcodes: Set<string>;
+  reportProductNames: Set<string>;
   erpQuantity: number;
   hasAppData: boolean;
   hasErpData: boolean;
@@ -191,12 +191,12 @@ function sameCodeSets(left: Set<string>, right: Set<string>) {
 function createComparisonGroup(wo: string): ComparisonGroup {
   return {
     wo,
-    palletMachines: new Set<string>(),
     palletItemcodes: new Set<string>(),
-    productNames: new Set<string>(),
     orderQuantity: 0,
     appQuantity: 0,
+    reportMachines: new Set<string>(),
     reportItemcodes: new Set<string>(),
+    reportProductNames: new Set<string>(),
     erpQuantity: 0,
     hasAppData: false,
     hasErpData: false,
@@ -210,7 +210,7 @@ async function loadPalletComparisonRows(reportDate: string) {
   for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
     const { data, error } = await adminClient
       .from("pallet_data")
-      .select("id,machine,itemcode,product_name,wo,quanorder,quantity")
+      .select("id,itemcode,wo,quanorder,quantity")
       .is("effect_to", null)
       .eq("working_day", reportDate)
       .order("id", { ascending: true })
@@ -230,7 +230,7 @@ async function loadReportComparisonRows(reportDate: string) {
   for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
     const { data, error } = await adminClient
       .from("shift_report_data")
-      .select("id_report,machine,itemcode,wo,ok_goods")
+      .select("id_report,machine,itemcode,product_name,wo,ok_goods")
       .eq("report_date", reportDate)
       .order("machine", { ascending: true })
       .order("wo", { ascending: true })
@@ -267,9 +267,7 @@ export async function GET(request: Request) {
       if (!key) continue;
       const group = groups.get(key) ?? createComparisonGroup(wo);
       group.hasAppData = true;
-      addCleanValue(group.palletMachines, row.machine);
       addCleanValue(group.palletItemcodes, row.itemcode);
-      addCleanValue(group.productNames, row.product_name);
       group.orderQuantity = Math.max(group.orderQuantity, Number(row.quanorder) || 0);
       group.appQuantity += Number(row.quantity) || 0;
       groups.set(key, group);
@@ -281,7 +279,9 @@ export async function GET(request: Request) {
       if (!key) continue;
       const group = groups.get(key) ?? createComparisonGroup(wo);
       group.hasErpData = true;
+      addCleanValue(group.reportMachines, row.machine);
       addCleanValue(group.reportItemcodes, row.itemcode);
+      addCleanValue(group.reportProductNames, row.product_name);
       group.erpQuantity += Number(row.ok_goods) || 0;
       groups.set(key, group);
     }
@@ -299,15 +299,17 @@ export async function GET(request: Request) {
         if (!group.hasAppData) issues.push("Thiếu dữ liệu App");
         if (!group.hasErpData) issues.push("Thiếu dữ liệu ERP");
         if (group.hasAppData && group.hasErpData && !itemcodeMatches) {
-          issues.push(`Lệch Itemcode (ERP: ${sortedValues(group.reportItemcodes).join(" / ") || "—"})`);
+          issues.push(
+            `Lệch Itemcode (App: ${sortedValues(group.palletItemcodes).join(" / ") || "—"}; ERP: ${sortedValues(group.reportItemcodes).join(" / ") || "—"})`,
+          );
         }
         if (group.hasAppData && group.hasErpData && !quantityMatches) issues.push("Lệch số lượng");
 
         return {
           wo: group.wo,
-          machine: sortedValues(group.palletMachines).join(" / "),
-          itemcode: sortedValues(group.palletItemcodes).join(" / "),
-          productName: sortedValues(group.productNames).join(" / "),
+          machine: sortedValues(group.reportMachines).join(" / "),
+          itemcode: sortedValues(group.reportItemcodes).join(" / "),
+          productName: sortedValues(group.reportProductNames).join(" / "),
           orderQuantity: group.orderQuantity,
           appQuantity: group.appQuantity,
           erpQuantity: group.erpQuantity,
@@ -362,7 +364,7 @@ async function parseWorkbook(file: File) {
   const keys = new Set<string>();
   let currentDate: string | null = null;
 
-  // Bỏ dòng tiêu đề. Mapping: A, B, C, D, F, I.
+  // Bỏ dòng tiêu đề. Mapping: A, B, C, D, E, F, I.
   for (let rowIndex = 1; rowIndex < worksheet.length; rowIndex += 1) {
     const excelRow = rowIndex + 1;
     const source = worksheet[rowIndex] ?? [];
@@ -378,15 +380,17 @@ async function parseWorkbook(file: File) {
     const idReport = toCode(source[0] ?? null);
     const machine = toText(source[2] ?? null);
     const itemcode = toCode(source[3] ?? null);
+    const productName = toText(source[4] ?? null);
     const wo = toCode(source[5] ?? null);
     const okGoodsCell = source[8] ?? null;
-    const rowHasData = Boolean(idReport || machine || itemcode || wo || toText(okGoodsCell));
+    const rowHasData = Boolean(idReport || machine || itemcode || productName || wo || toText(okGoodsCell));
     if (!rowHasData) continue;
 
     if (!currentDate) throw new Error(`Dòng ${excelRow} chưa có ngày báo ca ở cột B.`);
     if (!idReport) throw new Error(`Dòng ${excelRow} thiếu ID report ở cột A.`);
     if (!machine) throw new Error(`Dòng ${excelRow} thiếu Machine ở cột C.`);
     if (!itemcode) throw new Error(`Dòng ${excelRow} thiếu Itemcode ở cột D.`);
+    if (!productName) throw new Error(`Dòng ${excelRow} thiếu Product Name ở cột E.`);
     if (!wo) throw new Error(`Dòng ${excelRow} thiếu WO ở cột F.`);
 
     const okGoods = parseOkGoods(okGoodsCell);
@@ -399,6 +403,7 @@ async function parseWorkbook(file: File) {
       report_date: currentDate,
       machine,
       itemcode,
+      product_name: productName,
       wo,
       ok_goods: okGoods,
     };
@@ -444,7 +449,7 @@ async function loadExistingRows(firstDate: string, lastDate: string) {
   for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
     const { data, error } = await adminClient
       .from("shift_report_data")
-      .select("id_report,report_date,machine,itemcode,wo,ok_goods")
+      .select("id_report,report_date,machine,itemcode,product_name,wo,ok_goods")
       .gte("report_date", firstDate)
       .lte("report_date", lastDate)
       .order("report_date", { ascending: true })
@@ -511,9 +516,9 @@ export async function POST(request: Request) {
     const existingRows = await loadExistingRows(parsed.firstDate, parsed.lastDate);
     const existingByKey = new Map(existingRows.map((row) => [stableKey(row), row]));
     const missingRows: ShiftReportRow[] = [];
+    const unchangedRows: ShiftReportRow[] = [];
     const conflictRows = new Map<string, ShiftReportRow>();
     const conflicts: AuditConflict[] = [];
-    let unchanged = 0;
 
     for (const row of parsed.rows) {
       const key = stableKey(row);
@@ -534,7 +539,7 @@ export async function POST(request: Request) {
           newReportId: row.id_report,
         });
       } else {
-        unchanged += 1;
+        unchangedRows.push(row);
       }
     }
 
@@ -546,7 +551,7 @@ export async function POST(request: Request) {
         fileName: parsed.fileName,
         parsed: parsed.rows.length,
         missing: missingRows.length,
-        unchanged,
+        unchanged: unchangedRows.length,
         conflicts,
         firstDate: parsed.firstDate,
         lastDate: parsed.lastDate,
@@ -565,7 +570,9 @@ export async function POST(request: Request) {
     const updatedRows = Array.from(conflictRows.entries())
       .filter(([key]) => confirmed.has(key))
       .map(([, row]) => row);
-    await writeRows([...missingRows, ...updatedRows], false);
+    // Các dòng không đổi OK goods vẫn được upsert để bổ sung/cập nhật dữ liệu phụ ERP,
+    // đặc biệt là Product Name được thêm sau khi bảng báo ca đã có dữ liệu.
+    await writeRows([...missingRows, ...unchangedRows, ...updatedRows], false);
 
     return NextResponse.json({
       success: true,
@@ -575,7 +582,7 @@ export async function POST(request: Request) {
       parsed: parsed.rows.length,
       imported: missingRows.length,
       updated: updatedRows.length,
-      skipped: unchanged + conflicts.length - updatedRows.length,
+      skipped: unchangedRows.length + conflicts.length - updatedRows.length,
       conflicts: conflicts.length,
       firstDate: parsed.firstDate,
       lastDate: parsed.lastDate,

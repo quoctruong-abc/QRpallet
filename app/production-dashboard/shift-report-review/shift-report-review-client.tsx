@@ -215,7 +215,7 @@ export function ShiftReportReviewClient() {
           <div>
             <p className="eyebrow">DỮ LIỆU ERP · BÁO CA</p>
             <h2>Nạp dữ liệu báo ca</h2>
-            <p className="muted small">Chọn chế độ trước khi nạp file. Hệ thống chỉ đọc các cột A, B, C, D, F, I trong sheet upsever.</p>
+            <p className="muted small">Chọn chế độ trước khi nạp file. Hệ thống chỉ đọc các cột A, B, C, D, E, F, I trong sheet upsever.</p>
           </div>
         </div>
 
@@ -326,7 +326,7 @@ export function ShiftReportReviewClient() {
                 <th>Máy</th>
                 <th>WO</th>
                 <th>Itemcode</th>
-                <th>Tên sản phẩm</th>
+                <th className="shift-product-name-column">Tên sản phẩm</th>
                 <th>SL đơn hàng</th>
                 <th>App đã in</th>
                 <th>ERP báo ca</th>
@@ -342,7 +342,7 @@ export function ShiftReportReviewClient() {
                   <td>{row.machine || "—"}</td>
                   <td><strong>{row.wo}</strong></td>
                   <td>{row.itemcode || "—"}</td>
-                  <td>{row.productName || "—"}</td>
+                  <td className="shift-product-name-column">{row.productName || "—"}</td>
                   <td className="number-cell">{formatNumber(row.orderQuantity)}</td>
                   <td className="number-cell"><strong>{formatNumber(row.appQuantity)}</strong></td>
                   <td className="number-cell"><strong>{formatNumber(row.erpQuantity)}</strong></td>
