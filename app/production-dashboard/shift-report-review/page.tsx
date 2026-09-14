@@ -35,10 +35,17 @@ export default async function ShiftReportReviewPage() {
         .shift-selected-file strong { overflow-wrap: anywhere; }
         .shift-selected-file div > span { margin-top: 3px; color: #667085; font-size: .78rem; }
         .shift-file-pending { padding: 6px 9px; border-radius: 999px; color: #854a0e; background: #fffaeb; font-size: .72rem; font-weight: 850; white-space: nowrap; }
+        .shift-file-done { color: #027a48; background: #ecfdf3; }
+        .shift-file-error { color: #b42318; background: #fef3f2; }
+        .shift-upload-panel > .alert { margin: 14px 0 0; }
         .shift-review-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
         .shift-comparison-panel { width: 100%; max-width: 100%; overflow: hidden; }
         .shift-comparison-table { width: 100%; min-width: 1120px; }
         .shift-comparison-empty { padding: 42px 20px !important; color: var(--muted); text-align: center; }
+        .shift-audit-backdrop { z-index: 1100; }
+        .shift-audit-modal { width: min(1040px,calc(100% - 24px)); max-height: 90vh; overflow: auto; }
+        .shift-audit-table { min-width: 880px; }
+        .shift-audit-table input[type="checkbox"] { width: 18px; height: 18px; }
         @media (max-width: 820px) {
           .shift-upload-layout { grid-template-columns: 1fr; }
           .shift-upload-action { min-height: 150px; }
