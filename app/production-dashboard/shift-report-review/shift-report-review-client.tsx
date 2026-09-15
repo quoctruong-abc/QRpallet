@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type ChangeEvent } from "react";
+import { WoPalletHistoryDialog } from "@/app/pallet-label/wo-pallet-history-dialog";
 
 type UploadMode = "standard" | "audit";
 
@@ -58,6 +59,22 @@ type ComparisonSummary = {
   mismatched: number;
 };
 
+type WoDailyHistoryRow = {
+  date: string;
+  appQuantity: number;
+  palletCount: number;
+  erpQuantity: number;
+  difference: number;
+  warning: boolean;
+};
+
+type WoDailyHistoryTotal = {
+  appQuantity: number;
+  palletCount: number;
+  erpQuantity: number;
+  difference: number;
+};
+
 function formatFileSize(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -86,6 +103,15 @@ function getCurrentWorkingDay() {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function EyeIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+      <path d="M2.8 12s3.3-6 9.2-6 9.2 6 9.2 6-3.3 6-9.2 6-9.2-6-9.2-6Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+      <circle cx="12" cy="12" r="2.7" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
 export function ShiftReportReviewClient() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploadMode, setUploadMode] = useState<UploadMode>("standard");
@@ -101,6 +127,12 @@ export function ShiftReportReviewClient() {
   const [comparisonSummary, setComparisonSummary] = useState<ComparisonSummary>({ total: 0, matched: 0, mismatched: 0 });
   const [comparisonLoading, setComparisonLoading] = useState(false);
   const [comparisonError, setComparisonError] = useState("");
+  const [historyWo, setHistoryWo] = useState("");
+  const [woHistoryRows, setWoHistoryRows] = useState<WoDailyHistoryRow[]>([]);
+  const [woHistoryTotal, setWoHistoryTotal] = useState<WoDailyHistoryTotal | null>(null);
+  const [woHistoryLoading, setWoHistoryLoading] = useState(false);
+  const [woHistoryError, setWoHistoryError] = useState("");
+  const [selectedPalletDay, setSelectedPalletDay] = useState<{ wo: string; date: string } | null>(null);
 
   async function loadComparison(date: string) {
     setComparisonLoading(true);
@@ -124,6 +156,39 @@ export function ShiftReportReviewClient() {
     } finally {
       setComparisonLoading(false);
     }
+  }
+
+  async function openWoHistory(wo: string) {
+    setHistoryWo(wo);
+    setWoHistoryRows([]);
+    setWoHistoryTotal(null);
+    setWoHistoryError("");
+    setWoHistoryLoading(true);
+    setSelectedPalletDay(null);
+
+    try {
+      const response = await fetch(`/api/production-dashboard/shift-report?wo=${encodeURIComponent(wo)}`, {
+        cache: "no-store",
+      });
+      const responseBody = await response.json();
+      if (!response.ok || !responseBody.success) {
+        throw new Error(responseBody.error ?? "Không thể tải chi tiết WO.");
+      }
+      setWoHistoryRows(responseBody.rows as WoDailyHistoryRow[]);
+      setWoHistoryTotal(responseBody.total as WoDailyHistoryTotal);
+    } catch (historyError) {
+      setWoHistoryError(historyError instanceof Error ? historyError.message : "Không thể tải chi tiết WO.");
+    } finally {
+      setWoHistoryLoading(false);
+    }
+  }
+
+  function closeWoHistory() {
+    setHistoryWo("");
+    setWoHistoryRows([]);
+    setWoHistoryTotal(null);
+    setWoHistoryError("");
+    setSelectedPalletDay(null);
   }
 
   function selectMode(mode: UploadMode) {
@@ -341,7 +406,20 @@ export function ShiftReportReviewClient() {
               ) : comparisonRows.length ? comparisonRows.map((row) => (
                 <tr className={row.status === "mismatch" ? "shift-comparison-row-mismatch" : ""} key={row.wo}>
                   <td>{row.machine || "—"}</td>
-                  <td><strong>{row.wo}</strong></td>
+                  <td>
+                    <span className="shift-wo-cell">
+                      <strong>{row.wo}</strong>
+                      <button
+                        aria-label={`Xem chi tiết WO ${row.wo}`}
+                        className="shift-eye-button"
+                        onClick={() => void openWoHistory(row.wo)}
+                        title="Xem chi tiết theo ngày"
+                        type="button"
+                      >
+                        <EyeIcon />
+                      </button>
+                    </span>
+                  </td>
                   <td>{row.itemcode || "—"}</td>
                   <td className="shift-product-name-column">{row.productName || "—"}</td>
                   <td className="number-cell shift-number-column">{formatNumber(row.orderQuantity)}</td>
@@ -358,6 +436,73 @@ export function ShiftReportReviewClient() {
           </table>
         </div>
       </section>
+
+      {historyWo ? (
+        <div className="modal-backdrop shift-wo-history-backdrop" onMouseDown={closeWoHistory}>
+          <div className="modal-card shift-wo-history-modal" onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="modal-heading">
+              <div><p className="eyebrow">CHI TIẾT THEO NGÀY</p><h2>WO {historyWo}</h2></div>
+              <button className="modal-close" onClick={closeWoHistory} type="button">×</button>
+            </div>
+
+            {woHistoryLoading ? <p className="alert alert-success">Đang tải chi tiết WO...</p> : null}
+            {woHistoryError ? <p className="alert alert-error">{woHistoryError}</p> : null}
+
+            {!woHistoryLoading && !woHistoryError ? (
+              <div className="table-wrap">
+                <table className="shift-wo-history-table">
+                  <thead>
+                    <tr><th>Ngày</th><th>SL App (Pallet)</th><th>SL báo ca</th><th>Số lượng lệch</th></tr>
+                  </thead>
+                  <tbody>
+                    {woHistoryRows.length ? woHistoryRows.map((row) => (
+                      <tr key={row.date}>
+                        <td>
+                          <span className="shift-history-date-cell">
+                            <strong>{formatDate(row.date)}</strong>
+                            <button
+                              aria-label={`Xem pallet WO ${historyWo} ngày ${formatDate(row.date)}`}
+                              className="shift-eye-button shift-date-eye-button"
+                              onClick={() => setSelectedPalletDay({ wo: historyWo, date: row.date })}
+                              title="Xem danh sách pallet của ngày"
+                              type="button"
+                            >
+                              <EyeIcon />
+                              {row.warning ? <span aria-hidden="true" className="shift-history-warning">!</span> : null}
+                            </button>
+                          </span>
+                        </td>
+                        <td className="number-cell"><strong>{formatNumber(row.appQuantity)}</strong> ({formatNumber(row.palletCount)} pallet)</td>
+                        <td className="number-cell">{formatNumber(row.erpQuantity)}</td>
+                        <td className={`number-cell shift-difference ${row.difference === 0 ? "shift-difference-zero" : ""}`}>{row.difference > 0 ? "+" : ""}{formatNumber(row.difference)}</td>
+                      </tr>
+                    )) : (
+                      <tr><td className="shift-comparison-empty" colSpan={4}>Không có dữ liệu theo ngày của WO này.</td></tr>
+                    )}
+                    {woHistoryRows.length && woHistoryTotal ? (
+                      <tr className="shift-wo-history-total">
+                        <td>TOTAL</td>
+                        <td className="number-cell">{formatNumber(woHistoryTotal.appQuantity)} ({formatNumber(woHistoryTotal.palletCount)} pallet)</td>
+                        <td className="number-cell">{formatNumber(woHistoryTotal.erpQuantity)}</td>
+                        <td className={`number-cell shift-difference ${woHistoryTotal.difference === 0 ? "shift-difference-zero" : ""}`}>{woHistoryTotal.difference > 0 ? "+" : ""}{formatNumber(woHistoryTotal.difference)}</td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedPalletDay ? (
+        <WoPalletHistoryDialog
+          date={selectedPalletDay.date}
+          key={`${selectedPalletDay.wo}-${selectedPalletDay.date}`}
+          onClose={() => setSelectedPalletDay(null)}
+          wo={selectedPalletDay.wo}
+        />
+      ) : null}
 
       {auditPreview ? (
         <div className="modal-backdrop shift-audit-backdrop" onMouseDown={() => { if (!uploading) setAuditPreview(null); }}>

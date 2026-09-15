@@ -40,16 +40,12 @@ type AuditConflict = {
 
 type PalletComparisonSourceRow = {
   id: number;
-  itemcode: string | null;
   wo: string | null;
   quantity: number | string | null;
 };
 
 type ReportComparisonSourceRow = {
   id_report: string;
-  machine: string;
-  itemcode: string;
-  product_name: string | null;
   wo: string;
   ok_goods: number | string;
 };
@@ -57,6 +53,7 @@ type ReportComparisonSourceRow = {
 type PalletTotalSourceRow = {
   id: number;
   wo: string | null;
+  itemcode: string | null;
   quanorder: number | string | null;
   quantity: number | string | null;
 };
@@ -64,21 +61,56 @@ type PalletTotalSourceRow = {
 type PalletWoTotal = {
   quantity: number;
   orderQuantity: number;
+  itemcodes: Set<string>;
 };
 
 type ReportTotalSourceRow = {
   id_report: string;
   wo: string;
+  machine: string;
+  itemcode: string;
+  product_name: string | null;
   ok_goods: number | string;
+};
+
+type ReportWoTotal = {
+  quantity: number;
+  machines: Set<string>;
+  itemcodes: Set<string>;
+  productNames: Set<string>;
+};
+
+type PalletDailyHistorySourceRow = {
+  id: number;
+  pallet_id: string;
+  working_day: string;
+  quantity: number | string | null;
+  has_been_edited: boolean | null;
+  has_been_return: boolean | null;
+};
+
+type DeletedDailyHistorySourceRow = {
+  id: number;
+  working_day: string;
+};
+
+type ReportDailyHistorySourceRow = {
+  id_report: string;
+  report_date: string;
+  ok_goods: number | string;
+};
+
+type DailyHistoryGroup = {
+  date: string;
+  appQuantity: number;
+  palletIds: Set<string>;
+  erpQuantity: number;
+  warning: boolean;
 };
 
 type ComparisonGroup = {
   wo: string;
-  palletItemcodes: Set<string>;
   appQuantity: number;
-  reportMachines: Set<string>;
-  reportItemcodes: Set<string>;
-  reportProductNames: Set<string>;
   erpQuantity: number;
   hasAppData: boolean;
   hasErpData: boolean;
@@ -208,11 +240,7 @@ function sameCodeSets(left: Set<string>, right: Set<string>) {
 function createComparisonGroup(wo: string): ComparisonGroup {
   return {
     wo,
-    palletItemcodes: new Set<string>(),
     appQuantity: 0,
-    reportMachines: new Set<string>(),
-    reportItemcodes: new Set<string>(),
-    reportProductNames: new Set<string>(),
     erpQuantity: 0,
     hasAppData: false,
     hasErpData: false,
@@ -226,7 +254,7 @@ async function loadPalletComparisonRows(reportDate: string) {
   for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
     const { data, error } = await adminClient
       .from("pallet_data")
-      .select("id,itemcode,wo,quantity")
+      .select("id,wo,quantity")
       .is("effect_to", null)
       .eq("working_day", reportDate)
       .order("id", { ascending: true })
@@ -246,10 +274,10 @@ async function loadReportComparisonRows(reportDate: string) {
   for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
     const { data, error } = await adminClient
       .from("shift_report_data")
-      .select("id_report,machine,itemcode,product_name,wo,ok_goods")
+      .select("id_report,wo,ok_goods")
       .eq("report_date", reportDate)
-      .order("machine", { ascending: true })
       .order("wo", { ascending: true })
+      .order("id_report", { ascending: true })
       .range(offset, offset + DATABASE_BATCH_SIZE - 1);
 
     if (error) throw new Error(`Không thể đọc dữ liệu báo ca: ${error.message}`);
@@ -268,7 +296,7 @@ async function loadPalletTotalsByWo(workOrders: string[]) {
     for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
       const { data, error } = await adminClient
         .from("pallet_data")
-        .select("id,wo,quanorder,quantity")
+        .select("id,wo,itemcode,quanorder,quantity")
         .is("effect_to", null)
         .in("wo", keyBatch)
         .order("id", { ascending: true })
@@ -279,9 +307,14 @@ async function loadPalletTotalsByWo(workOrders: string[]) {
       for (const row of pageRows) {
         const key = comparisonKey(row.wo);
         if (!key) continue;
-        const current = totals.get(key) ?? { quantity: 0, orderQuantity: 0 };
+        const current = totals.get(key) ?? {
+          quantity: 0,
+          orderQuantity: 0,
+          itemcodes: new Set<string>(),
+        };
         current.quantity += Number(row.quantity) || 0;
         current.orderQuantity = Math.max(current.orderQuantity, Number(row.quanorder) || 0);
+        addCleanValue(current.itemcodes, row.itemcode);
         totals.set(key, current);
       }
       if (pageRows.length < DATABASE_BATCH_SIZE) break;
@@ -293,14 +326,14 @@ async function loadPalletTotalsByWo(workOrders: string[]) {
 
 async function loadReportTotalsByWo(workOrders: string[]) {
   const adminClient = createAdminClient();
-  const totals = new Map<string, number>();
+  const totals = new Map<string, ReportWoTotal>();
 
   for (let keyOffset = 0; keyOffset < workOrders.length; keyOffset += WO_BATCH_SIZE) {
     const keyBatch = workOrders.slice(keyOffset, keyOffset + WO_BATCH_SIZE);
     for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
       const { data, error } = await adminClient
         .from("shift_report_data")
-        .select("id_report,wo,ok_goods")
+        .select("id_report,wo,machine,itemcode,product_name,ok_goods")
         .in("wo", keyBatch)
         .order("id_report", { ascending: true })
         .range(offset, offset + DATABASE_BATCH_SIZE - 1);
@@ -310,13 +343,149 @@ async function loadReportTotalsByWo(workOrders: string[]) {
       for (const row of pageRows) {
         const key = comparisonKey(row.wo);
         if (!key) continue;
-        totals.set(key, (totals.get(key) ?? 0) + (Number(row.ok_goods) || 0));
+        const current = totals.get(key) ?? {
+          quantity: 0,
+          machines: new Set<string>(),
+          itemcodes: new Set<string>(),
+          productNames: new Set<string>(),
+        };
+        current.quantity += Number(row.ok_goods) || 0;
+        addCleanValue(current.machines, row.machine);
+        addCleanValue(current.itemcodes, row.itemcode);
+        addCleanValue(current.productNames, row.product_name);
+        totals.set(key, current);
       }
       if (pageRows.length < DATABASE_BATCH_SIZE) break;
     }
   }
 
   return totals;
+}
+
+function createDailyHistoryGroup(date: string): DailyHistoryGroup {
+  return {
+    date,
+    appQuantity: 0,
+    palletIds: new Set<string>(),
+    erpQuantity: 0,
+    warning: false,
+  };
+}
+
+async function loadActivePalletHistoryByWo(wo: string) {
+  const adminClient = createAdminClient();
+  const rows: PalletDailyHistorySourceRow[] = [];
+
+  for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+    const { data, error } = await adminClient
+      .from("pallet_data")
+      .select("id,pallet_id,working_day,quantity,has_been_edited,has_been_return")
+      .eq("wo", wo)
+      .is("effect_to", null)
+      .order("id", { ascending: true })
+      .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+    if (error) throw new Error(`Không thể đọc lịch sử pallet theo WO: ${error.message}`);
+    const pageRows = (data ?? []) as PalletDailyHistorySourceRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < DATABASE_BATCH_SIZE) return rows;
+  }
+}
+
+async function loadDeletedPalletHistoryByWo(wo: string) {
+  const adminClient = createAdminClient();
+  const rows: DeletedDailyHistorySourceRow[] = [];
+
+  for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+    const { data, error } = await adminClient
+      .from("pallet_data")
+      .select("id,working_day")
+      .eq("wo", wo)
+      .not("effect_to", "is", null)
+      .ilike("note", "delete:%")
+      .order("id", { ascending: true })
+      .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+    if (error) throw new Error(`Không thể đọc pallet đã xóa theo WO: ${error.message}`);
+    const pageRows = (data ?? []) as DeletedDailyHistorySourceRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < DATABASE_BATCH_SIZE) return rows;
+  }
+}
+
+async function loadReportHistoryByWo(wo: string) {
+  const adminClient = createAdminClient();
+  const rows: ReportDailyHistorySourceRow[] = [];
+
+  for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+    const { data, error } = await adminClient
+      .from("shift_report_data")
+      .select("id_report,report_date,ok_goods")
+      .eq("wo", wo)
+      .order("report_date", { ascending: false })
+      .order("id_report", { ascending: true })
+      .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+    if (error) throw new Error(`Không thể đọc lịch sử báo ca theo WO: ${error.message}`);
+    const pageRows = (data ?? []) as ReportDailyHistorySourceRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < DATABASE_BATCH_SIZE) return rows;
+  }
+}
+
+async function loadDailyHistoryByWo(wo: string) {
+  const [activePallets, deletedPallets, reportRows] = await Promise.all([
+    loadActivePalletHistoryByWo(wo),
+    loadDeletedPalletHistoryByWo(wo),
+    loadReportHistoryByWo(wo),
+  ]);
+  const groups = new Map<string, DailyHistoryGroup>();
+
+  for (const pallet of activePallets) {
+    const date = pallet.working_day;
+    const group = groups.get(date) ?? createDailyHistoryGroup(date);
+    group.appQuantity += Number(pallet.quantity) || 0;
+    if (pallet.pallet_id?.trim()) group.palletIds.add(pallet.pallet_id.trim());
+    group.warning ||= Boolean(pallet.has_been_edited || pallet.has_been_return);
+    groups.set(date, group);
+  }
+
+  for (const pallet of deletedPallets) {
+    const date = pallet.working_day;
+    const group = groups.get(date) ?? createDailyHistoryGroup(date);
+    group.warning = true;
+    groups.set(date, group);
+  }
+
+  for (const report of reportRows) {
+    const date = report.report_date;
+    const group = groups.get(date) ?? createDailyHistoryGroup(date);
+    group.erpQuantity += Number(report.ok_goods) || 0;
+    groups.set(date, group);
+  }
+
+  const rows = Array.from(groups.values())
+    .map((group) => ({
+      date: group.date,
+      appQuantity: group.appQuantity,
+      palletCount: group.palletIds.size,
+      erpQuantity: group.erpQuantity,
+      difference: group.appQuantity - group.erpQuantity,
+      warning: group.warning,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  return NextResponse.json({
+    success: true,
+    wo,
+    rows,
+    total: {
+      appQuantity: rows.reduce((sum, row) => sum + row.appQuantity, 0),
+      palletCount: rows.reduce((sum, row) => sum + row.palletCount, 0),
+      erpQuantity: rows.reduce((sum, row) => sum + row.erpQuantity, 0),
+      difference: rows.reduce((sum, row) => sum + row.difference, 0),
+    },
+  });
 }
 
 export async function GET(request: Request) {
@@ -326,7 +495,16 @@ export async function GET(request: Request) {
   }
 
   try {
-    const reportDate = new URL(request.url).searchParams.get("date")?.trim() ?? "";
+    const url = new URL(request.url);
+    const wo = url.searchParams.get("wo")?.trim() ?? "";
+    if (wo) {
+      if (wo.length > 120) {
+        return NextResponse.json({ success: false, error: "WO không hợp lệ." }, { status: 400 });
+      }
+      return loadDailyHistoryByWo(wo);
+    }
+
+    const reportDate = url.searchParams.get("date")?.trim() ?? "";
     if (!isValidIsoDate(reportDate)) {
       return NextResponse.json({ success: false, error: "Ngày rà soát không hợp lệ." }, { status: 400 });
     }
@@ -343,7 +521,6 @@ export async function GET(request: Request) {
       if (!key) continue;
       const group = groups.get(key) ?? createComparisonGroup(wo);
       group.hasAppData = true;
-      addCleanValue(group.palletItemcodes, row.itemcode);
       group.appQuantity += Number(row.quantity) || 0;
       groups.set(key, group);
     }
@@ -354,9 +531,6 @@ export async function GET(request: Request) {
       if (!key) continue;
       const group = groups.get(key) ?? createComparisonGroup(wo);
       group.hasErpData = true;
-      addCleanValue(group.reportMachines, row.machine);
-      addCleanValue(group.reportItemcodes, row.itemcode);
-      addCleanValue(group.reportProductNames, row.product_name);
       group.erpQuantity += Number(row.ok_goods) || 0;
       groups.set(key, group);
     }
@@ -372,9 +546,14 @@ export async function GET(request: Request) {
 
     const rows = Array.from(groups.values())
       .map((group) => {
-        const itemcodeMatches = group.hasAppData
-          && group.hasErpData
-          && sameCodeSets(group.palletItemcodes, group.reportItemcodes);
+        const key = comparisonKey(group.wo);
+        const appTotal = appTotalsByWo.get(key);
+        const reportTotal = reportTotalsByWo.get(key);
+        const itemcodeMatches = Boolean(
+          appTotal
+          && reportTotal
+          && sameCodeSets(appTotal.itemcodes, reportTotal.itemcodes),
+        );
         const quantityMatches = group.hasAppData
           && group.hasErpData
           && group.appQuantity === group.erpQuantity;
@@ -382,23 +561,23 @@ export async function GET(request: Request) {
 
         if (!group.hasAppData) issues.push("Thiếu dữ liệu App");
         if (!group.hasErpData) issues.push("Thiếu dữ liệu ERP");
-        if (group.hasAppData && group.hasErpData && !itemcodeMatches) {
+        if (appTotal && reportTotal && !itemcodeMatches) {
           issues.push(
-            `Lệch Itemcode (App: ${sortedValues(group.palletItemcodes).join(" / ") || "—"}; ERP: ${sortedValues(group.reportItemcodes).join(" / ") || "—"})`,
+            `Lệch Itemcode (App: ${sortedValues(appTotal.itemcodes).join(" / ") || "—"}; ERP: ${sortedValues(reportTotal.itemcodes).join(" / ") || "—"})`,
           );
         }
         if (group.hasAppData && group.hasErpData && !quantityMatches) issues.push("Lệch số lượng");
 
         return {
           wo: group.wo,
-          machine: sortedValues(group.reportMachines).join(" / "),
-          itemcode: sortedValues(group.reportItemcodes).join(" / "),
-          productName: sortedValues(group.reportProductNames).join(" / "),
-          orderQuantity: appTotalsByWo.get(comparisonKey(group.wo))?.orderQuantity ?? 0,
+          machine: reportTotal ? sortedValues(reportTotal.machines).join(" / ") : "",
+          itemcode: reportTotal ? sortedValues(reportTotal.itemcodes).join(" / ") : "",
+          productName: reportTotal ? sortedValues(reportTotal.productNames).join(" / ") : "",
+          orderQuantity: appTotal?.orderQuantity ?? 0,
           appQuantity: group.appQuantity,
           erpQuantity: group.erpQuantity,
-          totalAppQuantity: appTotalsByWo.get(comparisonKey(group.wo))?.quantity ?? 0,
-          totalErpQuantity: reportTotalsByWo.get(comparisonKey(group.wo)) ?? 0,
+          totalAppQuantity: appTotal?.quantity ?? 0,
+          totalErpQuantity: reportTotal?.quantity ?? 0,
           difference: group.appQuantity - group.erpQuantity,
           itemcodeMatches,
           quantityMatches,
