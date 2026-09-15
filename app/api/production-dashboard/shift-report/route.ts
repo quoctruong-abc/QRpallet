@@ -42,7 +42,6 @@ type PalletComparisonSourceRow = {
   id: number;
   itemcode: string | null;
   wo: string | null;
-  quanorder: number | string | null;
   quantity: number | string | null;
 };
 
@@ -58,7 +57,13 @@ type ReportComparisonSourceRow = {
 type PalletTotalSourceRow = {
   id: number;
   wo: string | null;
+  quanorder: number | string | null;
   quantity: number | string | null;
+};
+
+type PalletWoTotal = {
+  quantity: number;
+  orderQuantity: number;
 };
 
 type ReportTotalSourceRow = {
@@ -70,7 +75,6 @@ type ReportTotalSourceRow = {
 type ComparisonGroup = {
   wo: string;
   palletItemcodes: Set<string>;
-  orderQuantity: number;
   appQuantity: number;
   reportMachines: Set<string>;
   reportItemcodes: Set<string>;
@@ -205,7 +209,6 @@ function createComparisonGroup(wo: string): ComparisonGroup {
   return {
     wo,
     palletItemcodes: new Set<string>(),
-    orderQuantity: 0,
     appQuantity: 0,
     reportMachines: new Set<string>(),
     reportItemcodes: new Set<string>(),
@@ -223,7 +226,7 @@ async function loadPalletComparisonRows(reportDate: string) {
   for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
     const { data, error } = await adminClient
       .from("pallet_data")
-      .select("id,itemcode,wo,quanorder,quantity")
+      .select("id,itemcode,wo,quantity")
       .is("effect_to", null)
       .eq("working_day", reportDate)
       .order("id", { ascending: true })
@@ -258,14 +261,14 @@ async function loadReportComparisonRows(reportDate: string) {
 
 async function loadPalletTotalsByWo(workOrders: string[]) {
   const adminClient = createAdminClient();
-  const totals = new Map<string, number>();
+  const totals = new Map<string, PalletWoTotal>();
 
   for (let keyOffset = 0; keyOffset < workOrders.length; keyOffset += WO_BATCH_SIZE) {
     const keyBatch = workOrders.slice(keyOffset, keyOffset + WO_BATCH_SIZE);
     for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
       const { data, error } = await adminClient
         .from("pallet_data")
-        .select("id,wo,quantity")
+        .select("id,wo,quanorder,quantity")
         .is("effect_to", null)
         .in("wo", keyBatch)
         .order("id", { ascending: true })
@@ -276,7 +279,10 @@ async function loadPalletTotalsByWo(workOrders: string[]) {
       for (const row of pageRows) {
         const key = comparisonKey(row.wo);
         if (!key) continue;
-        totals.set(key, (totals.get(key) ?? 0) + (Number(row.quantity) || 0));
+        const current = totals.get(key) ?? { quantity: 0, orderQuantity: 0 };
+        current.quantity += Number(row.quantity) || 0;
+        current.orderQuantity = Math.max(current.orderQuantity, Number(row.quanorder) || 0);
+        totals.set(key, current);
       }
       if (pageRows.length < DATABASE_BATCH_SIZE) break;
     }
@@ -338,7 +344,6 @@ export async function GET(request: Request) {
       const group = groups.get(key) ?? createComparisonGroup(wo);
       group.hasAppData = true;
       addCleanValue(group.palletItemcodes, row.itemcode);
-      group.orderQuantity = Math.max(group.orderQuantity, Number(row.quanorder) || 0);
       group.appQuantity += Number(row.quantity) || 0;
       groups.set(key, group);
     }
@@ -389,10 +394,10 @@ export async function GET(request: Request) {
           machine: sortedValues(group.reportMachines).join(" / "),
           itemcode: sortedValues(group.reportItemcodes).join(" / "),
           productName: sortedValues(group.reportProductNames).join(" / "),
-          orderQuantity: group.orderQuantity,
+          orderQuantity: appTotalsByWo.get(comparisonKey(group.wo))?.orderQuantity ?? 0,
           appQuantity: group.appQuantity,
           erpQuantity: group.erpQuantity,
-          totalAppQuantity: appTotalsByWo.get(comparisonKey(group.wo)) ?? 0,
+          totalAppQuantity: appTotalsByWo.get(comparisonKey(group.wo))?.quantity ?? 0,
           totalErpQuantity: reportTotalsByWo.get(comparisonKey(group.wo)) ?? 0,
           difference: group.appQuantity - group.erpQuantity,
           itemcodeMatches,
