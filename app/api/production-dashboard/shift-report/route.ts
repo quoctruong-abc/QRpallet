@@ -80,6 +80,34 @@ type ReportWoTotal = {
   productNames: Set<string>;
 };
 
+type PalletDailyHistorySourceRow = {
+  id: number;
+  pallet_id: string;
+  working_day: string;
+  quantity: number | string | null;
+  has_been_edited: boolean | null;
+  has_been_return: boolean | null;
+};
+
+type DeletedDailyHistorySourceRow = {
+  id: number;
+  working_day: string;
+};
+
+type ReportDailyHistorySourceRow = {
+  id_report: string;
+  report_date: string;
+  ok_goods: number | string;
+};
+
+type DailyHistoryGroup = {
+  date: string;
+  appQuantity: number;
+  palletIds: Set<string>;
+  erpQuantity: number;
+  warning: boolean;
+};
+
 type ComparisonGroup = {
   wo: string;
   appQuantity: number;
@@ -334,6 +362,132 @@ async function loadReportTotalsByWo(workOrders: string[]) {
   return totals;
 }
 
+function createDailyHistoryGroup(date: string): DailyHistoryGroup {
+  return {
+    date,
+    appQuantity: 0,
+    palletIds: new Set<string>(),
+    erpQuantity: 0,
+    warning: false,
+  };
+}
+
+async function loadActivePalletHistoryByWo(wo: string) {
+  const adminClient = createAdminClient();
+  const rows: PalletDailyHistorySourceRow[] = [];
+
+  for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+    const { data, error } = await adminClient
+      .from("pallet_data")
+      .select("id,pallet_id,working_day,quantity,has_been_edited,has_been_return")
+      .eq("wo", wo)
+      .is("effect_to", null)
+      .order("id", { ascending: true })
+      .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+    if (error) throw new Error(`Không thể đọc lịch sử pallet theo WO: ${error.message}`);
+    const pageRows = (data ?? []) as PalletDailyHistorySourceRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < DATABASE_BATCH_SIZE) return rows;
+  }
+}
+
+async function loadDeletedPalletHistoryByWo(wo: string) {
+  const adminClient = createAdminClient();
+  const rows: DeletedDailyHistorySourceRow[] = [];
+
+  for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+    const { data, error } = await adminClient
+      .from("pallet_data")
+      .select("id,working_day")
+      .eq("wo", wo)
+      .not("effect_to", "is", null)
+      .ilike("note", "delete:%")
+      .order("id", { ascending: true })
+      .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+    if (error) throw new Error(`Không thể đọc pallet đã xóa theo WO: ${error.message}`);
+    const pageRows = (data ?? []) as DeletedDailyHistorySourceRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < DATABASE_BATCH_SIZE) return rows;
+  }
+}
+
+async function loadReportHistoryByWo(wo: string) {
+  const adminClient = createAdminClient();
+  const rows: ReportDailyHistorySourceRow[] = [];
+
+  for (let offset = 0; ; offset += DATABASE_BATCH_SIZE) {
+    const { data, error } = await adminClient
+      .from("shift_report_data")
+      .select("id_report,report_date,ok_goods")
+      .eq("wo", wo)
+      .order("report_date", { ascending: false })
+      .order("id_report", { ascending: true })
+      .range(offset, offset + DATABASE_BATCH_SIZE - 1);
+
+    if (error) throw new Error(`Không thể đọc lịch sử báo ca theo WO: ${error.message}`);
+    const pageRows = (data ?? []) as ReportDailyHistorySourceRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < DATABASE_BATCH_SIZE) return rows;
+  }
+}
+
+async function loadDailyHistoryByWo(wo: string) {
+  const [activePallets, deletedPallets, reportRows] = await Promise.all([
+    loadActivePalletHistoryByWo(wo),
+    loadDeletedPalletHistoryByWo(wo),
+    loadReportHistoryByWo(wo),
+  ]);
+  const groups = new Map<string, DailyHistoryGroup>();
+
+  for (const pallet of activePallets) {
+    const date = pallet.working_day;
+    const group = groups.get(date) ?? createDailyHistoryGroup(date);
+    group.appQuantity += Number(pallet.quantity) || 0;
+    if (pallet.pallet_id?.trim()) group.palletIds.add(pallet.pallet_id.trim());
+    group.warning ||= Boolean(pallet.has_been_edited || pallet.has_been_return);
+    groups.set(date, group);
+  }
+
+  for (const pallet of deletedPallets) {
+    const date = pallet.working_day;
+    const group = groups.get(date) ?? createDailyHistoryGroup(date);
+    group.warning = true;
+    groups.set(date, group);
+  }
+
+  for (const report of reportRows) {
+    const date = report.report_date;
+    const group = groups.get(date) ?? createDailyHistoryGroup(date);
+    group.erpQuantity += Number(report.ok_goods) || 0;
+    groups.set(date, group);
+  }
+
+  const rows = Array.from(groups.values())
+    .map((group) => ({
+      date: group.date,
+      appQuantity: group.appQuantity,
+      palletCount: group.palletIds.size,
+      erpQuantity: group.erpQuantity,
+      difference: group.appQuantity - group.erpQuantity,
+      warning: group.warning,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  return NextResponse.json({
+    success: true,
+    wo,
+    rows,
+    total: {
+      appQuantity: rows.reduce((sum, row) => sum + row.appQuantity, 0),
+      palletCount: rows.reduce((sum, row) => sum + row.palletCount, 0),
+      erpQuantity: rows.reduce((sum, row) => sum + row.erpQuantity, 0),
+      difference: rows.reduce((sum, row) => sum + row.difference, 0),
+    },
+  });
+}
+
 export async function GET(request: Request) {
   const authorization = await authorizePermission("dashboard.view");
   if (!authorization.ok) {
@@ -341,7 +495,16 @@ export async function GET(request: Request) {
   }
 
   try {
-    const reportDate = new URL(request.url).searchParams.get("date")?.trim() ?? "";
+    const url = new URL(request.url);
+    const wo = url.searchParams.get("wo")?.trim() ?? "";
+    if (wo) {
+      if (wo.length > 120) {
+        return NextResponse.json({ success: false, error: "WO không hợp lệ." }, { status: 400 });
+      }
+      return loadDailyHistoryByWo(wo);
+    }
+
+    const reportDate = url.searchParams.get("date")?.trim() ?? "";
     if (!isValidIsoDate(reportDate)) {
       return NextResponse.json({ success: false, error: "Ngày rà soát không hợp lệ." }, { status: 400 });
     }

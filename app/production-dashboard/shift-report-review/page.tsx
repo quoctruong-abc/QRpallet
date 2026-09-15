@@ -58,6 +58,16 @@ export default async function ShiftReportReviewPage() {
         .shift-comparison-table .shift-number-column { width: 86px; max-width: 86px; padding-left: 7px; padding-right: 7px; text-align: right; white-space: normal; }
         .shift-comparison-table .shift-total-quantity-column { width: 116px; max-width: 116px; padding-left: 7px; padding-right: 7px; text-align: right; white-space: nowrap; }
         .shift-comparison-table .number-cell { text-align: right; white-space: nowrap; }
+        .shift-wo-cell, .shift-history-date-cell { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+        .shift-eye-button { position: relative; width: 30px; height: 30px; display: inline-grid; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid #b2ccff; border-radius: 8px; color: #175cd3; background: #eff8ff; cursor: pointer; }
+        .shift-eye-button:hover { border-color: #528bff; background: #dbeafe; }
+        .shift-eye-button svg { width: 17px; height: 17px; }
+        .shift-wo-history-modal { width: min(760px,calc(100% - 24px)); max-height: 90vh; overflow: auto; }
+        .shift-wo-history-table { min-width: 620px; }
+        .shift-wo-history-table .number-cell { text-align: right; white-space: nowrap; }
+        .shift-wo-history-total td { border-top: 2px solid #98a2b3; background: #f8fafc; font-weight: 850; }
+        .shift-date-eye-button { width: 28px; height: 28px; }
+        .shift-history-warning { position: absolute; top: -7px; right: -7px; width: 17px; height: 17px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: #d92d20; font-size: .65rem; font-weight: 900; line-height: 1; box-shadow: 0 2px 6px rgba(217,45,32,.3); }
         .shift-comparison-row-mismatch { background: #fffcf5; }
         .shift-comparison-row-mismatch:hover { background: #fff7e8; }
         .shift-difference { color: #b42318; font-weight: 850; }
@@ -83,6 +93,7 @@ export default async function ShiftReportReviewPage() {
           .shift-review-heading { align-items: stretch; flex-direction: column; gap: 14px; }
           .shift-comparison-controls { width: 100%; align-items: stretch; flex-direction: column; }
           .shift-comparison-date { width: 100%; }
+          .shift-wo-history-modal { padding: 18px; }
         }
       `}</style>
 

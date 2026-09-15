@@ -37,6 +37,7 @@ type PalletWorkflow = {
 
 type Props = {
   wo: string;
+  date?: string;
   onClose: () => void;
 };
 
@@ -75,7 +76,7 @@ function statusClass(status: string) {
   }
 }
 
-export function WoPalletHistoryDialog({ wo, onClose }: Props) {
+export function WoPalletHistoryDialog({ wo, date, onClose }: Props) {
   const [pallets, setPallets] = useState<PalletDetail[]>([]);
   const [detailLoading, setDetailLoading] = useState(true);
   const [detailError, setDetailError] = useState("");
@@ -90,7 +91,13 @@ export function WoPalletHistoryDialog({ wo, onClose }: Props) {
 
     async function loadDetails() {
       try {
-        const params = new URLSearchParams({ mode: "wo", key: wo, allDates: "1" });
+        const params = new URLSearchParams({ mode: "wo", key: wo });
+        if (date) {
+          params.set("from", date);
+          params.set("to", date);
+        } else {
+          params.set("allDates", "1");
+        }
         const response = await fetch(`/api/production-dashboard/details?${params.toString()}`, {
           cache: "no-store",
           signal: controller.signal,
@@ -110,7 +117,7 @@ export function WoPalletHistoryDialog({ wo, onClose }: Props) {
 
     void loadDetails();
     return () => controller.abort();
-  }, [wo]);
+  }, [date, wo]);
 
   async function openHistory(pallet: PalletDetail) {
     setHistoryPallet(pallet);
@@ -222,7 +229,7 @@ export function WoPalletHistoryDialog({ wo, onClose }: Props) {
           role="dialog"
         >
           <div className="modal-heading">
-            <div><p className="eyebrow">CHI TIẾT PALLET</p><h2>WO {wo}</h2></div>
+            <div><p className="eyebrow">CHI TIẾT PALLET</p><h2>WO {wo}{date ? ` · ${formatWorkingDay(date)}` : ""}</h2></div>
             <button className="modal-close" onClick={onClose} type="button">×</button>
           </div>
 
