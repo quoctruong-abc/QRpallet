@@ -13,7 +13,9 @@ export type ScannedPallet = {
   itemcode: string;
   status: string;
   updated_at?: string;
+  scanned_at?: string | null;
   scanned_by?: string | null;
+  scanned_by_name: string | null;
 };
 
 type Notice = { type: "success" | "error" | "loading"; text: string } | null;
@@ -58,6 +60,22 @@ const CAMERA_CAPTURE_DELAY_MS = 10_000;
 const DUPLICATE_LOG_COOLDOWN_MS = 900;
 const MAX_SCAN_PALLETS = 200;
 const SCAN_LIMIT_WARNING_AT = 150;
+const vietnamDateTimeFormatter = new Intl.DateTimeFormat("vi-VN", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+function formatScanTime(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : vietnamDateTimeFormatter.format(date);
+}
 
 function cleanQrValue(value: string) {
   const trimmed = value.trim();
@@ -165,6 +183,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     return rows.filter((row) => (
       row.pallet_id.toLocaleLowerCase("vi").includes(query)
       || row.itemcode.toLocaleLowerCase("vi").includes(query)
+      || row.scanned_by_name?.toLocaleLowerCase("vi").includes(query)
     ));
   }, [rows, searchTerm]);
   const visibleQuantity = useMemo(
@@ -601,7 +620,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
               type="search"
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Nhập Pallet ID hoặc Itemcode"
+              placeholder="Nhập Pallet ID, Itemcode hoặc người scan"
               autoComplete="off"
             />
           </div>
@@ -609,12 +628,12 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         {!rows.length ? (
           <div className="scan-empty">Chưa có pallet nào được scan.</div>
         ) : !visibleRows.length ? (
-          <div className="scan-empty">Không tìm thấy Pallet ID hoặc Itemcode phù hợp.</div>
+          <div className="scan-empty">Không tìm thấy Pallet ID, Itemcode hoặc người scan phù hợp.</div>
         ) : (
           <div className="scan-table-wrap">
             <table className="scan-table">
               <thead>
-                <tr><th>ID pallet</th><th>WO</th><th>Quantity</th><th>Product name</th><th>Customer</th><th>Itemcode</th><th>Thao tác</th></tr>
+                <tr><th>ID pallet</th><th>WO</th><th>Quantity</th><th>Product name</th><th>Customer</th><th>Itemcode</th><th>Thời gian scan</th><th>Người scan</th><th>Thao tác</th></tr>
               </thead>
               <tbody>
                 {visibleRows.map((row) => (
@@ -625,6 +644,8 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                     <td>{row.product_name || "—"}</td>
                     <td>{row.customer || "—"}</td>
                     <td>{row.itemcode}</td>
+                    <td className="scan-time-cell">{formatScanTime(row.scanned_at)}</td>
+                    <td>{row.scanned_by_name || "—"}</td>
                     <td><button type="button" className="button button-danger scan-cancel-button" onClick={() => setCancelRow(row)}>Hủy</button></td>
                   </tr>
                 ))}
