@@ -229,8 +229,8 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
     page.drawLine({ start: { x: startX + 84, y: titleBottom }, end: { x: startX + 84, y: topY }, color: BORDER, thickness: 0.8 });
     page.drawImage(logo, { x: startX + 8, y: titleBottom + 18, width: 68, height: 20 });
     drawCenteredText(page, bold, "SRITHAI (VIETNAM)", 7.5, startX, titleBottom + 4, 84);
-    drawCenteredText(page, bold, "PHIẾU NHẬP KHO THÀNH PHẨM", 17, startX + 84, titleBottom + 31, totalColumnsWidth - 84);
-    drawCenteredText(page, bold, "Finished Good Transfer to WH", 15, startX + 84, titleBottom + 10, totalColumnsWidth - 84);
+    drawCenteredText(page, bold, "PHIẾU NHẬP KHO", 17, startX + 84, titleBottom + 31, totalColumnsWidth - 84);
+    drawCenteredText(page, bold, "Goods Transfer to WH", 15, startX + 84, titleBottom + 10, totalColumnsWidth - 84);
     const infoBottom = titleBottom - infoHeight;
     page.drawRectangle({ x: startX, y: infoBottom, width: totalColumnsWidth, height: infoHeight, borderColor: BORDER, borderWidth: 0.8 });
     page.drawText("Từ Bộ phận/ Section: ÉP", { x: startX + 5, y: infoBottom + 10, size: 9.2, font: bold });
@@ -252,7 +252,7 @@ export async function createReceiptPdf(receiptId: string, receiptDate: string, p
     page.drawRectangle({ x: startX, y: footerBottom + signatureHeight - 22, width: productionWidth, height: 22, color: HEADER_FILL, borderColor: BORDER, borderWidth: 0.8 });
     page.drawRectangle({ x: startX + productionWidth, y: footerBottom + signatureHeight - 22, width: warehouseWidth, height: 22, color: HEADER_FILL, borderColor: BORDER, borderWidth: 0.8 });
     drawCenteredText(page, bold, "BỘ PHẬN SẢN XUẤT XÁC NHẬN/ Production confirmed", 9, startX, footerBottom + signatureHeight - 15, productionWidth);
-    drawCenteredText(page, bold, "XÁC NHẬN CỦA KHO THÀNH PHẨM/ FG Warehouse confirmed", 9, startX + productionWidth, footerBottom + signatureHeight - 15, warehouseWidth);
+    drawCenteredText(page, bold, "XÁC NHẬN CỦA KHO / Warehouse confirmed", 9, startX + productionWidth, footerBottom + signatureHeight - 15, warehouseWidth);
     const roleY = footerBottom + signatureHeight - 40, bodyY = roleY - 36, signLineHeight = 16;
     const cells = [{ x: startX, width: halfProd, label: "Người giao/ Transferred by" }, { x: startX + halfProd, width: halfProd, label: "Người kiểm tra/ Checked by" }, { x: startX + productionWidth, width: halfWh, label: "Người nhận/ Received by" }, { x: startX + productionWidth + halfWh, width: halfWh, label: "Người phê duyệt/ Approved by" }];
     cells.forEach((cell) => {
