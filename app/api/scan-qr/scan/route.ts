@@ -67,5 +67,18 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ success: true, pallet: data });
+  const scannerName = authorization.profile.full_name?.trim()
+    || authorization.profile.username?.trim()
+    || "Không xác định";
+  const scannerDisplayName = authorization.profile.employee_code
+    ? `${scannerName} · ${authorization.profile.employee_code}`
+    : scannerName;
+
+  return NextResponse.json({
+    success: true,
+    pallet: {
+      ...data,
+      scanned_by_name: scannerDisplayName,
+    },
+  });
 }
