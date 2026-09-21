@@ -556,10 +556,26 @@ td { font-size: .9rem; }
 .scan-table-search label { color: var(--muted); font-size: .78rem; font-weight: 850; text-transform: uppercase; letter-spacing: .04em; }
 .scan-table-search input { min-height: 42px; }
 .scan-table-wrap { overflow-x: auto; }
-.scan-table { min-width: 1120px; }
+.scan-table { min-width: 1220px; }
 .scan-table th, .scan-table td { padding: 13px 12px; }
 .scan-time-cell { white-space: nowrap; }
 .scan-empty { padding: 42px 20px; color: var(--muted); text-align: center; }
+
+.scan-position-backdrop { z-index: 1200; }
+.scan-position-modal { width: min(560px, calc(100% - 24px)); max-height: 88vh; overflow: auto; }
+.scan-position-help { margin: 0 0 16px; }
+.scan-position-search { display: grid; gap: 6px; }
+.scan-position-search > span { color: var(--muted); font-size: .76rem; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
+.scan-position-options { display: grid; gap: 7px; max-height: 260px; margin-top: 10px; overflow-y: auto; overscroll-behavior: contain; }
+.scan-position-option { width: 100%; display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 11px 12px; border: 1px solid var(--border); border-radius: 11px; color: var(--text); background: #fff; text-align: left; cursor: pointer; }
+.scan-position-option:hover { border-color: #84adff; background: #f5f8ff; }
+.scan-position-option-selected { border-color: #2f80ed; background: #eff8ff; box-shadow: 0 0 0 2px rgba(47,128,237,.1); }
+.scan-position-option strong { color: #175cd3; white-space: nowrap; }
+.scan-position-option span { min-width: 0; overflow-wrap: anywhere; }
+.scan-position-option small { color: #027a48; font-weight: 850; white-space: nowrap; }
+.scan-position-state { padding: 24px 12px; border: 1px dashed var(--border); border-radius: 11px; color: var(--muted); text-align: center; }
+.scan-position-state-error { color: var(--danger); border-color: #fecdca; background: var(--danger-bg); }
+.scan-position-default { margin: 12px 0 0; color: var(--muted); font-size: .82rem; }
 
 .camera-overlay { position: fixed; inset: 0; z-index: 1000; overflow: hidden; background: #000; }
 .camera-reader { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -603,11 +619,14 @@ td { font-size: .9rem; }
   .scan-table td:nth-child(4)::before { content: "Product name"; }
   .scan-table td:nth-child(5)::before { content: "Customer"; }
   .scan-table td:nth-child(6)::before { content: "Itemcode"; }
-  .scan-table td:nth-child(7)::before { content: "Thời gian scan"; }
-  .scan-table td:nth-child(8)::before { content: "Người scan"; }
-  .scan-table td:nth-child(9)::before { content: "Thao tác"; }
+  .scan-table td:nth-child(7)::before { content: "Vị trí"; }
+  .scan-table td:nth-child(8)::before { content: "Thời gian scan"; }
+  .scan-table td:nth-child(9)::before { content: "Người scan"; }
+  .scan-table td:nth-child(10)::before { content: "Thao tác"; }
   .scan-table td:nth-child(1), .scan-table td:nth-child(4) { grid-column: 1 / -1; }
   .scan-confirm-modal { max-height: 92vh; overflow: auto; padding: 20px; }
+  .scan-position-option { grid-template-columns: 1fr; gap: 3px; }
+  .scan-position-option small { justify-self: start; }
 }
 
 /* Warehouse receipt */

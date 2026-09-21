@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import QrScanner from "qr-scanner";
+import { ScanPositionDialog, type WarehousePosition } from "./scan-position-dialog";
 
 export type ScannedPallet = {
   pallet_id: string;
@@ -12,6 +13,7 @@ export type ScannedPallet = {
   customer: string | null;
   itemcode: string;
   status: string;
+  position?: string | null;
   updated_at?: string;
   scanned_at?: string | null;
   scanned_by?: string | null;
@@ -60,6 +62,7 @@ const CAMERA_CAPTURE_DELAY_MS = 10_000;
 const DUPLICATE_LOG_COOLDOWN_MS = 900;
 const MAX_SCAN_PALLETS = 200;
 const SCAN_LIMIT_WARNING_AT = 150;
+const POSITION_SESSION_STORAGE_KEY = "scan-qr-default-position-v1";
 const vietnamDateTimeFormatter = new Intl.DateTimeFormat("vi-VN", {
   timeZone: "Asia/Ho_Chi_Minh",
   day: "2-digit",
@@ -174,6 +177,10 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   const [confirming, setConfirming] = useState(false);
   const [cancelRow, setCancelRow] = useState<ScannedPallet | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [sessionPosition, setSessionPosition] = useState<WarehousePosition | null>(null);
+  const [positionPallet, setPositionPallet] = useState<ScannedPallet | null>(null);
+  const [positionSaving, setPositionSaving] = useState(false);
+  const [positionError, setPositionError] = useState("");
 
   const showScanLimitIndicator = rows.length >= SCAN_LIMIT_WARNING_AT;
   const scanLimitReached = rows.length >= MAX_SCAN_PALLETS;
@@ -184,6 +191,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       row.pallet_id.toLocaleLowerCase("vi").includes(query)
       || row.itemcode.toLocaleLowerCase("vi").includes(query)
       || row.scanned_by_name?.toLocaleLowerCase("vi").includes(query)
+      || row.position?.toLocaleLowerCase("vi").includes(query)
     ));
   }, [rows, searchTerm]);
   const visibleQuantity = useMemo(
@@ -302,10 +310,30 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   }
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      try {
+        const storedPosition = window.sessionStorage.getItem(POSITION_SESSION_STORAGE_KEY);
+        if (storedPosition) {
+          const parsed = JSON.parse(storedPosition) as Partial<WarehousePosition>;
+          if (typeof parsed.code === "string" && typeof parsed.name === "string") {
+            setSessionPosition({ code: parsed.code, name: parsed.name });
+          }
+        }
+      } catch {
+        window.sessionStorage.removeItem(POSITION_SESSION_STORAGE_KEY);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
     const handleVisibilityChange = () => {
       if (!document.hidden) return;
       destroyScanner();
       setCameraOpen(false);
+      setPositionPallet(null);
+      setPositionError("");
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -319,7 +347,60 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     destroyScanner();
     nextCaptureAllowedAtRef.current = 0;
     setCameraOpen(false);
+    setPositionPallet(null);
+    setPositionError("");
     if (clearNotice) setNotice(null);
+  }
+
+  async function resumeScannerAfterPosition() {
+    setPositionPallet(null);
+    setPositionError("");
+    nextCaptureAllowedAtRef.current = Date.now() + 700;
+
+    const scanner = scannerRef.current;
+    if (!scanner || !cameraOpen) return;
+    try {
+      await scanner.start();
+    } catch (error) {
+      destroyScanner();
+      setCameraOpen(false);
+      setNotice({ type: "error", text: cameraErrorMessage(error) });
+    }
+  }
+
+  async function savePosition(position: WarehousePosition) {
+    if (!positionPallet) return;
+    setPositionSaving(true);
+    setPositionError("");
+
+    try {
+      const response = await fetch("/api/scan-qr/positions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          palletId: positionPallet.pallet_id,
+          position: position.code,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error ?? "Không thể lưu vị trí pallet.");
+      }
+
+      const savedPosition = result.position as WarehousePosition;
+      setRows((current) => current.map((row) => (
+        row.pallet_id === positionPallet.pallet_id
+          ? { ...row, position: savedPosition.code }
+          : row
+      )));
+      setSessionPosition(savedPosition);
+      window.sessionStorage.setItem(POSITION_SESSION_STORAGE_KEY, JSON.stringify(savedPosition));
+      await resumeScannerAfterPosition();
+    } catch (error) {
+      setPositionError(error instanceof Error ? error.message : "Không thể lưu vị trí pallet.");
+    } finally {
+      setPositionSaving(false);
+    }
   }
 
   async function openCamera() {
@@ -484,6 +565,14 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         state: "success",
         message: "Thành công",
       });
+      try {
+        await scannerRef.current?.pause();
+      } catch {
+        // The pallet is already scanned; the position popup can still open if
+        // the camera stream has been released by the device in the meantime.
+      }
+      setPositionError("");
+      setPositionPallet(pallet);
     } catch {
       scannedIdsRef.current.delete(palletId);
       duplicateLoggedAtRef.current.delete(palletId);
@@ -620,7 +709,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
               type="search"
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Nhập Pallet ID, Itemcode hoặc người scan"
+              placeholder="Nhập Pallet ID, Itemcode, người scan hoặc vị trí"
               autoComplete="off"
             />
           </div>
@@ -628,12 +717,12 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         {!rows.length ? (
           <div className="scan-empty">Chưa có pallet nào được scan.</div>
         ) : !visibleRows.length ? (
-          <div className="scan-empty">Không tìm thấy Pallet ID, Itemcode hoặc người scan phù hợp.</div>
+          <div className="scan-empty">Không tìm thấy Pallet ID, Itemcode, người scan hoặc vị trí phù hợp.</div>
         ) : (
           <div className="scan-table-wrap">
             <table className="scan-table">
               <thead>
-                <tr><th>ID pallet</th><th>WO</th><th>Quantity</th><th>Product name</th><th>Customer</th><th>Itemcode</th><th>Thời gian scan</th><th>Người scan</th><th>Thao tác</th></tr>
+                <tr><th>ID pallet</th><th>WO</th><th>Quantity</th><th>Product name</th><th>Customer</th><th>Itemcode</th><th>Vị trí</th><th>Thời gian scan</th><th>Người scan</th><th>Thao tác</th></tr>
               </thead>
               <tbody>
                 {visibleRows.map((row) => (
@@ -644,6 +733,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                     <td>{row.product_name || "—"}</td>
                     <td>{row.customer || "—"}</td>
                     <td>{row.itemcode}</td>
+                    <td>{row.position || "—"}</td>
                     <td className="scan-time-cell">{formatScanTime(row.scanned_at)}</td>
                     <td>{row.scanned_by_name || "—"}</td>
                     <td><button type="button" className="button button-danger scan-cancel-button" onClick={() => setCancelRow(row)}>Hủy</button></td>
@@ -833,6 +923,17 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
             </div>
           ) : null}
         </div>
+      ) : null}
+
+      {positionPallet ? (
+        <ScanPositionDialog
+          defaultPosition={sessionPosition}
+          error={positionError}
+          onClose={() => void resumeScannerAfterPosition()}
+          onSave={(position) => void savePosition(position)}
+          palletId={positionPallet.pallet_id}
+          saving={positionSaving}
+        />
       ) : null}
 
       {cancelRow ? (
