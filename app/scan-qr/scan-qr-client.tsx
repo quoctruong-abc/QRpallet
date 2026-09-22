@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import QrScanner from "qr-scanner";
-import { ScanPositionDialog, type WarehousePosition } from "./scan-position-dialog";
+import { ScanPositionPicker, type WarehousePosition } from "./scan-position-dialog";
 
 export type ScannedPallet = {
   pallet_id: string;
@@ -38,12 +38,14 @@ type LiveScanItem = {
   wo?: string;
   quantity?: number;
   itemcode?: string;
+  position?: string;
 };
 type PalletDetails = {
   palletStatus?: string;
   wo?: string;
   quantity?: number;
   itemcode?: string;
+  position?: string;
 };
 type QrPoint = { x: number; y: number };
 type DetailedScanResult = {
@@ -144,6 +146,8 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   const scannerRef = useRef<QrScanner | null>(null);
   const scanSequenceRef = useRef(0);
   const nextCaptureAllowedAtRef = useRef(0);
+  const sessionPositionRef = useRef<WarehousePosition | null>(null);
+  const positionPickerActiveRef = useRef(false);
   const scannedIdsRef = useRef(new Set(initialRows.map((row) => row.pallet_id)));
   const duplicateLoggedAtRef = useRef(new Map<string, number>());
   const palletDetailsRef = useRef(new Map<string, PalletDetails>(initialRows.map((row) => [
@@ -153,6 +157,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       wo: row.wo,
       quantity: Number(row.quantity),
       itemcode: row.itemcode,
+      position: row.position ?? undefined,
     },
   ])));
   const qrOutlineSvgRef = useRef<SVGSVGElement | null>(null);
@@ -172,15 +177,13 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     wo: row.wo,
     quantity: Number(row.quantity),
     itemcode: row.itemcode,
+    position: row.position ?? undefined,
   })));
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [cancelRow, setCancelRow] = useState<ScannedPallet | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [sessionPosition, setSessionPosition] = useState<WarehousePosition | null>(null);
-  const [positionPallet, setPositionPallet] = useState<ScannedPallet | null>(null);
-  const [positionSaving, setPositionSaving] = useState(false);
-  const [positionError, setPositionError] = useState("");
 
   const showScanLimitIndicator = rows.length >= SCAN_LIMIT_WARNING_AT;
   const scanLimitReached = rows.length >= MAX_SCAN_PALLETS;
@@ -316,7 +319,9 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         if (storedPosition) {
           const parsed = JSON.parse(storedPosition) as Partial<WarehousePosition>;
           if (typeof parsed.code === "string" && typeof parsed.name === "string") {
-            setSessionPosition({ code: parsed.code, name: parsed.name });
+            const position = { code: parsed.code, name: parsed.name };
+            sessionPositionRef.current = position;
+            setSessionPosition(position);
           }
         }
       } catch {
@@ -332,8 +337,6 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       if (!document.hidden) return;
       destroyScanner();
       setCameraOpen(false);
-      setPositionPallet(null);
-      setPositionError("");
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -346,61 +349,19 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   function closeCamera(clearNotice = true) {
     destroyScanner();
     nextCaptureAllowedAtRef.current = 0;
+    positionPickerActiveRef.current = false;
     setCameraOpen(false);
-    setPositionPallet(null);
-    setPositionError("");
     if (clearNotice) setNotice(null);
   }
 
-  async function resumeScannerAfterPosition() {
-    setPositionPallet(null);
-    setPositionError("");
-    nextCaptureAllowedAtRef.current = Date.now() + 700;
-
-    const scanner = scannerRef.current;
-    if (!scanner || !cameraOpen) return;
-    try {
-      await scanner.start();
-    } catch (error) {
-      destroyScanner();
-      setCameraOpen(false);
-      setNotice({ type: "error", text: cameraErrorMessage(error) });
-    }
-  }
-
-  async function savePosition(position: WarehousePosition) {
-    if (!positionPallet) return;
-    setPositionSaving(true);
-    setPositionError("");
-
-    try {
-      const response = await fetch("/api/scan-qr/positions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          palletId: positionPallet.pallet_id,
-          position: position.code,
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok || !result.success) {
-        throw new Error(result.error ?? "Không thể lưu vị trí pallet.");
-      }
-
-      const savedPosition = result.position as WarehousePosition;
-      setRows((current) => current.map((row) => (
-        row.pallet_id === positionPallet.pallet_id
-          ? { ...row, position: savedPosition.code }
-          : row
-      )));
-      setSessionPosition(savedPosition);
-      window.sessionStorage.setItem(POSITION_SESSION_STORAGE_KEY, JSON.stringify(savedPosition));
-      await resumeScannerAfterPosition();
-    } catch (error) {
-      setPositionError(error instanceof Error ? error.message : "Không thể lưu vị trí pallet.");
-    } finally {
-      setPositionSaving(false);
-    }
+  function selectSessionPosition(position: WarehousePosition) {
+    sessionPositionRef.current = position;
+    setSessionPosition(position);
+    window.sessionStorage.setItem(POSITION_SESSION_STORAGE_KEY, JSON.stringify(position));
+    setNotice((current) => (
+      current?.text === "Hãy chọn vị trí kho trước khi quét pallet." ? null : current
+    ));
+    nextCaptureAllowedAtRef.current = Date.now() + 500;
   }
 
   async function openCamera() {
@@ -412,6 +373,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
     const ios = isIosDevice();
     nextCaptureAllowedAtRef.current = 0;
+    positionPickerActiveRef.current = false;
     setCameraOpen(true);
     setNotice({ type: "loading", text: "Đang mở camera live..." });
 
@@ -464,8 +426,16 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   }
 
   async function handleDetected(result: DetailedScanResult) {
+    if (positionPickerActiveRef.current) return;
+
     const palletId = cleanQrValue(result.data);
     if (!palletId) return;
+
+    const selectedPosition = sessionPositionRef.current;
+    if (!selectedPosition) {
+      setNotice({ type: "error", text: "Hãy chọn vị trí kho trước khi quét pallet." });
+      return;
+    }
 
     const now = Date.now();
     if (now < nextCaptureAllowedAtRef.current) return;
@@ -514,13 +484,14 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       state: "loading",
       message: "Đang kiểm tra",
       palletStatus: "Đang kiểm tra",
+      position: selectedPosition.code,
     });
 
     try {
       const response = await fetch("/api/scan-qr/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ palletId }),
+        body: JSON.stringify({ palletId, position: selectedPosition.code }),
       });
       const apiResult = await response.json().catch(() => null) as ScanApiResult | null;
 
@@ -536,6 +507,9 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
 
         if (apiResult?.code === "MAX_SCAN_PALLETS") {
           setNotice({ type: "error", text: "Đã đạt giới hạn tối đa 200 pallet. Hãy tạo phiếu trước khi scan thêm." });
+        }
+        if (apiResult?.code === "POSITION_NOT_FOUND") {
+          setNotice({ type: "error", text: "Vị trí đã chọn không còn hoạt động. Hãy chọn vị trí khác." });
         }
 
         const conciseResult = palletStatusResult(palletStatus)
@@ -560,19 +534,13 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
         wo: pallet.wo,
         quantity: Number(pallet.quantity),
         itemcode: pallet.itemcode,
+        position: pallet.position ?? selectedPosition.code,
       });
       updateLiveScan(scanKey, {
         state: "success",
         message: "Thành công",
+        position: pallet.position ?? selectedPosition.code,
       });
-      try {
-        await scannerRef.current?.pause();
-      } catch {
-        // The pallet is already scanned; the position popup can still open if
-        // the camera stream has been released by the device in the meantime.
-      }
-      setPositionError("");
-      setPositionPallet(pallet);
     } catch {
       scannedIdsRef.current.delete(palletId);
       duplicateLoggedAtRef.current.delete(palletId);
@@ -805,32 +773,22 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
             <button type="button" onClick={() => closeCamera()}>✕</button>
           </div>
 
-          <div className="camera-guide" style={{ top: "70px", bottom: "34vh" }}>
+          <div className="camera-guide camera-guide-with-position">
             <span />
-            <p>Đưa lần lượt các QR vào giữa khung</p>
+            <p>{sessionPosition ? `Đang quét vào ${sessionPosition.code}` : "Chọn vị trí trước khi quét"}</p>
           </div>
 
-          <div
-            style={{
-              position: "absolute",
-              zIndex: 5,
-              left: "50%",
-              right: "auto",
-              bottom: "max(14px, env(safe-area-inset-bottom))",
-              transform: "translateX(-50%)",
-              width: "min(720px, calc(100% - 20px))",
-              height: "min(31vh, 250px)",
-              display: "grid",
-              gridTemplateRows: "auto minmax(0, 1fr)",
-              overflow: "hidden",
-              border: "1px solid rgba(255,255,255,.34)",
-              borderRadius: "16px",
-              color: "white",
-              background: "rgba(15,23,42,.88)",
-              boxShadow: "0 14px 42px rgba(0,0,0,.38)",
-              backdropFilter: "blur(12px)",
-            }}
-          >
+          <div className="camera-bottom-stack">
+            <ScanPositionPicker
+              key={sessionPosition?.code ?? "no-position"}
+              onInteractionChange={(active) => {
+                positionPickerActiveRef.current = active;
+              }}
+              onSelect={selectSessionPosition}
+              selectedPosition={sessionPosition}
+            />
+
+            <div className="camera-history-panel">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,.18)" }}>
               <strong style={{ fontSize: ".88rem" }}>Lịch sử scan trong phiên</strong>
               <span style={{ fontSize: ".78rem", opacity: .82 }}>{liveScans.length} lượt • kéo để xem</span>
@@ -847,6 +805,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>ID pallet</th>
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>WO / Item</th>
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>SL</th>
+                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>Vị trí</th>
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>Trạng thái pallet</th>
                     </tr>
                   </thead>
@@ -886,6 +845,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                           <small style={{ display: "block", marginTop: "2px", opacity: .68 }}>{scan.itemcode || "—"}</small>
                         </td>
                         <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>{scan.quantity === undefined ? "—" : scan.quantity.toLocaleString("vi-VN")}</td>
+                        <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>{scan.position || "—"}</td>
                         <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>
                           <span style={{
                             display: "inline-flex",
@@ -909,6 +869,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                 </table>
               )}
             </div>
+            </div>
           </div>
 
           {notice ? (
@@ -923,17 +884,6 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
             </div>
           ) : null}
         </div>
-      ) : null}
-
-      {positionPallet ? (
-        <ScanPositionDialog
-          defaultPosition={sessionPosition}
-          error={positionError}
-          onClose={() => void resumeScannerAfterPosition()}
-          onSave={(position) => void savePosition(position)}
-          palletId={positionPallet.pallet_id}
-          saving={positionSaving}
-        />
       ) : null}
 
       {cancelRow ? (

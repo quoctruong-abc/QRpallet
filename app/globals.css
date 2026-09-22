@@ -561,22 +561,6 @@ td { font-size: .9rem; }
 .scan-time-cell { white-space: nowrap; }
 .scan-empty { padding: 42px 20px; color: var(--muted); text-align: center; }
 
-.scan-position-backdrop { z-index: 1200; }
-.scan-position-modal { width: min(560px, calc(100% - 24px)); max-height: 88vh; overflow: auto; }
-.scan-position-help { margin: 0 0 16px; }
-.scan-position-search { display: grid; gap: 6px; }
-.scan-position-search > span { color: var(--muted); font-size: .76rem; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
-.scan-position-options { display: grid; gap: 7px; max-height: 260px; margin-top: 10px; overflow-y: auto; overscroll-behavior: contain; }
-.scan-position-option { width: 100%; display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 11px 12px; border: 1px solid var(--border); border-radius: 11px; color: var(--text); background: #fff; text-align: left; cursor: pointer; }
-.scan-position-option:hover { border-color: #84adff; background: #f5f8ff; }
-.scan-position-option-selected { border-color: #2f80ed; background: #eff8ff; box-shadow: 0 0 0 2px rgba(47,128,237,.1); }
-.scan-position-option strong { color: #175cd3; white-space: nowrap; }
-.scan-position-option span { min-width: 0; overflow-wrap: anywhere; }
-.scan-position-option small { color: #027a48; font-weight: 850; white-space: nowrap; }
-.scan-position-state { padding: 24px 12px; border: 1px dashed var(--border); border-radius: 11px; color: var(--muted); text-align: center; }
-.scan-position-state-error { color: var(--danger); border-color: #fecdca; background: var(--danger-bg); }
-.scan-position-default { margin: 12px 0 0; color: var(--muted); font-size: .82rem; }
-
 .camera-overlay { position: fixed; inset: 0; z-index: 1000; overflow: hidden; background: #000; }
 .camera-reader { position: absolute; inset: 0; width: 100%; height: 100%; }
 .camera-reader video { width: 100% !important; height: 100% !important; object-fit: cover !important; }
@@ -586,6 +570,27 @@ td { font-size: .9rem; }
 .camera-guide { position: absolute; inset: 0; z-index: 2; pointer-events: none; display: grid; place-items: center; }
 .camera-guide span { width: min(72vw, 340px); aspect-ratio: 1; border: 3px solid rgba(255,255,255,.95); border-radius: 22px; box-shadow: 0 0 0 200vmax rgba(0,0,0,.34); }
 .camera-guide p { position: absolute; top: calc(50% + min(36vw, 170px) + 20px); margin: 0; color: white; font-weight: 750; text-shadow: 0 2px 8px #000; }
+.camera-guide-with-position { top: 70px; bottom: min(46vh, 380px); }
+.camera-guide-with-position span { width: min(72vw, 340px, calc(54vh - 90px)); }
+.camera-guide-with-position p { top: auto; bottom: 8px; }
+.camera-bottom-stack { position: absolute; z-index: 7; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(760px, calc(100% - 20px)); display: grid; gap: 9px; }
+.camera-history-panel { height: min(27vh, 220px); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid rgba(255,255,255,.34); border-radius: 16px; color: white; background: rgba(15,23,42,.88); box-shadow: 0 14px 42px rgba(0,0,0,.38); backdrop-filter: blur(12px); }
+.camera-position-picker { position: relative; display: grid; grid-template-columns: minmax(150px, .8fr) minmax(220px, 1.2fr); gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid rgba(253,176,34,.82); border-radius: 15px; color: white; background: rgba(122,46,14,.94); box-shadow: 0 10px 32px rgba(0,0,0,.34); backdrop-filter: blur(12px); }
+.camera-position-picker-ready { border-color: rgba(50,213,131,.78); background: rgba(2,72,50,.94); }
+.camera-position-current { min-width: 0; display: grid; gap: 1px; }
+.camera-position-current > span { color: rgba(255,255,255,.72); font-size: .65rem; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; }
+.camera-position-current > strong { overflow: hidden; font-size: 1rem; text-overflow: ellipsis; white-space: nowrap; }
+.camera-position-current > small { overflow: hidden; color: rgba(255,255,255,.78); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.camera-position-search { position: relative; }
+.camera-position-search input { width: 100%; min-height: 42px; border: 1px solid rgba(255,255,255,.48); color: #101828; background: rgba(255,255,255,.97); }
+.camera-position-results { position: absolute; z-index: 10; left: 0; right: 0; bottom: calc(100% + 8px); max-height: min(38vh, 280px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; border: 1px solid rgba(255,255,255,.34); border-radius: 13px; background: rgba(15,23,42,.98); box-shadow: 0 16px 38px rgba(0,0,0,.46); }
+.camera-position-results button { width: 100%; display: grid; grid-template-columns: minmax(78px, auto) minmax(0, 1fr); gap: 10px; padding: 10px; border: 0; border-bottom: 1px solid rgba(255,255,255,.12); border-radius: 8px; color: white; background: transparent; text-align: left; cursor: pointer; }
+.camera-position-results button:last-child { border-bottom: 0; }
+.camera-position-results button:hover, .camera-position-results .camera-position-result-selected { background: rgba(47,128,237,.34); }
+.camera-position-results strong { color: #84caff; white-space: nowrap; }
+.camera-position-results span { min-width: 0; overflow-wrap: anywhere; }
+.camera-position-state { padding: 16px 10px; color: rgba(255,255,255,.72); text-align: center; }
+.camera-position-state-error { color: #fecdca; }
 .camera-notice { position: absolute; z-index: 4; left: 14px; right: 14px; bottom: max(22px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 16px; color: white; backdrop-filter: blur(10px); }
 .camera-notice p { margin: 0; font-weight: 800; line-height: 1.35; }
 .camera-notice > span { flex: 0 0 auto; width: 28px; height: 28px; display: grid; place-items: center; border: 2px solid currentColor; border-radius: 50%; font-weight: 900; }
@@ -625,8 +630,13 @@ td { font-size: .9rem; }
   .scan-table td:nth-child(10)::before { content: "Thao tác"; }
   .scan-table td:nth-child(1), .scan-table td:nth-child(4) { grid-column: 1 / -1; }
   .scan-confirm-modal { max-height: 92vh; overflow: auto; padding: 20px; }
-  .scan-position-option { grid-template-columns: 1fr; gap: 3px; }
-  .scan-position-option small { justify-self: start; }
+  .camera-guide-with-position { bottom: min(52vh, 410px); }
+  .camera-guide-with-position span { width: min(72vw, 300px, calc(48vh - 90px)); }
+  .camera-bottom-stack { gap: 7px; }
+  .camera-position-picker { grid-template-columns: 1fr; gap: 7px; padding: 9px 10px; }
+  .camera-position-current > small { display: none; }
+  .camera-position-results { max-height: 30vh; }
+  .camera-history-panel { height: min(25vh, 190px); }
 }
 
 /* Warehouse receipt */
