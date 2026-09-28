@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const MAX_PALLET_ID_LENGTH = 128;
 const MAX_POSITION_CODE_LENGTH = 50;
+const SCAN_POSITION_PHASE2_ENABLED = false;
 
 export async function POST(request: Request) {
   const authorization = await authorizePermission("scan.standard");
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
   if (!palletId || palletId.length > MAX_PALLET_ID_LENGTH) {
     return NextResponse.json({ success: false, error: "QR không chứa mã pallet hợp lệ." }, { status: 400 });
   }
-  if (!position || position.length > MAX_POSITION_CODE_LENGTH) {
+  if (SCAN_POSITION_PHASE2_ENABLED && (!position || position.length > MAX_POSITION_CODE_LENGTH)) {
     return NextResponse.json(
       { success: false, code: "POSITION_REQUIRED", error: "Hãy chọn vị trí kho trước khi quét pallet." },
       { status: 400 },
@@ -28,10 +29,12 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("scan_pallet_to_pending", {
-    p_pallet_id: palletId,
-    p_position: position,
-  });
+  const { data, error } = SCAN_POSITION_PHASE2_ENABLED
+    ? await supabase.rpc("scan_pallet_to_pending", {
+      p_pallet_id: palletId,
+      p_position: position,
+    })
+    : await supabase.rpc("scan_pallet_to_pending", { p_pallet_id: palletId });
 
   if (error) {
     const message = error.message || "";
@@ -83,7 +86,11 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error("Scan pallet database error", { palletId, position, message });
+    console.error("Scan pallet database error", {
+      palletId,
+      position: SCAN_POSITION_PHASE2_ENABLED ? position : undefined,
+      message,
+    });
     return NextResponse.json(
       { success: false, code: "SCAN_FAILED", error: "Không thể tải dữ liệu. Vui lòng thử lại." },
       { status: 500 },
