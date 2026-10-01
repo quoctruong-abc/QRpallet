@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { OldWoPrintDialog } from "./old-wo-print-dialog";
 import { WoPalletHistoryDialog } from "./wo-pallet-history-dialog";
 
 export type PlanItem = {
@@ -108,6 +109,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [selectedRow, setSelectedRow] = useState<PlanItem | null>(null);
   const [selectedPallet, setSelectedPallet] = useState<ActivePallet | null>(null);
   const [historyWo, setHistoryWo] = useState<string | null>(null);
+  const [oldWoPrintOpen, setOldWoPrintOpen] = useState(false);
   const [historyPallets, setHistoryPallets] = useState<ActivePallet[]>(initialPallets);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [mode, setMode] = useState<Mode>("full");
@@ -153,6 +155,11 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     setWorkingDay("");
     setMessage(null);
     setDialog("create");
+  }
+
+  function openCompensationPrint(row: PlanItem) {
+    setOldWoPrintOpen(false);
+    openCreate(row);
   }
 
   function openEdit(pallet: ActivePallet) {
@@ -484,6 +491,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       .pallet-wo-eye-button svg { width: 17px; height: 17px; }
     `}</style>
     <div className="feature-toolbar pallet-main-toolbar">
+      <button className="button button-secondary" onClick={() => setOldWoPrintOpen(true)}>In tem ngày cũ</button>
       <button className="button button-secondary" onClick={() => openHistory()}>Lịch sử in tem</button>
       <button className="button button-secondary" onClick={openPalletSettings}>Cài đặt pallet</button>
     </div>
@@ -515,6 +523,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     </div>
 
     {historyWo ? <WoPalletHistoryDialog key={historyWo} onClose={() => setHistoryWo(null)} wo={historyWo} /> : null}
+    {oldWoPrintOpen ? <OldWoPrintDialog onClose={() => setOldWoPrintOpen(false)} onPrintCompensation={openCompensationPrint} /> : null}
 
     {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className="modal-card modal-card-wide" onMouseDown={(event) => event.stopPropagation()}>
       <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : dialog === "config" ? "Cài đặt pallet" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2>{dialog === "create" && selectedRow ? <p className="pallet-modal-order">SL đặt hàng: <strong>{formatNumber(selectedRow.quanorder)}</strong></p> : null}</div><button className="modal-close" onClick={closeDialog}>×</button></div>

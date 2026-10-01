@@ -88,8 +88,8 @@ export default async function PalletLabelPage() {
         <div className={canEditPallet ? undefined : "pallet-read-only"}>
           {!canEditPallet ? (
             <style>{`
-              .pallet-read-only .modal-card table thead th:last-child,
-              .pallet-read-only .modal-card table tbody td:last-child {
+              .pallet-read-only .modal-card:not(.old-wo-print-modal) table thead th:last-child,
+              .pallet-read-only .modal-card:not(.old-wo-print-modal) table tbody td:last-child {
                 display: none;
               }
             `}</style>

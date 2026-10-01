@@ -13,7 +13,7 @@ export default async function ScanQrPage() {
 
   let query = supabase
     .from("pallet_data")
-    .select("pallet_id,wo,quantity,product_name,customer,itemcode,status,updated_at,scanned_at,scanned_by")
+    .select("pallet_id,wo,quantity,product_name,customer,itemcode,status,position,updated_at,scanned_at,scanned_by")
     .eq("status", "pendingWH")
     .is("effect_to", null)
     .order("scanned_at", { ascending: false })
