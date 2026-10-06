@@ -4,9 +4,10 @@
 
 `HOLD` — ngày 28/09/2026.
 
-Luồng vị trí được giữ trong source code và database nhưng đang tắt hoàn toàn ở
-main stream. User hiện tại không nhìn thấy vị trí, không cần chọn vị trí và scan
-vẫn gọi RPC một tham số như trước.
+Database và các file độc lập của phase 2 vẫn được giữ lại, nhưng luồng runtime
+đã được tháo hoàn toàn khỏi main stream. Frontend scan và API scan hiện khớp với
+bản ổn định trước phase 2; user không nhìn thấy vị trí, không cần chọn vị trí và
+scan gọi RPC một tham số như trước.
 
 ## Logic đã chốt cho phase 2
 
@@ -35,15 +36,14 @@ vẫn gọi RPC một tham số như trước.
 - Bảng `wh_data_pallet`, cột `position` và các khóa ngoại/index.
 - RPC `scan_pallet_to_pending(text, text)` cho phase 2.
 - API `/api/scan-qr/positions`.
-- Component chọn vị trí và CSS camera liên quan.
+- Component chọn vị trí `app/scan-qr/scan-position-dialog.tsx`.
 - RPC một tham số vẫn là RPC của main stream hiện tại và sẽ ghi `position = null`
   cho lượt scan mới.
 
 ## Checklist mở lại phase 2
 
-1. Đổi `SCAN_POSITION_PHASE2_ENABLED` thành `true` trong:
-   - `app/scan-qr/scan-qr-client.tsx`
-   - `app/api/scan-qr/scan/route.ts`
+1. Dùng commit `45ac986` làm mốc tham chiếu để đưa lại phần frontend, API scan và
+   CSS của phase 2; không bật lại bằng feature flag trên luồng production cũ.
 2. Thêm lại `position` vào danh sách `.select(...)` tại `app/scan-qr/page.tsx` để
    các pallet đang chờ hiển thị đúng vị trí sau khi reload.
 3. Xác nhận các migration vị trí và `wh_data_pallet` đã chạy trên database đích.
