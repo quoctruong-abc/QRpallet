@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { authorizePermission } from "@/lib/auth";
 import { createWoReceiptPdf, type WoReceiptPdfRow } from "@/lib/pallet-label/wo-receipt-pdf";
+import { sortWoReceiptPallets } from "@/lib/pallet-label/wo-receipt-sort";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -91,8 +92,7 @@ async function loadPalletsByWorkOrders(wos: string[]) {
     }
   }
 
-  const woOrder = new Map(wos.map((wo, index) => [wo, index]));
-  return rows
+  const pallets = rows
     .map<WoReceiptPdfRow>((row) => ({
       wo: row.wo?.trim() ?? "",
       pallet_id: row.pallet_id?.trim() ?? "",
@@ -101,12 +101,9 @@ async function loadPalletsByWorkOrders(wos: string[]) {
       quantity: Number(row.quantity) || 0,
       working_day: row.working_day,
       created_at: row.created_at,
-    }))
-    .sort((a, b) => (
-      (woOrder.get(a.wo) ?? Number.MAX_SAFE_INTEGER) - (woOrder.get(b.wo) ?? Number.MAX_SAFE_INTEGER)
-      || new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      || a.pallet_id.localeCompare(b.pallet_id, "vi")
-    ));
+    }));
+
+  return sortWoReceiptPallets(pallets);
 }
 
 async function loadWorkOrderSummariesByItem(itemcode: string) {
