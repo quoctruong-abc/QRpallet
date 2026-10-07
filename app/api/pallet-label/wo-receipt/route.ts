@@ -13,12 +13,22 @@ const MAX_COMBINED_WO_LENGTH = 2000;
 const QUERY_WO_CHUNK_SIZE = 25;
 const PAGE_SIZE = 1000;
 const PALLET_FIELDS = "wo,pallet_id,itemcode,product_name,quantity,working_day,created_at";
+const ITEM_SUMMARY_FIELDS = "wo,quantity,working_day";
 
-type ReceiptAction = "search" | "pdf";
+type ReceiptAction = "search" | "search-item" | "pdf";
 
 type RequestBody = {
   action?: unknown;
+  itemcode?: unknown;
   wos?: unknown;
+};
+
+type WoItemSummary = {
+  wo: string;
+  totalQuantity: number;
+  palletCount: number;
+  firstWorkingDay: string | null;
+  lastWorkingDay: string | null;
 };
 
 type WoReceiptRow = {
@@ -31,6 +41,8 @@ type WoReceiptRow = {
   created_at: string;
 };
 
+type ItemSummaryRow = Pick<WoReceiptRow, "wo" | "quantity" | "working_day">;
+
 function normalizeWorkOrders(value: unknown) {
   if (!Array.isArray(value)) return [];
   const unique = new Map<string, string>();
@@ -41,6 +53,10 @@ function normalizeWorkOrders(value: unknown) {
     if (!unique.has(wo)) unique.set(wo, wo);
   }
   return Array.from(unique.values());
+}
+
+function normalizeItemcode(value: unknown) {
+  return typeof value === "string" ? value.trim().toLocaleUpperCase("en-US") : "";
 }
 
 function validateWorkOrders(wos: string[]) {
@@ -93,6 +109,55 @@ async function loadPalletsByWorkOrders(wos: string[]) {
     ));
 }
 
+async function loadWorkOrderSummariesByItem(itemcode: string) {
+  const supabase = await createClient();
+  const rows: ItemSummaryRow[] = [];
+
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("pallet_data")
+      .select(ITEM_SUMMARY_FIELDS)
+      .eq("itemcode", itemcode)
+      .is("effect_to", null)
+      .order("working_day", { ascending: true })
+      .order("created_at", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error) throw error;
+    const pageRows = (data ?? []) as ItemSummaryRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < PAGE_SIZE) break;
+  }
+
+  const summaries = new Map<string, WoItemSummary>();
+  for (const row of rows) {
+    const wo = row.wo?.trim() ?? "";
+    if (!wo) continue;
+    const workingDay = row.working_day;
+    const current = summaries.get(wo) ?? {
+      wo,
+      totalQuantity: 0,
+      palletCount: 0,
+      firstWorkingDay: workingDay,
+      lastWorkingDay: workingDay,
+    };
+    current.totalQuantity += Number(row.quantity) || 0;
+    current.palletCount += 1;
+    if (workingDay && (!current.firstWorkingDay || workingDay < current.firstWorkingDay)) {
+      current.firstWorkingDay = workingDay;
+    }
+    if (workingDay && (!current.lastWorkingDay || workingDay > current.lastWorkingDay)) {
+      current.lastWorkingDay = workingDay;
+    }
+    summaries.set(wo, current);
+  }
+
+  return Array.from(summaries.values()).sort((a, b) => (
+    (a.firstWorkingDay ?? "9999-12-31").localeCompare(b.firstWorkingDay ?? "9999-12-31")
+    || a.wo.localeCompare(b.wo, "vi")
+  ));
+}
+
 export async function POST(request: Request) {
   const authorization = await authorizePermission("pallet.create");
   if (!authorization.ok) {
@@ -103,7 +168,36 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null) as RequestBody | null;
-  const action: ReceiptAction = body?.action === "pdf" ? "pdf" : "search";
+  const action: ReceiptAction = body?.action === "pdf"
+    ? "pdf"
+    : body?.action === "search-item"
+      ? "search-item"
+      : "search";
+
+  if (action === "search-item") {
+    const itemcode = normalizeItemcode(body?.itemcode);
+    if (!itemcode) {
+      return NextResponse.json({ success: false, error: "Vui lòng nhập itemcode." }, { status: 400 });
+    }
+    if (itemcode.length > MAX_WO_LENGTH) {
+      return NextResponse.json({ success: false, error: "Itemcode không được dài quá 120 ký tự." }, { status: 400 });
+    }
+
+    try {
+      const woSummaries = await loadWorkOrderSummariesByItem(itemcode);
+      return NextResponse.json({ success: true, requestedItemcode: itemcode, woSummaries });
+    } catch (error) {
+      console.error("WO receipt item search failed", {
+        itemcode,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return NextResponse.json(
+        { success: false, error: "Không thể tải danh sách WO theo item. Vui lòng thử lại." },
+        { status: 500 },
+      );
+    }
+  }
+
   const wos = normalizeWorkOrders(body?.wos);
   const validationError = validateWorkOrders(wos);
   if (validationError) {

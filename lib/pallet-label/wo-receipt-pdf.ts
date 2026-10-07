@@ -137,6 +137,7 @@ export async function createWoReceiptPdf(wos: string[], pallets: WoReceiptPdfRow
   const margin = 24;
   const footerHeight = 24;
   const tableHeaderHeight = 28;
+  const subtotalHeight = 23;
   const rowFontSize = 7.5;
   const lineHeight = rowFontSize + 2;
   const columns = [74, 116, 82, 220, 55, 76, 133];
@@ -147,7 +148,7 @@ export async function createWoReceiptPdf(wos: string[], pallets: WoReceiptPdfRow
   const printedAtText = formatVietnamDateTime(printedAt);
   const woLines = wrapText(regular, `WO: ${wos.join(", ")}`, totalWidth, 9);
 
-  let page: PDFPage;
+  let page!: PDFPage;
   let currentY = 0;
 
   const drawTableHeader = () => {
@@ -203,31 +204,81 @@ export async function createWoReceiptPdf(wos: string[], pallets: WoReceiptPdfRow
 
   addPage(true);
 
+  const palletGroups = new Map<string, WoReceiptPdfRow[]>();
   for (const pallet of pallets) {
-    const values = [
-      pallet.wo,
-      pallet.pallet_id,
-      pallet.itemcode,
-      pallet.product_name,
-      pallet.quantity.toLocaleString("vi-VN"),
-      formatDate(pallet.working_day),
-      formatVietnamDateTime(pallet.created_at),
-    ];
-    const cellLines = values.map((value, index) => (
-      wrapText(regular, value || "-", columns[index] - 8, rowFontSize)
-    ));
-    const maxLines = Math.max(...cellLines.map((lines) => lines.length));
-    const rowHeight = Math.max(23, maxLines * lineHeight + 8);
+    const group = palletGroups.get(pallet.wo) ?? [];
+    group.push(pallet);
+    palletGroups.set(pallet.wo, group);
+  }
 
-    if (currentY - rowHeight < margin + footerHeight) addPage(false);
+  for (const [wo, woPallets] of palletGroups) {
+    woPallets.forEach((pallet, palletIndex) => {
+      const values = [
+        pallet.wo,
+        pallet.pallet_id,
+        pallet.itemcode,
+        pallet.product_name,
+        pallet.quantity.toLocaleString("vi-VN"),
+        formatDate(pallet.working_day),
+        formatVietnamDateTime(pallet.created_at),
+      ];
+      const cellLines = values.map((value, index) => (
+        wrapText(regular, value || "-", columns[index] - 8, rowFontSize)
+      ));
+      const maxLines = Math.max(...cellLines.map((lines) => lines.length));
+      const rowHeight = Math.max(23, maxLines * lineHeight + 8);
+      const isLastPallet = palletIndex === woPallets.length - 1;
+      const requiredHeight = rowHeight + (isLastPallet ? subtotalHeight : 0);
 
-    currentY -= rowHeight;
-    let x = startX;
-    cellLines.forEach((lines, index) => {
-      const align = index === 4 ? "right" : index === 5 || index === 6 ? "center" : "left";
-      drawCell(page, regular, lines, x, currentY, columns[index], rowHeight, rowFontSize, { align });
-      x += columns[index];
+      if (currentY - requiredHeight < margin + footerHeight) addPage(false);
+
+      currentY -= rowHeight;
+      let x = startX;
+      cellLines.forEach((lines, index) => {
+        const align = index === 4 ? "right" : index === 5 || index === 6 ? "center" : "left";
+        drawCell(page, regular, lines, x, currentY, columns[index], rowHeight, rowFontSize, { align });
+        x += columns[index];
+      });
     });
+
+    currentY -= subtotalHeight;
+    const subtotalLabelWidth = columns.slice(0, 4).reduce((sum, width) => sum + width, 0);
+    const totalQuantity = woPallets.reduce((sum, pallet) => sum + pallet.quantity, 0);
+    drawCell(
+      page,
+      bold,
+      [`Subtotal ${wo}`],
+      startX,
+      currentY,
+      subtotalLabelWidth,
+      subtotalHeight,
+      rowFontSize,
+      { fill: true, align: "right" },
+    );
+    let subtotalX = startX + subtotalLabelWidth;
+    drawCell(
+      page,
+      bold,
+      [totalQuantity.toLocaleString("vi-VN")],
+      subtotalX,
+      currentY,
+      columns[4],
+      subtotalHeight,
+      rowFontSize,
+      { fill: true, align: "right" },
+    );
+    subtotalX += columns[4];
+    drawCell(
+      page,
+      bold,
+      [""],
+      subtotalX,
+      currentY,
+      columns[5] + columns[6],
+      subtotalHeight,
+      rowFontSize,
+      { fill: true },
+    );
   }
 
   pages.forEach((pdfPage, index) => {
