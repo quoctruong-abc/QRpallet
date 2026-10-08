@@ -65,7 +65,7 @@ export default async function ScanQrPage() {
           Không thể tải dữ liệu. Vui lòng thử lại.
         </section>
       ) : (
-        <ScanQrClient initialRows={initialRows} isAdmin={isAdmin} />
+        <ScanQrClient initialRows={initialRows} isAdmin={isAdmin} userId={profile.id} key={profile.id} />
       )}
     </PageShell>
   );

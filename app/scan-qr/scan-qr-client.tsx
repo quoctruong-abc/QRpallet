@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import QrScanner from "qr-scanner";
+import type { LiveScanItem, LiveScanState } from "@/lib/scan-qr/history";
+import { useScanHistory } from "./use-scan-history";
 
 export type ScannedPallet = {
   pallet_id: string;
@@ -25,17 +27,6 @@ type SummaryRow = {
   customer: string;
   palletCount: number;
   totalQuantity: number;
-};
-type LiveScanState = "loading" | "success" | "error" | "duplicate";
-type LiveScanItem = {
-  scanKey: string;
-  palletId: string;
-  state: LiveScanState;
-  message: string;
-  palletStatus?: string;
-  wo?: string;
-  quantity?: number;
-  itemcode?: string;
 };
 type PalletDetails = {
   palletStatus?: string;
@@ -132,10 +123,11 @@ function palletStatusResult(status?: string) {
 function scanStateBackground(state: LiveScanState) {
   if (state === "loading" || state === "success") return "rgba(2,122,72,.94)";
   if (state === "duplicate") return "rgba(181,71,8,.94)";
+  if (state === "unknown") return "rgba(71,84,103,.94)";
   return "rgba(180,35,24,.94)";
 }
 
-export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPallet[]; isAdmin: boolean }) {
+export function ScanQrClient({ initialRows, isAdmin, userId }: { initialRows: ScannedPallet[]; isAdmin: boolean; userId: string }) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
@@ -160,16 +152,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
   const [searchTerm, setSearchTerm] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
-  const [liveScans, setLiveScans] = useState<LiveScanItem[]>(() => initialRows.map((row, index) => ({
-    scanKey: `initial-${index}-${row.pallet_id}`,
-    palletId: row.pallet_id,
-    state: "error",
-    message: palletStatusResult(row.status) || "Đã scan",
-    palletStatus: row.status,
-    wo: row.wo,
-    quantity: Number(row.quantity),
-    itemcode: row.itemcode,
-  })));
+  const { liveScans, updateLiveScans, storageError } = useScanHistory(userId);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [cancelRow, setCancelRow] = useState<ScannedPallet | null>(null);
@@ -238,12 +221,13 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
     }
   }
 
-  function addLiveScan(item: LiveScanItem) {
-    setLiveScans((current) => [item, ...current]);
+  function addLiveScan(item: Omit<LiveScanItem, "scannedAt">) {
+    const entry = { ...item, scannedAt: new Date().toISOString() };
+    updateLiveScans((current) => [entry, ...current]);
   }
 
-  function updateLiveScan(scanKey: string, patch: Partial<Omit<LiveScanItem, "scanKey" | "palletId">>) {
-    setLiveScans((current) => current.map((scan) => (
+  function updateLiveScan(scanKey: string, patch: Partial<Omit<LiveScanItem, "scanKey" | "palletId" | "scannedAt">>) {
+    updateLiveScans((current) => current.map((scan) => (
       scan.scanKey === scanKey ? { ...scan, ...patch } : scan
     )));
   }
@@ -254,9 +238,6 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       ...details,
     };
     palletDetailsRef.current.set(palletId, mergedDetails);
-    setLiveScans((current) => current.map((scan) => (
-      scan.palletId === palletId ? { ...scan, ...mergedDetails } : scan
-    )));
   }
 
   function showQrOutline(cornerPoints: QrPoint[], palletId: string, duplicate: boolean) {
@@ -483,6 +464,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       updateLiveScan(scanKey, {
         state: "success",
         message: "Thành công",
+        ...palletDetailsRef.current.get(palletId),
       });
     } catch {
       scannedIdsRef.current.delete(palletId);
@@ -508,7 +490,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || "Không thể hủy pallet.");
       setRows((current) => current.filter((row) => row.pallet_id !== cancelRow.pallet_id));
-      setLiveScans((current) => current.filter((scan) => scan.palletId !== cancelRow.pallet_id));
+      updateLiveScans((current) => current.filter((scan) => scan.palletId !== cancelRow.pallet_id));
       scannedIdsRef.current.delete(cancelRow.pallet_id);
       duplicateLoggedAtRef.current.delete(cancelRow.pallet_id);
       palletDetailsRef.current.delete(cancelRow.pallet_id);
@@ -546,7 +528,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
       const receiptId = result.receiptId as string;
       setRows([]);
       setSearchTerm("");
-      setLiveScans([]);
+      updateLiveScans(() => []);
       scannedIdsRef.current.clear();
       duplicateLoggedAtRef.current.clear();
       palletDetailsRef.current.clear();
@@ -742,13 +724,19 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
             }}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,.18)" }}>
-              <strong style={{ fontSize: ".88rem" }}>Lịch sử scan trong phiên</strong>
+              <strong style={{ fontSize: ".88rem" }}>Lịch sử lượt quét của bạn</strong>
               <span style={{ fontSize: ".78rem", opacity: .82 }}>{liveScans.length} lượt • kéo để xem</span>
             </div>
 
+            {storageError ? (
+              <div role="alert" style={{ padding: "8px 12px", background: "rgba(180,35,24,.3)", fontSize: ".8rem" }}>
+                Không thể lưu lịch sử trên trình duyệt. Các lượt đang hiển thị có thể mất khi đóng web.
+              </div>
+            ) : null}
+
             <div style={{ overflow: "auto", overscrollBehavior: "contain" }}>
               {!liveScans.length ? (
-                <div style={{ padding: "20px 12px", textAlign: "center", opacity: .72 }}>Chưa có pallet nào.</div>
+                <div style={{ padding: "20px 12px", textAlign: "center", opacity: .72 }}>Chưa có lượt quét của bạn trên thiết bị này.</div>
               ) : (
                 <table style={{ minWidth: "690px", width: "100%", color: "white", background: "transparent" }}>
                   <thead style={{ position: "sticky", top: 0, zIndex: 1, background: "rgba(15,23,42,.97)" }}>
@@ -757,7 +745,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>ID pallet</th>
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>WO / Item</th>
                       <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>SL</th>
-                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>Trạng thái pallet</th>
+                      <th style={{ padding: "8px 10px", color: "rgba(255,255,255,.72)" }}>Trạng thái lúc quét</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -789,6 +777,7 @@ export function ScanQrClient({ initialRows, isAdmin }: { initialRows: ScannedPal
                           }}>
                             {scan.message}
                           </span>
+                          <small style={{ display: "block", marginTop: "4px", opacity: .72 }}>{formatScanTime(scan.scannedAt)}</small>
                         </td>
                         <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}><strong>{scan.palletId}</strong></td>
                         <td style={{ padding: "9px 10px", borderColor: "rgba(255,255,255,.12)" }}>
