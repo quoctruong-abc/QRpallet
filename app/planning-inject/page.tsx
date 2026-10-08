@@ -5,6 +5,7 @@ import type { PlanningRow } from "@/lib/planning";
 import { createClient } from "@/lib/supabase/server";
 import { ChangeMachineButton } from "./change-machine-button";
 import { PlanningImportForm } from "./import-form";
+import { ShiftReportButton } from "./shift-report-button";
 
 const PREVIEW_LIMIT = 100;
 
@@ -123,9 +124,12 @@ export default async function PlanningInjectPage() {
               <p className="eyebrow">CURRENT PLAN</p>
               <h2>Dữ liệu hiện tại</h2>
             </div>
-            {totalRows > PREVIEW_LIMIT ? (
-              <span className="muted small">Đang hiển thị {PREVIEW_LIMIT} dòng đầu tiên</span>
-            ) : null}
+            <div className="planning-current-actions">
+              {totalRows > PREVIEW_LIMIT ? (
+                <span className="muted small">Đang hiển thị {PREVIEW_LIMIT} dòng đầu tiên</span>
+              ) : null}
+              <ShiftReportButton />
+            </div>
           </div>
 
           {rows.length === 0 ? (
@@ -205,3 +209,4 @@ export default async function PlanningInjectPage() {
     </PageShell>
   );
 }
+

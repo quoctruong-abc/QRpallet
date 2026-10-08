@@ -3,7 +3,6 @@ import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 const MAX_PALLET_ID_LENGTH = 128;
-const MAX_POSITION_CODE_LENGTH = 50;
 
 export async function POST(request: Request) {
   const authorization = await authorizePermission("scan.standard");
@@ -14,24 +13,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const body = await request.json().catch(() => null) as { palletId?: unknown; position?: unknown } | null;
+  const body = await request.json().catch(() => null) as { palletId?: unknown } | null;
   const palletId = typeof body?.palletId === "string" ? body.palletId.trim() : "";
-  const position = typeof body?.position === "string" ? body.position.trim().toUpperCase() : "";
   if (!palletId || palletId.length > MAX_PALLET_ID_LENGTH) {
     return NextResponse.json({ success: false, error: "QR không chứa mã pallet hợp lệ." }, { status: 400 });
   }
-  if (!position || position.length > MAX_POSITION_CODE_LENGTH) {
-    return NextResponse.json(
-      { success: false, code: "POSITION_REQUIRED", error: "Hãy chọn vị trí kho trước khi quét pallet." },
-      { status: 400 },
-    );
-  }
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("scan_pallet_to_pending", {
-    p_pallet_id: palletId,
-    p_position: position,
-  });
+  const { data, error } = await supabase.rpc("scan_pallet_to_pending", { p_pallet_id: palletId });
 
   if (error) {
     const message = error.message || "";
@@ -70,20 +59,8 @@ export async function POST(request: Request) {
     if (message.includes("INVALID_PALLET_ID")) {
       return NextResponse.json({ success: false, error: "Mã pallet không hợp lệ." }, { status: 400 });
     }
-    if (message.includes("POSITION_NOT_FOUND")) {
-      return NextResponse.json(
-        { success: false, code: "POSITION_NOT_FOUND", error: "Vị trí không tồn tại hoặc đã bị khóa." },
-        { status: 404 },
-      );
-    }
-    if (message.includes("INVALID_POSITION")) {
-      return NextResponse.json(
-        { success: false, code: "POSITION_REQUIRED", error: "Vị trí không hợp lệ." },
-        { status: 400 },
-      );
-    }
 
-    console.error("Scan pallet database error", { palletId, position, message });
+    console.error("Scan pallet database error", { palletId, message });
     return NextResponse.json(
       { success: false, code: "SCAN_FAILED", error: "Không thể tải dữ liệu. Vui lòng thử lại." },
       { status: 500 },

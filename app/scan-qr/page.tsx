@@ -13,7 +13,7 @@ export default async function ScanQrPage() {
 
   let query = supabase
     .from("pallet_data")
-    .select("pallet_id,wo,quantity,product_name,customer,itemcode,status,position,updated_at,scanned_at,scanned_by")
+    .select("pallet_id,wo,quantity,product_name,customer,itemcode,status,updated_at,scanned_at,scanned_by")
     .eq("status", "pendingWH")
     .is("effect_to", null)
     .order("scanned_at", { ascending: false })
@@ -65,7 +65,7 @@ export default async function ScanQrPage() {
           Không thể tải dữ liệu. Vui lòng thử lại.
         </section>
       ) : (
-        <ScanQrClient initialRows={initialRows} isAdmin={isAdmin} />
+        <ScanQrClient initialRows={initialRows} isAdmin={isAdmin} userId={profile.id} key={profile.id} />
       )}
     </PageShell>
   );
