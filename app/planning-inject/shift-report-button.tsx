@@ -2,18 +2,15 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { PlanningRow } from "@/lib/planning";
+import {
+  hasShiftReportWO,
+  todayInVietnam,
+  type ShiftReportPlanRow,
+  type ShiftReportPrintMode,
+} from "@/lib/planning-inject/shift-report";
 import "./shift-report.css";
 
-type ShiftReportProps = {
-  machines: string[];
-  rows: PlanningRow[];
-  totalRows: number;
-};
-
-type PrintMode = "with-background" | "without-background";
-
-export function ShiftReportButton(props: ShiftReportProps) {
+export function ShiftReportButton() {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -34,40 +31,39 @@ export function ShiftReportButton(props: ShiftReportProps) {
         In báo ca
       </button>
       {open
-        ? createPortal(<ShiftReportDialog {...props} onClose={closeDialog} />, document.body)
+        ? createPortal(<ShiftReportDialog onClose={closeDialog} />, document.body)
         : null}
     </>
   );
 }
 
-function ShiftReportDialog({
-  machines,
-  rows,
-  totalRows,
-  onClose,
-}: ShiftReportProps & { onClose: () => void }) {
+function ShiftReportDialog({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const printNoteId = useId();
   const modeName = useId();
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(() => new Set());
   const [selectedWO, setSelectedWO] = useState<Record<string, string>>({});
-  const [printMode, setPrintMode] = useState<PrintMode>("without-background");
+  const [printMode, setPrintMode] = useState<ShiftReportPrintMode>("without-background");
+  const [date, setDate] = useState(todayInVietnam);
+  const [rows, setRows] = useState<ShiftReportPlanRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [printing, setPrinting] = useState(false);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const machinePlans = useMemo(() => {
-    const plans = new Map<string, PlanningRow[]>();
-    for (const machine of machines) plans.set(machine, []);
+    const plans = new Map<string, ShiftReportPlanRow[]>();
     for (const row of rows) {
       const machine = row.machine?.trim();
       const wo = row.wo?.trim();
-      if (!machine || !wo || wo === "0") continue;
+      if (!machine || !wo || !hasShiftReportWO(row)) continue;
       const options = plans.get(machine) ?? [];
       // Keep the first occurrence and the current plan's order for each WO.
       if (!options.some((option) => option.wo?.trim() === wo)) options.push(row);
       plans.set(machine, options);
     }
     return plans;
-  }, [machines, rows]);
+  }, [rows]);
   const machineNames = Array.from(machinePlans.entries())
     .filter(([, options]) => options.length > 0)
     .map(([machine]) => machine);
@@ -85,6 +81,38 @@ function ShiftReportDialog({
     };
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadPlan() {
+      try {
+        const response = await fetch("/api/planning-inject/shift-report", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success || !Array.isArray(result.rows)) {
+          throw new Error(result.error ?? "Không thể tải kế hoạch báo ca.");
+        }
+        if (!controller.signal.aborted) setRows(result.rows);
+      } catch (error) {
+        if (!controller.signal.aborted) setMessage({
+          type: "error",
+          text: error instanceof Error ? error.message : "Không thể tải kế hoạch báo ca.",
+        });
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+    void loadPlan();
+    return () => controller.abort();
+  }, []);
+
+  function closeDialog() {
+    if (printing) return;
+    dialogRef.current?.close();
+    onClose();
+  }
+
   function toggleMachine(machine: string) {
     setSelectedMachines((current) => {
       const next = new Set(current);
@@ -94,13 +122,59 @@ function ShiftReportDialog({
     });
   }
 
+  async function printBatch() {
+    if (printing || loading || !selectedCount || !date) return;
+    const selections = machineNames
+      .filter((machine) => selectedMachines.has(machine))
+      .map((machine) => {
+        const options = machinePlans.get(machine) ?? [];
+        const row = options.find((option) => option.wo?.trim() === selectedWO[machine]) ?? options[0];
+        return { id: row.id, machine, wo: row.wo?.trim() ?? "" };
+      });
+    // Open synchronously from the click, before awaiting the batch API.
+    const pdfWindow = window.open("", "_blank");
+    if (!pdfWindow) {
+      setMessage({ type: "error", text: "Trình duyệt đã chặn tab PDF. Vui lòng cho phép popup và nhấn In báo ca lại." });
+      return;
+    }
+    pdfWindow.document.title = "Đang tạo báo ca";
+    pdfWindow.document.body.textContent = "Đang tạo PDF báo ca...";
+    setPrinting(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/planning-inject/shift-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selections, date, mode: printMode }),
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        throw new Error(result?.error ?? "Không thể tạo PDF báo ca.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      if (pdfWindow.closed) {
+        URL.revokeObjectURL(url);
+        throw new Error("Tab PDF đã đóng. Vui lòng nhấn In báo ca lại.");
+      }
+      pdfWindow.location.href = url;
+      // Leave enough time for the viewer to load, print or download the batch.
+      window.setTimeout(() => URL.revokeObjectURL(url), 10 * 60 * 1000);
+      setMessage({ type: "success", text: `Đã mở PDF gồm ${selections.length} trang. In toàn bộ PDF trong một lần.` });
+    } catch (error) {
+      pdfWindow.close();
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "Không thể tạo PDF báo ca." });
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   return (
     <dialog
       aria-labelledby={titleId}
       className="shift-report-dialog"
       onCancel={(event) => {
         event.preventDefault();
-        onClose();
+        closeDialog();
       }}
       ref={dialogRef}
     >
@@ -111,11 +185,15 @@ function ShiftReportDialog({
           <p className="muted small">Chọn máy và WO cần điền vào báo cáo ca.</p>
         </div>
         <div className="shift-report-selection">
+          <label className="shift-report-date">
+            Ngày báo ca
+            <input disabled={printing} onChange={(event) => setDate(event.target.value)} required type="date" value={date} />
+          </label>
           <span className="muted small">Đã chọn {selectedCount}/{machineNames.length} máy</span>
           <button
             aria-pressed={allSelected}
             className="button button-secondary"
-            disabled={machineNames.length === 0}
+            disabled={loading || printing || machineNames.length === 0}
             onClick={() => setSelectedMachines(allSelected ? new Set() : new Set(machineNames))}
             type="button"
           >
@@ -125,11 +203,7 @@ function ShiftReportDialog({
       </header>
 
       <div className="shift-report-body">
-        {totalRows > rows.length ? (
-          <p className="planning-warning">
-            WO đang hiển thị từ {rows.length} dòng kế hoạch đã tải. Danh sách WO đầy đủ sẽ được bổ sung ở bước lấy dữ liệu báo ca.
-          </p>
-        ) : null}
+        {message ? <p aria-live="polite" className={`alert alert-${message.type}`}>{message.text}</p> : null}
         <div className="shift-report-table-wrap">
           <table className="shift-report-table">
             <colgroup>
@@ -151,8 +225,10 @@ function ShiftReportDialog({
               </tr>
             </thead>
             <tbody>
-              {machineNames.length === 0 ? (
-                <tr><td className="shift-report-empty" colSpan={6}>Chưa có máy có WO trong dữ liệu kế hoạch đã tải.</td></tr>
+              {loading ? (
+                <tr><td className="shift-report-empty" colSpan={6}>Đang tải kế hoạch...</td></tr>
+              ) : machineNames.length === 0 ? (
+                <tr><td className="shift-report-empty" colSpan={6}>Chưa có máy có WO trong kế hoạch hiện tại.</td></tr>
               ) : machineNames.map((machine) => {
                 const options = machinePlans.get(machine) ?? [];
                 const plan = options.find((option) => option.wo?.trim() === selectedWO[machine]) ?? options[0];
@@ -163,6 +239,7 @@ function ShiftReportDialog({
                       <input
                         aria-label={`Chọn máy ${machine}`}
                         checked={checked}
+                        disabled={printing}
                         onChange={() => toggleMachine(machine)}
                         type="checkbox"
                       />
@@ -171,14 +248,13 @@ function ShiftReportDialog({
                     <td>
                       <select
                         aria-label={`WO của máy ${machine}`}
-                        disabled={options.length === 0}
+                        disabled={printing}
                         onChange={(event) => setSelectedWO((current) => ({
                           ...current,
                           [machine]: event.target.value,
                         }))}
                         value={plan?.wo?.trim() ?? ""}
                       >
-                        {options.length === 0 ? <option value="">Chưa có WO đã tải</option> : null}
                         {options.map((option) => (
                           <option key={option.wo?.trim()} value={option.wo?.trim()}>{option.wo}</option>
                         ))}
@@ -199,19 +275,23 @@ function ShiftReportDialog({
         <fieldset className="shift-report-modes">
           <legend>Chế độ in</legend>
           <label>
-            <input checked={printMode === "without-background"} name={modeName} onChange={() => setPrintMode("without-background")} type="radio" value="without-background" />
+            <input checked={printMode === "without-background"} disabled={printing} name={modeName} onChange={() => setPrintMode("without-background")} type="radio" value="without-background" />
             <span>Không nền <small>Điền thông tin lên giấy có sẵn form</small></span>
           </label>
           <label>
-            <input checked={printMode === "with-background"} name={modeName} onChange={() => setPrintMode("with-background")} type="radio" value="with-background" />
+            <input checked={printMode === "with-background"} disabled={printing} name={modeName} onChange={() => setPrintMode("with-background")} type="radio" value="with-background" />
             <span>Có nền <small>In cả form và thông tin</small></span>
           </label>
         </fieldset>
         <div className="shift-report-footer-actions">
-          <p className="muted small" id={printNoteId}>Chức năng in sẽ được bổ sung ở bước tiếp theo.</p>
+          <p className="muted small" id={printNoteId}>
+            Mỗi máy một trang, gộp chung một PDF. In A4 ngang, tỉ lệ 100%.
+          </p>
           <div className="shift-report-buttons">
-            <button aria-describedby={printNoteId} className="button button-primary" disabled type="button">In báo ca</button>
-            <button className="button button-secondary" onClick={onClose} type="button">Cancel</button>
+            <button aria-describedby={printNoteId} className="button button-primary" disabled={loading || printing || !selectedCount || !date} onClick={printBatch} type="button">
+              {printing ? "Đang tạo PDF..." : "In báo ca"}
+            </button>
+            <button className="button button-secondary" disabled={printing} onClick={closeDialog} type="button">Cancel</button>
           </div>
         </div>
       </footer>

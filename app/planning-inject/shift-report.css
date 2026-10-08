@@ -35,7 +35,9 @@
 }
 .shift-report-header { border-bottom: 1px solid var(--border); }
 .shift-report-header p:last-child { margin: 8px 0 0; }
-.shift-report-selection { display: flex; align-items: center; gap: 14px; }
+.shift-report-selection { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.shift-report-date { min-width: 170px; }
+.shift-report-date input { min-height: 40px; }
 .shift-report-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 24px; }
 .shift-report-table-wrap { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
 .shift-report-table { table-layout: fixed; min-width: 1000px; }
@@ -76,6 +78,7 @@
   .shift-report-dialog { width: calc(100% - 12px); height: calc(100dvh - 12px); border-radius: 12px; }
   .shift-report-header, .shift-report-footer { align-items: stretch; flex-direction: column; gap: 14px; padding: 16px; }
   .shift-report-selection { justify-content: space-between; }
+  .shift-report-date { width: 100%; }
   .shift-report-body { padding: 12px 16px; }
   .shift-report-footer-actions { text-align: left; }
   .shift-report-buttons .button { flex: 1; }

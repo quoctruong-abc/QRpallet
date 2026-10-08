@@ -128,7 +128,7 @@ export default async function PlanningInjectPage() {
               {totalRows > PREVIEW_LIMIT ? (
                 <span className="muted small">Đang hiển thị {PREVIEW_LIMIT} dòng đầu tiên</span>
               ) : null}
-              <ShiftReportButton machines={machines} rows={rows} totalRows={totalRows} />
+              <ShiftReportButton />
             </div>
           </div>
 
