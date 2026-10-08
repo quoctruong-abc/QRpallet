@@ -63,6 +63,14 @@
 .shift-report-table select { width: 100%; min-width: 0; }
 .shift-report-empty { padding: 48px 24px; text-align: center; color: var(--muted); }
 .shift-report-footer { border-top: 1px solid var(--border); background: var(--surface-soft); }
+.shift-report-print-settings { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 16px 28px; min-width: 0; }
+.shift-report-offsets { min-width: 0; margin: 0; padding: 0; border: 0; }
+.shift-report-offsets legend { margin-bottom: 10px; color: #344054; font-size: .85rem; font-weight: 700; }
+.shift-report-offset-inputs { display: flex; gap: 12px; }
+.shift-report-offset-inputs label { width: 140px; }
+.shift-report-offset-inputs input { min-height: 40px; width: 100%; }
+.shift-report-offsets p { max-width: 340px; margin: 8px 0 0; }
+.shift-report-offsets:disabled { opacity: .55; }
 .shift-report-modes { display: flex; flex-wrap: wrap; gap: 12px 24px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .shift-report-modes legend { margin-bottom: 10px; color: #344054; font-size: .85rem; font-weight: 700; }
 .shift-report-modes label { display: flex; align-items: center; gap: 10px; cursor: pointer; }

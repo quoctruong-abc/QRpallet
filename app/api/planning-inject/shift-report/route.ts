@@ -5,6 +5,7 @@ import { createShiftReportPdf } from "@/lib/planning-inject/shift-report-pdf";
 import {
   hasShiftReportWO,
   isShiftReportDate,
+  parseShiftReportOffset,
   parseShiftReportSelections,
   SHIFT_REPORT_FIELDS,
   type ShiftReportPlanRow,
@@ -60,6 +61,8 @@ export async function POST(request: Request) {
   if (body?.mode !== "without-background" && body?.mode !== "with-background") {
     return NextResponse.json({ error: "Chế độ in không hợp lệ." }, { status: 400 });
   }
+  const offset = body.mode === "without-background" ? parseShiftReportOffset(body.offset) : { x: 0, y: 0 };
+  if (!offset) return NextResponse.json({ error: "Độ lệch X/Y phải là số từ -20 đến 20 mm." }, { status: 400 });
   try {
     const supabase = await createClient();
     const found = new Map<number, ShiftReportPlanRow>();
@@ -81,7 +84,7 @@ export async function POST(request: Request) {
       }
       rows.push(row);
     }
-    const bytes = await createShiftReportPdf(rows, body.date, body.mode);
+    const bytes = await createShiftReportPdf(rows, body.date, body.mode, offset);
     return new Response(Buffer.from(bytes), {
       headers: {
         "Content-Type": "application/pdf",

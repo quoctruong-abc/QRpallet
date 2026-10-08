@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument, type PDFFont, type PDFPage, rgb } from "pdf-lib";
-import { isShiftReportDate, type ShiftReportPlanRow, type ShiftReportPrintMode } from "./shift-report";
+import { isShiftReportDate, parseShiftReportOffset, type ShiftReportOffset, type ShiftReportPlanRow, type ShiftReportPrintMode } from "./shift-report";
 
 const mm = (value: number) => value * 72 / 25.4;
 const PAGE_WIDTH = mm(297);
@@ -95,8 +95,10 @@ function drawFitText(page: PDFPage, font: PDFFont, value: unknown, box: TextBox)
   throw new Error("Thông tin quá dài để điền đủ vào ô báo ca. Vui lòng kiểm tra tên sản phẩm hoặc dữ liệu kế hoạch.");
 }
 
-export async function createShiftReportPdf(rows: ShiftReportPlanRow[], date: string, mode: ShiftReportPrintMode) {
+export async function createShiftReportPdf(rows: ShiftReportPlanRow[], date: string, mode: ShiftReportPrintMode, requestedOffset?: ShiftReportOffset) {
   if (!rows.length || !isShiftReportDate(date)) throw new Error("Danh sách máy hoặc ngày báo ca không hợp lệ.");
+  const offset = mode === "without-background" ? parseShiftReportOffset(requestedOffset) : { x: 0, y: 0 };
+  if (!offset) throw new Error("Độ lệch X/Y không hợp lệ.");
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   const [regularBytes, boldBytes, templateBytes] = await Promise.all([
@@ -131,6 +133,9 @@ export async function createShiftReportPdf(rows: ShiftReportPlanRow[], date: str
       const box: TextBox = SHIFT_REPORT_LAYOUT[key];
       drawFitText(page, box.bold ? bold : regular, values[key], box);
     }
+    // UI uses top-left coordinates: positive X moves right, positive Y moves down.
+    // Move text and corner marks together; the with-background baseline stays fixed.
+    if (offset.x || offset.y) page.translateContent(mm(offset.x), -mm(offset.y));
   }
   pdf.setTitle(`Báo cáo ca - ${formattedDate}`);
   pdf.setCreator("SVN Warehouse");

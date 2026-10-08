@@ -4,6 +4,9 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   hasShiftReportWO,
+  MAX_SHIFT_REPORT_OFFSET_MM,
+  parseShiftReportOffset,
+  SHIFT_REPORT_OFFSET_STORAGE_KEY,
   todayInVietnam,
   type ShiftReportPlanRow,
   type ShiftReportPrintMode,
@@ -42,14 +45,43 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
   const titleId = useId();
   const printNoteId = useId();
   const modeName = useId();
+  const offsetNoteId = useId();
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(() => new Set());
   const [selectedWO, setSelectedWO] = useState<Record<string, string>>({});
   const [printMode, setPrintMode] = useState<ShiftReportPrintMode>("without-background");
   const [date, setDate] = useState(todayInVietnam);
+  const [offsetInput, setOffsetInput] = useState({ x: "0", y: "0" });
   const [rows, setRows] = useState<ShiftReportPlanRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [printing, setPrinting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const offset = offsetInput.x.trim() && offsetInput.y.trim()
+    ? parseShiftReportOffset({ x: Number(offsetInput.x), y: Number(offsetInput.y) }) : null;
+  const invalidOffset = printMode === "without-background" && !offset;
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(SHIFT_REPORT_OFFSET_STORAGE_KEY);
+      if (!saved) return;
+      const restored = parseShiftReportOffset(JSON.parse(saved));
+      if (restored) setOffsetInput({ x: String(restored.x), y: String(restored.y) });
+    } catch {
+      // Unavailable storage or corrupt settings fall back to the original coordinates.
+    }
+  }, []);
+
+  function changeOffset(axis: "x" | "y", value: string) {
+    const next = { ...offsetInput, [axis]: value };
+    setOffsetInput(next);
+    const valid = next.x.trim() && next.y.trim()
+      ? parseShiftReportOffset({ x: Number(next.x), y: Number(next.y) }) : null;
+    if (!valid) return;
+    try {
+      window.localStorage.setItem(SHIFT_REPORT_OFFSET_STORAGE_KEY, JSON.stringify(valid));
+    } catch {
+      setMessage({ type: "error", text: "Trình duyệt không cho lưu độ lệch. Giá trị hiện tại vẫn dùng được trong lần mở này." });
+    }
+  }
 
   const machinePlans = useMemo(() => {
     const plans = new Map<string, ShiftReportPlanRow[]>();
@@ -123,7 +155,7 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
   }
 
   async function printBatch() {
-    if (printing || loading || !selectedCount || !date) return;
+    if (printing || loading || !selectedCount || !date || invalidOffset) return;
     const selections = machineNames
       .filter((machine) => selectedMachines.has(machine))
       .map((machine) => {
@@ -145,7 +177,7 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
       const response = await fetch("/api/planning-inject/shift-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selections, date, mode: printMode }),
+        body: JSON.stringify({ selections, date, mode: printMode, offset: printMode === "without-background" ? offset : { x: 0, y: 0 } }),
       });
       if (!response.ok) {
         const result = await response.json().catch(() => null);
@@ -272,23 +304,40 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
       </div>
 
       <footer className="shift-report-footer">
-        <fieldset className="shift-report-modes">
-          <legend>Chế độ in</legend>
-          <label>
-            <input checked={printMode === "without-background"} disabled={printing} name={modeName} onChange={() => setPrintMode("without-background")} type="radio" value="without-background" />
-            <span>Không nền <small>Điền thông tin lên giấy có sẵn form</small></span>
-          </label>
-          <label>
-            <input checked={printMode === "with-background"} disabled={printing} name={modeName} onChange={() => setPrintMode("with-background")} type="radio" value="with-background" />
-            <span>Có nền <small>In cả form và thông tin</small></span>
-          </label>
-        </fieldset>
+        <div className="shift-report-print-settings">
+          <fieldset className="shift-report-modes">
+            <legend>Chế độ in</legend>
+            <label>
+              <input checked={printMode === "without-background"} disabled={printing} name={modeName} onChange={() => setPrintMode("without-background")} type="radio" value="without-background" />
+              <span>Không nền <small>Điền thông tin lên giấy có sẵn form</small></span>
+            </label>
+            <label>
+              <input checked={printMode === "with-background"} disabled={printing} name={modeName} onChange={() => setPrintMode("with-background")} type="radio" value="with-background" />
+              <span>Có nền <small>In cả form và thông tin</small></span>
+            </label>
+          </fieldset>
+          <fieldset className="shift-report-offsets" disabled={printing || printMode === "with-background"}>
+            <legend>Canh vị trí khi không nền</legend>
+            <div className="shift-report-offset-inputs">
+              <label>
+                Độ lệch X (mm)
+                <input aria-describedby={offsetNoteId} aria-invalid={invalidOffset} type="number" min={-MAX_SHIFT_REPORT_OFFSET_MM} max={MAX_SHIFT_REPORT_OFFSET_MM} step="0.1" value={offsetInput.x} onChange={(event) => changeOffset("x", event.target.value)} />
+              </label>
+              <label>
+                Độ lệch Y (mm)
+                <input aria-describedby={offsetNoteId} aria-invalid={invalidOffset} type="number" min={-MAX_SHIFT_REPORT_OFFSET_MM} max={MAX_SHIFT_REPORT_OFFSET_MM} step="0.1" value={offsetInput.y} onChange={(event) => changeOffset("y", event.target.value)} />
+              </label>
+            </div>
+            <p className="muted small" id={offsetNoteId}>X: + sang phải, − sang trái. Y: + xuống, − lên. Tự lưu trên trình duyệt.</p>
+            {invalidOffset ? <p className="alert alert-error small" role="alert">Nhập X/Y từ -20 đến 20 mm.</p> : null}
+          </fieldset>
+        </div>
         <div className="shift-report-footer-actions">
           <p className="muted small" id={printNoteId}>
             Mỗi máy một trang, gộp chung một PDF. In A4 ngang, tỉ lệ 100%.
           </p>
           <div className="shift-report-buttons">
-            <button aria-describedby={printNoteId} className="button button-primary" disabled={loading || printing || !selectedCount || !date} onClick={printBatch} type="button">
+            <button aria-describedby={printNoteId} className="button button-primary" disabled={loading || printing || !selectedCount || !date || invalidOffset} onClick={printBatch} type="button">
               {printing ? "Đang tạo PDF..." : "In báo ca"}
             </button>
             <button className="button button-secondary" disabled={printing} onClick={closeDialog} type="button">Cancel</button>
