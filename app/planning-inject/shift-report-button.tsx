@@ -52,7 +52,7 @@ function ShiftReportDialog({
   const modeName = useId();
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(() => new Set());
   const [selectedWO, setSelectedWO] = useState<Record<string, string>>({});
-  const [printMode, setPrintMode] = useState<PrintMode>("with-background");
+  const [printMode, setPrintMode] = useState<PrintMode>("without-background");
 
   const machinePlans = useMemo(() => {
     const plans = new Map<string, PlanningRow[]>();
@@ -68,7 +68,9 @@ function ShiftReportDialog({
     }
     return plans;
   }, [machines, rows]);
-  const machineNames = Array.from(machinePlans.keys());
+  const machineNames = Array.from(machinePlans.entries())
+    .filter(([, options]) => options.length > 0)
+    .map(([machine]) => machine);
   const selectedCount = machineNames.filter((machine) => selectedMachines.has(machine)).length;
   const allSelected = machineNames.length > 0 && selectedCount === machineNames.length;
 
@@ -150,7 +152,7 @@ function ShiftReportDialog({
             </thead>
             <tbody>
               {machineNames.length === 0 ? (
-                <tr><td className="shift-report-empty" colSpan={6}>Chưa có máy trong kế hoạch hiện tại.</td></tr>
+                <tr><td className="shift-report-empty" colSpan={6}>Chưa có máy có WO trong dữ liệu kế hoạch đã tải.</td></tr>
               ) : machineNames.map((machine) => {
                 const options = machinePlans.get(machine) ?? [];
                 const plan = options.find((option) => option.wo?.trim() === selectedWO[machine]) ?? options[0];
@@ -197,12 +199,12 @@ function ShiftReportDialog({
         <fieldset className="shift-report-modes">
           <legend>Chế độ in</legend>
           <label>
-            <input checked={printMode === "with-background"} name={modeName} onChange={() => setPrintMode("with-background")} type="radio" value="with-background" />
-            <span>Có nền <small>In cả form và thông tin</small></span>
-          </label>
-          <label>
             <input checked={printMode === "without-background"} name={modeName} onChange={() => setPrintMode("without-background")} type="radio" value="without-background" />
             <span>Không nền <small>Điền thông tin lên giấy có sẵn form</small></span>
+          </label>
+          <label>
+            <input checked={printMode === "with-background"} name={modeName} onChange={() => setPrintMode("with-background")} type="radio" value="with-background" />
+            <span>Có nền <small>In cả form và thông tin</small></span>
           </label>
         </fieldset>
         <div className="shift-report-footer-actions">
