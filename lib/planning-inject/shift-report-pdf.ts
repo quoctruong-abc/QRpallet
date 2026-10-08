@@ -26,6 +26,20 @@ export const SHIFT_REPORT_LAYOUT = {
   quanperh: { x: 43.5, y: 45.0, width: 18.4, height: 5.5, size: 10 },
 } satisfies Record<string, TextBox>;
 
+function drawCornerMarks(page: PDFPage) {
+  // Identical visible references in both modes, inset to avoid the paper edge.
+  // Printer scaling still depends on the print dialog and driver.
+  const inset = mm(5);
+  const length = mm(3);
+  for (const [x, dx] of [[inset, 1], [PAGE_WIDTH - inset, -1]]) {
+    for (const [y, dy] of [[inset, 1], [PAGE_HEIGHT - inset, -1]]) {
+      const start = { x, y };
+      page.drawLine({ start, end: { x: x + dx * length, y }, thickness: 0.5, color: rgb(0, 0, 0) });
+      page.drawLine({ start, end: { x, y: y + dy * length }, thickness: 0.5, color: rgb(0, 0, 0) });
+    }
+  }
+}
+
 function cleanText(value: unknown) {
   return value === null || value === undefined ? "" : String(value).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -99,6 +113,7 @@ export async function createShiftReportPdf(rows: ShiftReportPlanRow[], date: str
   for (const row of rows) {
     const page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     if (background) page.drawPage(background, { x: 0, y: 0, width: PAGE_WIDTH, height: PAGE_HEIGHT });
+    drawCornerMarks(page);
     const values = {
       product_name: row.product_name,
       machine: row.machine,
