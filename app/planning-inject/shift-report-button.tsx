@@ -211,11 +211,7 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
       ref={dialogRef}
     >
       <header className="shift-report-header">
-        <div>
-          <p className="eyebrow">CURRENT PLAN</p>
-          <h2 id={titleId}>In báo ca</h2>
-          <p className="muted small">Chọn máy và WO cần điền vào báo cáo ca.</p>
-        </div>
+        <h2 id={titleId}>In báo ca</h2>
         <div className="shift-report-selection">
           <label className="shift-report-date">
             Ngày báo ca
@@ -307,37 +303,37 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
         <div className="shift-report-print-settings">
           <fieldset className="shift-report-modes">
             <legend>Chế độ in</legend>
-            <label>
-              <input checked={printMode === "without-background"} disabled={printing} name={modeName} onChange={() => setPrintMode("without-background")} type="radio" value="without-background" />
-              <span>Không nền <small>Điền thông tin lên giấy có sẵn form</small></span>
-            </label>
-            <label>
+            <label title="In cả form và thông tin">
               <input checked={printMode === "with-background"} disabled={printing} name={modeName} onChange={() => setPrintMode("with-background")} type="radio" value="with-background" />
               <span>Có nền <small>In cả form và thông tin</small></span>
             </label>
+            <label title="Điền thông tin lên giấy có sẵn form">
+              <input checked={printMode === "without-background"} disabled={printing} name={modeName} onChange={() => setPrintMode("without-background")} type="radio" value="without-background" />
+              <span>Không nền <small>Điền lên giấy có sẵn form</small></span>
+            </label>
           </fieldset>
-          <fieldset className="shift-report-offsets" disabled={printing || printMode === "with-background"}>
+          {printMode === "without-background" ? <fieldset className="shift-report-offsets" disabled={printing}>
             <legend>Canh vị trí khi không nền</legend>
             <div className="shift-report-offset-inputs">
-              <label>
-                Độ lệch X (mm)
+              <label title="X: + sang phải, − sang trái">
+                X (mm)
                 <input aria-describedby={offsetNoteId} aria-invalid={invalidOffset} type="number" min={-MAX_SHIFT_REPORT_OFFSET_MM} max={MAX_SHIFT_REPORT_OFFSET_MM} step="0.1" value={offsetInput.x} onChange={(event) => changeOffset("x", event.target.value)} />
               </label>
-              <label>
-                Độ lệch Y (mm)
+              <label title="Y: + xuống, − lên">
+                Y (mm)
                 <input aria-describedby={offsetNoteId} aria-invalid={invalidOffset} type="number" min={-MAX_SHIFT_REPORT_OFFSET_MM} max={MAX_SHIFT_REPORT_OFFSET_MM} step="0.1" value={offsetInput.y} onChange={(event) => changeOffset("y", event.target.value)} />
               </label>
             </div>
             <p className="muted small" id={offsetNoteId}>X: + sang phải, − sang trái. Y: + xuống, − lên. Tự lưu trên trình duyệt.</p>
             {invalidOffset ? <p className="alert alert-error small" role="alert">Nhập X/Y từ -20 đến 20 mm.</p> : null}
-          </fieldset>
+          </fieldset> : null}
         </div>
         <div className="shift-report-footer-actions">
           <p className="muted small" id={printNoteId}>
-            Mỗi máy một trang, gộp chung một PDF. In A4 ngang, tỉ lệ 100%.
+            Mỗi máy một trang. A4 ngang, 100%.
           </p>
           <div className="shift-report-buttons">
-            <button aria-describedby={printNoteId} className="button button-primary" disabled={loading || printing || !selectedCount || !date || invalidOffset} onClick={printBatch} type="button">
+            <button aria-describedby={printNoteId} className="button button-primary" disabled={loading || printing || !selectedCount || !date || invalidOffset} onClick={printBatch} title="Gộp chung một PDF. In A4 ngang, tỉ lệ 100%." type="button">
               {printing ? "Đang tạo PDF..." : "In báo ca"}
             </button>
             <button className="button button-secondary" disabled={printing} onClick={closeDialog} type="button">Cancel</button>
