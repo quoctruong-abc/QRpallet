@@ -2,7 +2,7 @@
 
 Requires LibreOffice, pypdf and pdfplumber. Run from any working directory:
     python scripts/build-shift-report-template.py
-The Excel file owns all text, cells, table borders and the original stamp image.
+The Excel file owns all text, cells, table borders and the transparent stamp image.
 The final page is aligned to the existing fill coordinates after native export.
 """
 
