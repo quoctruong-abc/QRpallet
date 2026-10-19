@@ -48,7 +48,7 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
   const offsetNoteId = useId();
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(() => new Set());
   const [selectedWO, setSelectedWO] = useState<Record<string, string>>({});
-  const [printMode, setPrintMode] = useState<ShiftReportPrintMode>("without-background");
+  const [printMode, setPrintMode] = useState<ShiftReportPrintMode>("with-background");
   const [date, setDate] = useState(todayInVietnam);
   const [offsetInput, setOffsetInput] = useState({ x: "0", y: "0" });
   const [rows, setRows] = useState<ShiftReportPlanRow[]>([]);

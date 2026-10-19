@@ -14,16 +14,16 @@ type TextBox = { x: number; y: number; width: number; height: number; size: numb
 // Both print modes MUST use these same boxes, with no printable-margin scaling.
 export const SHIFT_REPORT_LAYOUT = {
   product_name: { x: 8.8, y: 25.5, width: 72.3, height: 9.9, size: 12, minSize: 4.5, bold: true },
-  machine: { x: 100, y: 22.1, width: 33.8, height: 5.8, size: 11, bold: true },
-  wo: { x: 157, y: 22.1, width: 44.7, height: 5.8, size: 11, bold: true },
-  date: { x: 221, y: 22.1, width: 66.3, height: 5.8, size: 11 },
-  material: { x: 100, y: 29.7, width: 33.8, height: 5.8, size: 10 },
-  customer: { x: 157, y: 29.7, width: 44.7, height: 5.8, size: 10, minSize: 4.5 },
-  quanorder: { x: 252, y: 29.7, width: 27.1, height: 5.8, size: 10 },
-  itemcode: { x: 29, y: 37.3, width: 52.1, height: 5.8, size: 11, bold: true },
-  netweight: { x: 101, y: 37.3, width: 26.2, height: 5.8, size: 10 },
-  color: { x: 153, y: 37.3, width: 48.7, height: 5.8, size: 10 },
-  quanperh: { x: 43.5, y: 45.0, width: 18.4, height: 5.5, size: 10 },
+  machine: { x: 100, y: 23.1, width: 33.8, height: 5.8, size: 11, bold: true },
+  wo: { x: 157, y: 23.1, width: 44.7, height: 5.8, size: 11, bold: true },
+  date: { x: 221, y: 23.1, width: 66.3, height: 5.8, size: 11 },
+  material: { x: 100, y: 30.7, width: 33.8, height: 5.8, size: 10 },
+  customer: { x: 157, y: 30.7, width: 44.7, height: 5.8, size: 10, minSize: 4.5 },
+  quanorder: { x: 252, y: 30.7, width: 27.1, height: 5.8, size: 10 },
+  itemcode: { x: 29, y: 38.3, width: 52.1, height: 5.8, size: 11, bold: true },
+  netweight: { x: 101, y: 38.3, width: 26.2, height: 5.8, size: 10 },
+  color: { x: 153, y: 38.3, width: 48.7, height: 5.8, size: 10 },
+  quanperh: { x: 43.5, y: 46.0, width: 18.4, height: 5.5, size: 10 },
 } satisfies Record<string, TextBox>;
 
 function drawCornerMarks(page: PDFPage) {
