@@ -44,9 +44,9 @@
 .shift-report-table-wrap { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
 .shift-report-table { table-layout: fixed; min-width: 1000px; }
 .shift-report-check-column { width: 56px; }
-.shift-report-machine-column { width: 72px; }
-.shift-report-wo-column { width: 180px; }
-.shift-report-customer-column { width: 23%; }
+.shift-report-machine-column,
+.shift-report-wo-column,
+.shift-report-customer-column { width: 18%; }
 .shift-report-item-column { width: 140px; }
 .shift-report-table thead { position: sticky; top: 0; z-index: 1; background: var(--surface-soft); }
 .shift-report-table th, .shift-report-table td { padding: 8px 10px; overflow-wrap: anywhere; }
