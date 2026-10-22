@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   hasShiftReportWO,
   MAX_SHIFT_REPORT_OFFSET_MM,
+  MAX_SHIFT_REPORT_PAGES,
   parseShiftReportOffset,
   SHIFT_REPORT_OFFSET_STORAGE_KEY,
   todayInVietnam,
@@ -47,7 +48,7 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
   const modeName = useId();
   const offsetNoteId = useId();
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(() => new Set());
-  const [selectedWO, setSelectedWO] = useState<Record<string, string>>({});
+  const [selectedWO, setSelectedWO] = useState<Record<string, string[]>>({});
   const [printMode, setPrintMode] = useState<ShiftReportPrintMode>("with-background");
   const [date, setDate] = useState(todayInVietnam);
   const [offsetInput, setOffsetInput] = useState({ x: "0", y: "0" });
@@ -101,6 +102,17 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
     .map(([machine]) => machine);
   const selectedCount = machineNames.filter((machine) => selectedMachines.has(machine)).length;
   const allSelected = machineNames.length > 0 && selectedCount === machineNames.length;
+  const selections = machineNames
+    .filter((machine) => selectedMachines.has(machine))
+    .flatMap((machine) => {
+      const options = machinePlans.get(machine) ?? [];
+      const workOrders = selectedWO[machine] ?? [options[0].wo!.trim()];
+      return workOrders.map((wo) => {
+        const row = options.find((option) => option.wo?.trim() === wo)!;
+        return { id: row.id, machine, wo };
+      });
+    });
+  const tooManyPages = selections.length > MAX_SHIFT_REPORT_PAGES;
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -154,15 +166,32 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
     });
   }
 
+  function addWO(machine: string) {
+    const options = machinePlans.get(machine) ?? [];
+    setSelectedWO((current) => {
+      const workOrders = current[machine] ?? [options[0].wo!.trim()];
+      const next = options.find((option) => !workOrders.includes(option.wo!.trim()));
+      return next ? { ...current, [machine]: [...workOrders, next.wo!.trim()] } : current;
+    });
+  }
+
+  function changeWO(machine: string, index: number, wo: string) {
+    setSelectedWO((current) => {
+      const workOrders = current[machine] ?? [machinePlans.get(machine)![0].wo!.trim()];
+      if (workOrders.some((value, position) => position !== index && value === wo)) return current;
+      return { ...current, [machine]: workOrders.map((value, position) => position === index ? wo : value) };
+    });
+  }
+
+  function removeWO(machine: string, index: number) {
+    setSelectedWO((current) => ({
+      ...current,
+      [machine]: current[machine].filter((_, position) => position !== index),
+    }));
+  }
+
   async function printBatch() {
-    if (printing || loading || !selectedCount || !date || invalidOffset) return;
-    const selections = machineNames
-      .filter((machine) => selectedMachines.has(machine))
-      .map((machine) => {
-        const options = machinePlans.get(machine) ?? [];
-        const row = options.find((option) => option.wo?.trim() === selectedWO[machine]) ?? options[0];
-        return { id: row.id, machine, wo: row.wo?.trim() ?? "" };
-      });
+    if (printing || loading || !selectedCount || !date || invalidOffset || tooManyPages) return;
     // Open synchronously from the click, before awaiting the batch API.
     const pdfWindow = window.open("", "_blank");
     if (!pdfWindow) {
@@ -217,7 +246,7 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
             Ngày báo ca
             <input disabled={printing} onChange={(event) => setDate(event.target.value)} required type="date" value={date} />
           </label>
-          <span className="muted small">Đã chọn {selectedCount}/{machineNames.length} máy</span>
+          <span className="muted small">Đã chọn {selectedCount}/{machineNames.length} máy · {selections.length} WO</span>
           <button
             aria-pressed={allSelected}
             className="button button-secondary"
@@ -232,6 +261,7 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
 
       <div className="shift-report-body">
         {message ? <p aria-live="polite" className={`alert alert-${message.type}`}>{message.text}</p> : null}
+        {tooManyPages ? <p className="alert alert-error" role="alert">Mỗi lần in tối đa {MAX_SHIFT_REPORT_PAGES} WO. Vui lòng giảm số WO đã chọn.</p> : null}
         <div className="shift-report-table-wrap">
           <table className="shift-report-table">
             <colgroup>
@@ -259,39 +289,61 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
                 <tr><td className="shift-report-empty" colSpan={6}>Chưa có máy có WO trong kế hoạch hiện tại.</td></tr>
               ) : machineNames.map((machine) => {
                 const options = machinePlans.get(machine) ?? [];
-                const plan = options.find((option) => option.wo?.trim() === selectedWO[machine]) ?? options[0];
+                const workOrders = selectedWO[machine] ?? [options[0].wo!.trim()];
                 const checked = selectedMachines.has(machine);
                 return (
-                  <tr className={checked ? "is-selected" : undefined} key={machine}>
-                    <td>
-                      <input
-                        aria-label={`Chọn máy ${machine}`}
-                        checked={checked}
-                        disabled={printing}
-                        onChange={() => toggleMachine(machine)}
-                        type="checkbox"
-                      />
-                    </td>
-                    <th scope="row">{machine}</th>
-                    <td>
-                      <select
-                        aria-label={`WO của máy ${machine}`}
-                        disabled={printing}
-                        onChange={(event) => setSelectedWO((current) => ({
-                          ...current,
-                          [machine]: event.target.value,
-                        }))}
-                        value={plan?.wo?.trim() ?? ""}
-                      >
-                        {options.map((option) => (
-                          <option key={option.wo?.trim()} value={option.wo?.trim()}>{option.wo}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>{plan?.customer || "—"}</td>
-                    <td>{plan?.itemcode || "—"}</td>
-                    <td>{plan?.product_name || "—"}</td>
-                  </tr>
+                  <Fragment key={machine}>
+                    {workOrders.map((wo, index) => {
+                      const plan = options.find((option) => option.wo?.trim() === wo)!;
+                      const child = index > 0;
+                      return (
+                        <tr className={`${checked ? "is-selected" : ""}${child ? " shift-report-child-row" : ""}`} key={index}>
+                          <td>
+                            {!child ? <input
+                              aria-label={`Chọn máy ${machine}`}
+                              checked={checked}
+                              disabled={printing}
+                              onChange={() => toggleMachine(machine)}
+                              type="checkbox"
+                            /> : null}
+                          </td>
+                          <th scope="row">
+                            <div className="shift-report-machine-actions">
+                              <span>{child ? `↳ ${machine}` : machine}</span>
+                              {child ? <button
+                                aria-label={`Xóa WO ${wo} của máy ${machine}`}
+                                className="button button-secondary"
+                                disabled={printing}
+                                onClick={() => removeWO(machine, index)}
+                                type="button"
+                              >Xóa WO</button> : checked && options.length > 1 ? <button
+                                aria-label={`Thêm WO cho máy ${machine}`}
+                                className="button button-secondary"
+                                disabled={printing || workOrders.length >= options.length}
+                                onClick={() => addWO(machine)}
+                                type="button"
+                              >Thêm WO</button> : null}
+                            </div>
+                          </th>
+                          <td>
+                            <select
+                              aria-label={child ? `WO bổ sung ${index} của máy ${machine}` : `WO của máy ${machine}`}
+                              disabled={printing}
+                              onChange={(event) => changeWO(machine, index, event.target.value)}
+                              value={wo}
+                            >
+                              {options.map((option) => (
+                                <option disabled={option.wo?.trim() !== wo && workOrders.includes(option.wo!.trim())} key={option.wo?.trim()} value={option.wo?.trim()}>{option.wo}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>{plan?.customer || "—"}</td>
+                          <td>{plan?.itemcode || "—"}</td>
+                          <td>{plan?.product_name || "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -330,10 +382,10 @@ function ShiftReportDialog({ onClose }: { onClose: () => void }) {
         </div>
         <div className="shift-report-footer-actions">
           <p className="muted small" id={printNoteId}>
-            Mỗi máy một trang. A4 ngang, 100%.
+            Mỗi WO một trang. A4 ngang, 100%.
           </p>
           <div className="shift-report-buttons">
-            <button aria-describedby={printNoteId} className="button button-primary" disabled={loading || printing || !selectedCount || !date || invalidOffset} onClick={printBatch} title="Gộp chung một PDF. In A4 ngang, tỉ lệ 100%." type="button">
+            <button aria-describedby={printNoteId} className="button button-primary" disabled={loading || printing || !selectedCount || !date || invalidOffset || tooManyPages} onClick={printBatch} title="Gộp chung một PDF. In A4 ngang, tỉ lệ 100%." type="button">
               {printing ? "Đang tạo PDF..." : "In báo ca"}
             </button>
             <button className="button button-secondary" disabled={printing} onClick={closeDialog} type="button">Cancel</button>

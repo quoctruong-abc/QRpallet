@@ -49,7 +49,7 @@ export function todayInVietnam() {
 export function parseShiftReportSelections(value: unknown): ShiftReportSelection[] | null {
   if (!Array.isArray(value) || !value.length || value.length > MAX_SHIFT_REPORT_PAGES) return null;
   const selections: ShiftReportSelection[] = [];
-  const machines = new Set<string>();
+  const machineWOs = new Set<string>();
   const ids = new Set<number>();
   for (const selection of value) {
     if (!selection || typeof selection !== "object") return null;
@@ -58,9 +58,9 @@ export function parseShiftReportSelections(value: unknown): ShiftReportSelection
       typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0
       || typeof machine !== "string" || !machine.trim() || machine.length > 200
       || typeof wo !== "string" || !wo.trim() || wo.trim() === "0" || wo.length > 200
-      || machines.has(machine.trim()) || ids.has(id)
+      || machineWOs.has(JSON.stringify([machine.trim(), wo.trim()])) || ids.has(id)
     ) return null;
-    machines.add(machine.trim());
+    machineWOs.add(JSON.stringify([machine.trim(), wo.trim()]));
     ids.add(id);
     selections.push({ id, machine: machine.trim(), wo: wo.trim() });
   }

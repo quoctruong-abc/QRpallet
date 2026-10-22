@@ -56,7 +56,7 @@ export async function POST(request: Request) {
   if (!authorization.ok) return NextResponse.json({ error: authorization.error }, { status: authorization.status });
   const body = await request.json().catch(() => null);
   const selections = parseShiftReportSelections(body?.selections);
-  if (!selections) return NextResponse.json({ error: "Vui lòng chọn máy và một WO hợp lệ cho mỗi máy." }, { status: 400 });
+  if (!selections) return NextResponse.json({ error: "Vui lòng chọn máy và WO hợp lệ, không chọn trùng WO trên cùng máy (tối đa 500 trang)." }, { status: 400 });
   if (!isShiftReportDate(body?.date)) return NextResponse.json({ error: "Vui lòng chọn ngày báo ca hợp lệ." }, { status: 400 });
   if (body?.mode !== "without-background" && body?.mode !== "with-background") {
     return NextResponse.json({ error: "Chế độ in không hợp lệ." }, { status: 400 });
