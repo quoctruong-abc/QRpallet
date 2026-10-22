@@ -52,6 +52,9 @@
 .shift-report-table th, .shift-report-table td { padding: 8px 10px; overflow-wrap: anywhere; }
 .shift-report-table tbody th { color: var(--text); font-size: .9rem; text-transform: none; letter-spacing: normal; }
 .shift-report-table tbody tr.is-selected { background: #eff4ff; }
+.shift-report-machine-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+.shift-report-table .shift-report-machine-actions .button { font-size: .78rem; min-height: 30px; padding: 4px 8px; white-space: nowrap; }
+.shift-report-child-row th { padding-left: 24px; }
 .shift-report-table input[type="checkbox"], .shift-report-modes input[type="radio"] {
   width: 18px;
   height: 18px;
