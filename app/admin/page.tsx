@@ -16,7 +16,7 @@ const pages = [
   { path: "/planning-inject", label: "Planning Inject" },
   { path: "/pallet-label", label: "Xuất tem pallet" },
   { path: "/scan-qr", label: "Scan QR" },
-  { path: "/warehouse-receipt", label: "Xem phiếu nhập kho" },
+  { path: "/warehouse-receipt", label: "Quản lý kho" },
 ] as const;
 
 const allPermissions: Array<{ key: PermissionKey; label: string }> = [
@@ -25,7 +25,7 @@ const allPermissions: Array<{ key: PermissionKey; label: string }> = [
   { key: "pallet.create", label: "Tạo pallet" },
   { key: "pallet.edit", label: "Sửa pallet" },
   { key: "scan.standard", label: "Scan QR" },
-  { key: "receipt.view", label: "Xem phiếu nhập kho" },
+  { key: "receipt.view", label: "Truy cập Quản lý kho" },
   { key: "dashboard.view", label: "Xem Dashboard" },
 ];
 

@@ -1,0 +1,62 @@
+.warehouse-management { display: grid; gap: 20px; min-width: 0; }
+.warehouse-management-heading h1 { margin-bottom: 6px; }
+.warehouse-management-heading p { margin-bottom: 0; }
+.warehouse-management-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+.warehouse-management-tab {
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+.warehouse-management-tab:hover { color: var(--primary); background: #eaf1ff; }
+.warehouse-management-tab[aria-selected="true"] {
+  border-color: #b2ccff;
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, .08);
+}
+.warehouse-management-tab:focus-visible,
+.warehouse-management-panel:focus-visible { outline: 3px solid #84adff; outline-offset: 3px; }
+.warehouse-management-panel { min-width: 0; }
+.warehouse-management-panel[hidden] { display: none; }
+.warehouse-management-placeholder {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 12px;
+  min-height: 280px;
+  padding: 32px 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  text-align: center;
+}
+.warehouse-management-placeholder p { margin: 0; max-width: 480px; line-height: 1.6; }
+.warehouse-management-status {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .warehouse-management { gap: 16px; }
+  .warehouse-management-tabs { gap: 3px; padding: 4px; }
+  .warehouse-management-tab { padding: 10px 4px; font-size: .82rem; }
+  .warehouse-management-placeholder { min-height: 240px; }
+}

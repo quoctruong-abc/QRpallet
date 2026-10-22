@@ -600,7 +600,7 @@ create_warehouse_receipt_from_scan
 
 ---
 
-## 11. Module 4 — Lịch sử phiếu nhập kho
+## 11. Module 4 — Quản lý kho
 
 Route:
 
@@ -614,12 +614,20 @@ Permission:
 receipt.view
 ```
 
-Module này chỉ:
+Module có bốn tab theo thứ tự: **Xuất kho**, **Nhập kho**, **Đối soát**, **Receipt**.
+Mặc định mở tab Xuất kho. Ba tab đầu hiện là khung giao diện, chưa ghi dữ liệu
+tồn kho; tích hợp dữ liệu sau confirm scan sẽ triển khai sau cùng.
+
+Toàn bộ chức năng phiếu nhập kho hiện tại nằm trong tab **Receipt**:
 
 - xem lịch sử;
 - tìm theo ngày;
 - xem chi tiết;
-- in lại PDF.
+- in lại PDF;
+- tải Excel.
+
+Receipt chỉ tải dữ liệu khi mở tab lần đầu; bộ lọc và kết quả được giữ khi
+chuyển sang tab khác rồi quay lại. Route và permission hiện tại được giữ nguyên.
 
 Không reverse sau `WHdone`.
 

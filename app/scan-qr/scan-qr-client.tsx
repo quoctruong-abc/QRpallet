@@ -859,7 +859,7 @@ export function ScanQrClient({ initialRows, isAdmin, userId }: { initialRows: Sc
                 </tbody>
               </table>
             </div>
-            <p className="muted">Sau khi xác nhận, hệ thống tạo phiếu nhập kho và chuyển pallet sang WHdone. Mỗi phiếu tối đa 200 pallet. PDF chỉ in lại tại module Xem phiếu nhập kho.</p>
+            <p className="muted">Sau khi xác nhận, hệ thống tạo phiếu nhập kho và chuyển pallet sang WHdone. Mỗi phiếu tối đa 200 pallet. PDF chỉ in lại tại tab Receipt của module Quản lý kho.</p>
             <div className="modal-actions">
               <button className="button button-secondary" disabled={confirming} onClick={() => setConfirmOpen(false)}>Quay lại</button>
               <button className="button button-primary" disabled={confirming} onClick={() => void confirmAll()}>{confirming ? "Đang tạo phiếu..." : "Xác nhận tạo phiếu"}</button>
