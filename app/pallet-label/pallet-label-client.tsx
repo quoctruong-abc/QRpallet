@@ -35,7 +35,7 @@ export type ActivePallet = {
 type Props = { rows: PlanItem[]; pallets: ActivePallet[] };
 type PalletConfig = {
   itemcode: string;
-  quantity_per_pallet: number;
+  quantity_per_pallet: number | null;
   updated_at: string;
 };
 type Mode = "full" | "partial";
@@ -238,7 +238,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       const configs = result.configs as PalletConfig[];
       setConfigRows(configs);
       setConfigQuantities(Object.fromEntries(
-        configs.map((config) => [config.itemcode, String(config.quantity_per_pallet)]),
+        configs.map((config) => [config.itemcode, config.quantity_per_pallet === null ? "" : String(config.quantity_per_pallet)]),
       ));
       setConfigSearched(true);
     } catch (error) {

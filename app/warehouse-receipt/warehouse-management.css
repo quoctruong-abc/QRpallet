@@ -54,9 +54,32 @@
   font-weight: 700;
 }
 
+.warehouse-incoming { display: grid; gap: 20px; }
+.warehouse-incoming-form { padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.warehouse-incoming-heading { margin-bottom: 20px; }
+.warehouse-incoming-heading p { margin: 8px 0 0; }
+.warehouse-incoming-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.warehouse-incoming-fields label { min-width: 0; }
+.warehouse-incoming-fields input[readonly] { background: var(--surface-soft); color: var(--muted); }
+.warehouse-incoming-lookup-note, .warehouse-incoming-note { grid-column: 1 / -1; }
+.warehouse-incoming-lookup-note { margin: -6px 0 0; }
+.warehouse-field-hint { color: var(--muted); font-size: .75rem; font-weight: 400; }
+.warehouse-required { color: var(--danger); }
+.warehouse-incoming-note textarea { width: 100%; resize: vertical; padding: 10px 12px; border: 1px solid #d0d5dd; border-radius: 10px; color: var(--text); background: white; font: inherit; font-weight: 400; }
+.warehouse-incoming-note textarea:focus-visible { outline: 3px solid #84adff; outline-offset: 2px; }
+.warehouse-incoming-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.warehouse-incoming-form > .alert { margin: 18px 0 0; }
+.warehouse-incoming-draft-heading { display: grid; gap: 8px; padding: 20px; border-bottom: 1px solid var(--border); }
+.warehouse-incoming-draft-heading h2 { font-size: 1.05rem; }
+.warehouse-incoming-draft-heading p { margin: 0; }
+.warehouse-incoming-draft-note { max-width: 280px; overflow-wrap: anywhere; white-space: pre-wrap; }
+
 @media (max-width: 640px) {
   .warehouse-management { gap: 16px; }
   .warehouse-management-tabs { gap: 3px; padding: 4px; }
   .warehouse-management-tab { padding: 10px 4px; font-size: .82rem; }
   .warehouse-management-placeholder { min-height: 240px; }
+  .warehouse-incoming-form { padding: 18px; }
+  .warehouse-incoming-fields { grid-template-columns: 1fr; }
+  .warehouse-incoming-actions .button { flex: 1; }
 }

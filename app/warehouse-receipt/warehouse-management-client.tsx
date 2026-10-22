@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { WarehouseHistoryClient } from "./warehouse-history-client";
+import { WarehouseIncomingClient } from "./warehouse-incoming-client";
 import "./warehouse-management.css";
 
 const tabs = [
@@ -75,7 +76,7 @@ export function WarehouseManagementClient() {
           role="tabpanel"
           tabIndex={0}
         >
-          {tab.id === "receipt" ? (
+          {tab.id === "incoming" ? <WarehouseIncomingClient /> : tab.id === "receipt" ? (
             receiptOpened ? <WarehouseHistoryClient /> : null
           ) : (
             <section className="warehouse-management-placeholder">

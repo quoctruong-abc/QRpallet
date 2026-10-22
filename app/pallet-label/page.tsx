@@ -13,7 +13,7 @@ type PlanDbRow = {
 };
 
 type PalletDbRow = ActivePallet;
-type ConfigDbRow = { itemcode: string; quantity_per_pallet: number };
+type ConfigDbRow = { itemcode: string; quantity_per_pallet: number | null };
 
 export default async function PalletLabelPage() {
   const profile = await requirePermission("pallet.create");
@@ -40,7 +40,7 @@ export default async function PalletLabelPage() {
   const planRows = (planResult.data ?? []) as PlanDbRow[];
   const palletRows = (palletResult.data ?? []) as PalletDbRow[];
   const configs = new Map(
-    ((configResult.data ?? []) as ConfigDbRow[]).map((row) => [row.itemcode, Number(row.quantity_per_pallet)]),
+    ((configResult.data ?? []) as ConfigDbRow[]).map((row) => [row.itemcode, row.quantity_per_pallet === null ? null : Number(row.quantity_per_pallet)]),
   );
 
   const totals = new Map<string, { produced: number; warehouse: number }>();

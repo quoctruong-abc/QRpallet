@@ -615,8 +615,9 @@ receipt.view
 ```
 
 Module có bốn tab theo thứ tự: **Xuất kho**, **Nhập kho**, **Đối soát**, **Receipt**.
-Mặc định mở tab Xuất kho. Ba tab đầu hiện là khung giao diện, chưa ghi dữ liệu
-tồn kho; tích hợp dữ liệu sau confirm scan sẽ triển khai sau cùng.
+Mặc định mở tab Xuất kho. Tab Nhập kho có form nhập thủ công và danh sách chờ;
+Xuất kho và Đối soát hiện là khung giao diện. Chưa ghi dữ liệu tồn kho;
+tích hợp dữ liệu sau confirm scan sẽ triển khai sau cùng.
 
 Toàn bộ chức năng phiếu nhập kho hiện tại nằm trong tab **Receipt**:
 
@@ -640,6 +641,26 @@ WH-DDMMYY-002
 ```
 
 `receipt_date` dùng cùng cutoff 06:00.
+
+### 11.1 Nhập kho thủ công
+
+- Bắt buộc: Mã sản phẩm (`itemcode`), Số lượng (số nguyên dương), Ghi chú.
+- Không bắt buộc: Ngày sản xuất, WO.
+- Tên sản phẩm và Khách hàng chỉ đọc, tự điền khi rời ô itemcode hoặc nhấn Enter.
+- POST `/api/warehouse-receipt/item-lookup` yêu cầu `receipt.view`, tra chính xác
+  itemcode trong `item_pallet_config`. Khi thiếu tên/khách hàng, RPC lấy một cặp
+  đầy đủ từ `pallet_data`, ưu tiên bản còn hiệu lực rồi bản cập nhật mới nhất,
+  ghi bổ sung vào cấu hình và trả về. Giá trị cấu hình đã có được giữ lại.
+- Không có dữ liệu đủ hai trường: `Không tìm thấy item, vui lòng cập nhật database`.
+- Nút Thêm vào danh sách chỉ tạo dòng chờ trên giao diện, chưa ghi nhập kho.
+  Đổi tab giữ danh sách; tải lại trang sẽ xóa danh sách này.
+
+Chạy script `supabase/migrations/20261022090000_warehouse_item_catalog.sql`
+trước khi dùng tra cứu. Script thêm `product_name`, `customer`, backfill một lần
+từ `pallet_data` và tạo RPC `resolve_warehouse_item(text)` chỉ cho service role.
+Có thể chạy lại; không ghi đè tên/khách hàng đang có hoặc số lượng chuẩn/pallet.
+`quantity_per_pallet` được phép NULL cho item chỉ có thông tin mô tả; màn hình
+in tem vẫn coi NULL là chưa cấu hình và yêu cầu bổ sung trước khi in pallet đầy.
 
 ---
 
