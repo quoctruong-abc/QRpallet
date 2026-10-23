@@ -89,6 +89,11 @@ function ProjectedQuantityProgress({
         <span className="quantity-progress-added" style={{ width: `${projectedWidth}%` }} />
       </div>
       <small>{validTotal ? `Sau khi tạo: ${Math.round((projected / total) * 100)}%` : "Chưa có order"}</small>
+      {validTotal && projected > total ? (
+        <p role="alert" style={{ color: "#dc2626", fontWeight: 600, margin: 0 }}>
+          Đã vượt số lượng WO, hãy xác nhận kĩ
+        </p>
+      ) : null}
     </div>
   );
 }
