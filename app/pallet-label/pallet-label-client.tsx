@@ -492,8 +492,9 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       .pallet-wo-eye-button:focus-visible { outline: 3px solid rgba(47, 128, 237, .22); outline-offset: 1px; }
       .pallet-wo-eye-button svg { width: 17px; height: 17px; }
       .pallet-machine-heading { justify-content: flex-start; flex-wrap: wrap; gap: 16px; }
-      .pallet-machine-wo-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
-      .pallet-machine-wo-controls label { min-width: 180px; }
+      .pallet-machine-wo-controls { min-width: 0; margin-bottom: 16px; }
+      .pallet-machine-wo-controls label { display: grid; gap: 8px; min-width: 0; }
+      .pallet-machine-wo-controls select { width: 100%; min-width: 0; }
       .pallet-machine-hint { margin: 0 0 14px; }
     `}</style>
     <div className="feature-toolbar pallet-main-toolbar">
@@ -508,6 +509,11 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         const active = machine === selectedMachine;
         const machineRows = validRows.filter((row) => row.machine === machine);
         const machineWos = Array.from(new Set(machineRows.map((row) => row.wo))).sort((a, b) => a.localeCompare(b, "vi"));
+        const woOptions = machineWos.map((wo) => ({
+          wo,
+          label: `${wo} | ${machineRows.filter((row) => row.wo === wo).map((row) =>
+            `${row.itemcode} | ${row.product_name || "—"} | ${row.customer || "—"}`).join(" / ")}`,
+        }));
         const selectedWo = selectedWos[machine] ?? "";
         const viewAll = viewAllMachine === machine;
         const visibleRows = viewAll ? machineRows : machineRows.filter((row) => row.wo === selectedWo);
@@ -522,15 +528,15 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
           {active ? <section className="panel pallet-table-panel machine-detail-panel">
             <div className="section-heading pallet-machine-heading">
               <div><p className="eyebrow">MACHINE</p><h2>{machine}</h2></div>
-              <div className="pallet-machine-wo-controls">
-                <label>Chọn WO
-                  <select aria-label={`Chọn WO cho máy ${machine}`} value={selectedWo} onChange={(event) => { selectWo(machine, event.target.value); setViewAllMachine(null); }}>
-                    <option value="">Chọn WO để in tem</option>
-                    {machineWos.map((wo) => <option key={wo} value={wo}>{wo}</option>)}
-                  </select>
-                </label>
-                <button type="button" className="button button-secondary" aria-pressed={viewAll} onClick={() => setViewAllMachine(viewAll ? null : machine)}>{viewAll ? "Về WO đã chọn" : "Xem hết"}</button>
-              </div>
+              <button type="button" className="button button-secondary" aria-pressed={viewAll} onClick={() => setViewAllMachine(viewAll ? null : machine)}>{viewAll ? "Về WO đã chọn" : "Xem hết"}</button>
+            </div>
+            <div className="pallet-machine-wo-controls">
+              <label>Chọn WO · Itemcode · Tên sản phẩm · Khách hàng
+                <select aria-label={`Chọn WO cho máy ${machine}`} title={woOptions.find((option) => option.wo === selectedWo)?.label} value={selectedWo} onChange={(event) => { selectWo(machine, event.target.value); setViewAllMachine(null); }}>
+                  <option value="">Chọn WO để in tem</option>
+                  {woOptions.map((option) => <option key={option.wo} value={option.wo}>{option.label}</option>)}
+                </select>
+              </label>
             </div>
             {viewAll ? <p className="muted pallet-machine-hint">Đang xem tất cả WO của máy {machine}. Chọn WO để quay lại in tem.</p> : null}
             <div className="table-wrap"><table className="pallet-table">
