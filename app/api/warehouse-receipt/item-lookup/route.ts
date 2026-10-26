@@ -1,5 +1,6 @@
 import { authorizePermission } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 
 export async function POST(request: Request) {
   const authorization = await authorizePermission("receipt.view");
@@ -8,9 +9,11 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null) as { itemcode?: unknown } | null;
-  const itemcode = typeof body?.itemcode === "string" ? body.itemcode.trim() : "";
-  if (!itemcode || itemcode.length > 200) {
-    return Response.json({ success: false, error: "Vui lòng nhập mã sản phẩm hợp lệ." }, { status: 400 });
+  let itemcode: string;
+  try {
+    itemcode = normalizeWarehouseItemcode(typeof body?.itemcode === "string" ? body.itemcode : "");
+  } catch (error) {
+    return Response.json({ success: false, error: error instanceof Error ? error.message : "Mã sản phẩm không hợp lệ." }, { status: 400 });
   }
 
   try {

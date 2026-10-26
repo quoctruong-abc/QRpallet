@@ -647,13 +647,23 @@ WH-DDMMYY-002
 - Bắt buộc: Mã sản phẩm (`itemcode`), Số lượng (số nguyên dương), Ghi chú.
 - Không bắt buộc: Ngày sản xuất, WO.
 - Tên sản phẩm và Khách hàng chỉ đọc, tự điền khi rời ô itemcode hoặc nhấn Enter.
+- Mã viết tắt có một dấu `*` được chèn số 0 cho đủ 13 ký tự, ví dụ
+  `11011*209` → `1101100000209`. Mã không có `*` được giữ nguyên sau khi trim.
+  Frontend và API cùng dùng quy tắc này; mã viết tắt không hợp lệ bị từ chối.
 - POST `/api/warehouse-receipt/item-lookup` yêu cầu `receipt.view`, tra chính xác
   itemcode trong `item_pallet_config`. Khi thiếu tên/khách hàng, RPC lấy một cặp
   đầy đủ từ `pallet_data`, ưu tiên bản còn hiệu lực rồi bản cập nhật mới nhất,
   ghi bổ sung vào cấu hình và trả về. Giá trị cấu hình đã có được giữ lại.
 - Không có dữ liệu đủ hai trường: `Không tìm thấy item, vui lòng cập nhật database`.
 - Nút Thêm vào danh sách chỉ tạo dòng chờ trên giao diện, chưa ghi nhập kho.
-  Đổi tab giữ danh sách; tải lại trang sẽ xóa danh sách này.
+  Có thể thêm ngay khi chưa tra cứu xong; tên/khách hàng cập nhật nền vào từng
+  dòng chờ. Cùng itemcode dùng chung request đang chạy và kết quả thành công.
+- Danh sách có Sửa, Xóa và Thử lại khi tra cứu lỗi. Lưu sửa giữ nguyên dòng và
+  tra cứu lại theo mã mới; kết quả cũ không ghi đè dòng đã đổi mã hoặc đã xóa.
+- Dòng không tìm thấy item hoặc tra cứu lỗi được tô đỏ, kèm thông báo. Tiếp theo
+  bị khóa khi danh sách rỗng, có dòng đang tra cứu/lỗi hoặc đang sửa chưa lưu.
+  Khi tất cả dòng hợp lệ, Tiếp theo mở bước kiểm tra danh sách, chưa ghi tồn kho.
+- Đổi tab giữ danh sách; tải lại trang sẽ xóa danh sách này.
 
 Chạy script `supabase/migrations/20261022090000_warehouse_item_catalog.sql`
 trước khi dùng tra cứu. Script thêm `product_name`, `customer`, backfill một lần

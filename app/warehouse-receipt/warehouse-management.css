@@ -73,6 +73,14 @@
 .warehouse-incoming-draft-heading h2 { font-size: 1.05rem; }
 .warehouse-incoming-draft-heading p { margin: 0; }
 .warehouse-incoming-draft-note { max-width: 280px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.warehouse-table .warehouse-incoming-row-error td { background: #fef3f2; color: var(--danger); }
+.warehouse-incoming-row-message { display: block; margin-top: 6px; font-size: .78rem; line-height: 1.5; overflow-wrap: anywhere; }
+.warehouse-incoming-row-error .warehouse-incoming-row-message { font-weight: 700; }
+.warehouse-incoming-draft-heading > .warehouse-incoming-row-message { color: var(--danger); }
+.warehouse-incoming-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.warehouse-incoming-next { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; padding: 18px 20px; border-top: 1px solid var(--border); }
+.warehouse-incoming-next p { margin: 0; }
+.warehouse-incoming-next .button:disabled { cursor: not-allowed; opacity: .55; }
 
 @media (max-width: 640px) {
   .warehouse-management { gap: 16px; }
