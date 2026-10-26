@@ -615,9 +615,9 @@ receipt.view
 ```
 
 Module có bốn tab theo thứ tự: **Xuất kho**, **Nhập kho**, **Đối soát**, **Receipt**.
-Mặc định mở tab Xuất kho. Tab Nhập kho có form nhập thủ công và danh sách chờ;
-Xuất kho và Đối soát hiện là khung giao diện. Chưa ghi dữ liệu tồn kho;
-tích hợp dữ liệu sau confirm scan sẽ triển khai sau cùng.
+Mặc định mở tab Xuất kho. Tab Nhập kho có form nhập thủ công, danh sách chờ và
+xác nhận ghi nhận tồn kho; Xuất kho và Đối soát hiện là khung giao diện.
+Tích hợp dữ liệu sau confirm scan sẽ triển khai sau cùng.
 
 Toàn bộ chức năng phiếu nhập kho hiện tại nằm trong tab **Receipt**:
 
@@ -644,7 +644,9 @@ WH-DDMMYY-002
 
 ### 11.1 Nhập kho thủ công
 
-- Bắt buộc: Mã sản phẩm (`itemcode`), Số lượng (số nguyên dương), Ghi chú.
+- Bắt buộc: Ngày nhập kho, Mã sản phẩm (`itemcode`), Số lượng (số nguyên dương), Ghi chú.
+- Ngày nhập kho mặc định ngày lịch hiện tại tại `Asia/Ho_Chi_Minh` (không trừ
+  cutoff 06:00); có thể sửa theo từng dòng và được giữ trong lúc nhập liên tiếp.
 - Không bắt buộc: Ngày sản xuất, WO.
 - Tên sản phẩm và Khách hàng chỉ đọc, tự điền khi rời ô itemcode hoặc nhấn Enter.
 - Mã viết tắt có một dấu `*` được chèn số 0 cho đủ 13 ký tự, ví dụ
@@ -662,8 +664,17 @@ WH-DDMMYY-002
   tra cứu lại theo mã mới; kết quả cũ không ghi đè dòng đã đổi mã hoặc đã xóa.
 - Dòng không tìm thấy item hoặc tra cứu lỗi được tô đỏ, kèm thông báo. Tiếp theo
   bị khóa khi danh sách rỗng, có dòng đang tra cứu/lỗi hoặc đang sửa chưa lưu.
-  Khi tất cả dòng hợp lệ, Tiếp theo mở bước kiểm tra danh sách, chưa ghi tồn kho.
-- Đổi tab giữ danh sách; tải lại trang sẽ xóa danh sách này.
+  Khi tất cả dòng hợp lệ, Tiếp theo mở bước kiểm tra; Xác nhận nhập kho mới ghi
+  toàn bộ danh sách vào `inv_incoming`.
+- POST `/api/warehouse-receipt/incoming` kiểm tra quyền `receipt.view`, ngày và
+  dữ liệu, sau đó gọi RPC `post_manual_inventory(uuid,jsonb)` bằng JWT user.
+  RPC tự lấy người nhập từ `auth.uid()` và tên/khách hàng từ database, không
+  tin các trường này từ frontend. Một dòng lỗi sẽ rollback cả lần nhập.
+- Mỗi lần ghi nhận có UUID cố định để chống trùng khi retry. Nếu lỗi mạng hoặc
+  chưa rõ kết quả, danh sách được khóa sửa và giữ trong `sessionStorage` để
+  tải lại trang vẫn thử lại đúng yêu cầu cũ. Ghi nhận thành công mới xóa danh sách.
+- Đổi tab giữ danh sách. Các dòng nháp chưa bấm ghi nhận sẽ mất khi tải lại trang;
+  danh sách đã gửi nhưng chưa xác nhận được kết quả sẽ được khôi phục.
 
 Chạy script `supabase/migrations/20261022090000_warehouse_item_catalog.sql`
 trước khi dùng tra cứu. Script thêm `product_name`, `customer`, backfill một lần
@@ -676,7 +687,8 @@ in tem vẫn coi NULL là chưa cấu hình và yêu cầu bổ sung trước kh
 
 Script: `supabase/migrations/20261026090000_inventory_incoming.sql`.
 Bảng mới `public.inv_incoming` độc lập với `wh_data_pallet`, mỗi dòng là một
-nguồn tồn/lô nhập. Chưa nối confirm scan và chưa nối nút ghi nhận trên form.
+nguồn tồn/lô nhập. Form nhập tay đã nối qua RPC ở migration tiếp theo;
+confirm scan chưa nối.
 
 | Nội dung | Cột | Kiểu / quy tắc |
 | --- | --- | --- |
@@ -695,6 +707,7 @@ nguồn tồn/lô nhập. Chưa nối confirm scan và chưa nối nút ghi nh�
 | Liên kết phiếu nhập | `receipt_id` | FK `wh_receipt.receipt_id`, có thể NULL cho nhập tay |
 | Ghi chú | `note` | bắt buộc, giữ theo form nhập tay |
 | Cập nhật cuối | `updated_at` | timestamptz, tự cập nhật khi sửa |
+| Lần ghi nhận thủ công | `manual_batch_id`, `manual_line_no` | FK batch + số dòng, duy nhất trong mỗi lần ghi nhận |
 
 Trigger lấy tên người nhập từ profile, không nhận tên tùy ý từ client. Khi tài
 khoản đổi tên hoặc bị xóa, tên snapshot vẫn được giữ. Backend dùng service role
@@ -706,6 +719,30 @@ received_date)`, `received_date`, `id`. Ngày sản xuất thiếu vẫn giữ N
 dữ liệu gốc; thứ tự tham chiếu dùng ngày nhập. Một item có thể có nhiều dòng nhập.
 Khi xây bảng xuất sau này, mỗi dòng xuất sẽ liên kết `inv_incoming.id` và tổng
 xuất phải được cập nhật cùng transaction với các dòng xuất liên quan.
+
+### 11.3 Áp dụng backend nhập tay trên Codespace
+
+Các SQL trước đã được chạy trực tiếp trên Supabase. Chỉ chạy migration mới
+`20261026100000_post_manual_inventory.sql`; không tự sửa history hoặc chạy lại
+toàn bộ migrations bằng `db push` trong bước này.
+
+```bash
+cd /workspaces/QRpallet
+# Chỉ cần cài khi Codespace chưa có psql:
+sudo apt-get update && sudo apt-get install -y postgresql-client
+git switch dev && git pull --ff-only && bash scripts/apply-manual-inventory.sh
+```
+
+Script hỏi connection string ở chế độ không hiện nội dung. Lấy từ Supabase
+Dashboard → Connect → Session pooler (port 5432), điền mật khẩu database đã URL
+encode vào connection string trước khi dán. Nếu đã lưu Codespace secret
+`SVN_DATABASE_URL`, script sẽ dùng secret đó. Không dùng API/service-role key
+thay cho Postgres connection string.
+
+Script dùng `psql -X -v ON_ERROR_STOP=1` chỉ với file mới; migration chạy trong
+một transaction, tạo `inv_incoming_batches`, thêm khóa chống trùng và RPC.
+Kết quả cuối có `posting_rpc = post_manual_inventory(uuid,jsonb)`.
+Script không ghi dữ liệu tồn đầu kỳ, không backfill và không nối luồng scan.
 
 ---
 
