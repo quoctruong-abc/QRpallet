@@ -672,6 +672,41 @@ Có thể chạy lại; không ghi đè tên/khách hàng đang có hoặc số 
 `quantity_per_pallet` được phép NULL cho item chỉ có thông tin mô tả; màn hình
 in tem vẫn coi NULL là chưa cấu hình và yêu cầu bổ sung trước khi in pallet đầy.
 
+### 11.2 Bảng tồn kho theo từng dòng nhập
+
+Script: `supabase/migrations/20261026090000_inventory_incoming.sql`.
+Bảng mới `public.inv_incoming` độc lập với `wh_data_pallet`, mỗi dòng là một
+nguồn tồn/lô nhập. Chưa nối confirm scan và chưa nối nút ghi nhận trên form.
+
+| Nội dung | Cột | Kiểu / quy tắc |
+| --- | --- | --- |
+| ID | `id` | bigint identity, khóa chính |
+| Ngày nhập kho | `received_date` | date, mặc định ngày nghiệp vụ Việt Nam với cutoff 06:00 |
+| Ngày sản xuất | `production_date` | date, có thể NULL |
+| Mã sản phẩm | `itemcode` | text bắt buộc, lưu mã đầy đủ đã xử lý dấu `*` |
+| Tên sản phẩm | `product_name` | text bắt buộc, snapshot khi nhập |
+| Tên khách hàng | `customer` | text bắt buộc, snapshot khi nhập |
+| WO | `wo` | text, có thể NULL |
+| Số lượng nhập | `received_qty` | integer > 0 |
+| Số lượng xuất | `issued_qty` | integer, mặc định 0, từ 0 đến số lượng nhập |
+| Tồn kho | `balance_qty` | generated stored = nhập − xuất, không sửa trực tiếp |
+| Người nhập | `entered_by`, `entered_by_name` | FK profiles + tên chụp tại thời điểm tạo |
+| Thời điểm ghi nhận | `created_at` | timestamptz, mặc định now() |
+| Liên kết phiếu nhập | `receipt_id` | FK `wh_receipt.receipt_id`, có thể NULL cho nhập tay |
+| Ghi chú | `note` | bắt buộc, giữ theo form nhập tay |
+| Cập nhật cuối | `updated_at` | timestamptz, tự cập nhật khi sửa |
+
+Trigger lấy tên người nhập từ profile, không nhận tên tùy ý từ client. Khi tài
+khoản đổi tên hoặc bị xóa, tên snapshot vẫn được giữ. Backend dùng service role
+phải truyền ID profile đã xác thực khi insert; user không ghi trực tiếp bảng.
+Authenticated chỉ đọc khi có `receipt.view`; anon không được truy cập.
+
+Index FIFO chỉ gồm dòng tồn > 0: `itemcode`, `coalesce(production_date,
+received_date)`, `received_date`, `id`. Ngày sản xuất thiếu vẫn giữ NULL trong
+dữ liệu gốc; thứ tự tham chiếu dùng ngày nhập. Một item có thể có nhiều dòng nhập.
+Khi xây bảng xuất sau này, mỗi dòng xuất sẽ liên kết `inv_incoming.id` và tổng
+xuất phải được cập nhật cùng transaction với các dòng xuất liên quan.
+
 ---
 
 ## 12. Dashboard sản xuất
