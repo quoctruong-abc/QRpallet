@@ -722,27 +722,36 @@ xuất phải được cập nhật cùng transaction với các dòng xuất li
 
 ### 11.3 Áp dụng backend nhập tay trên Codespace
 
-Các SQL trước đã được chạy trực tiếp trên Supabase. Chỉ chạy migration mới
-`20261026100000_post_manual_inventory.sql`; không tự sửa history hoặc chạy lại
-toàn bộ migrations bằng `db push` trong bước này.
+Ưu tiên Supabase CLI theo workflow login/link hiện tại. Hai migration
+`20261022090000` và `20261026090000` đã được chạy trực tiếp trên Supabase;
+đánh dấu chúng đã applied để CLI không chạy lại SQL. `migration repair` chỉ sửa
+history, không thực thi lại nội dung migration.
 
 ```bash
 cd /workspaces/QRpallet
-# Chỉ cần cài khi Codespace chưa có psql:
-sudo apt-get update && sudo apt-get install -y postgresql-client
-git switch dev && git pull --ff-only && bash scripts/apply-manual-inventory.sh
+git switch dev && git pull --ff-only
+npx supabase login
+npx supabase link --project-ref YOUR_PROJECT_REF
+npx supabase migration list
+npx supabase migration repair 20261022090000 20261026090000 --status applied
+npx supabase db push --dry-run
 ```
 
-Script hỏi connection string ở chế độ không hiện nội dung. Lấy từ Supabase
-Dashboard → Connect → Session pooler (port 5432), điền mật khẩu database đã URL
-encode vào connection string trước khi dán. Nếu đã lưu Codespace secret
-`SVN_DATABASE_URL`, script sẽ dùng secret đó. Không dùng API/service-role key
-thay cho Postgres connection string.
+Thay `YOUR_PROJECT_REF` bằng Project ID của đúng database cần cập nhật. Nếu
+Codespace đã link đúng project, có thể bỏ bước link.
 
-Script dùng `psql -X -v ON_ERROR_STOP=1` chỉ với file mới; migration chạy trong
-một transaction, tạo `inv_incoming_batches`, thêm khóa chống trùng và RPC.
-Kết quả cuối có `posting_rpc = post_manual_inventory(uuid,jsonb)`.
-Script không ghi dữ liệu tồn đầu kỳ, không backfill và không nối luồng scan.
+Chỉ khi dry-run liệt kê đúng migration mới
+`20261026100000_post_manual_inventory.sql`, chạy:
+
+```bash
+npx supabase db push
+npx supabase migration list
+```
+
+Nếu dry-run liệt kê thêm migration cũ hoặc báo lệch history khác, cần đối chiếu
+những migration đó với schema thực tế trước; không đánh dấu hàng loạt tất cả
+file đã applied. Migration mới tạo batch, khóa chống trùng và RPC nhập tay;
+không ghi tồn đầu kỳ hoặc nối luồng scan.
 
 ---
 
