@@ -722,10 +722,10 @@ xuất phải được cập nhật cùng transaction với các dòng xuất li
 
 ### 11.3 Áp dụng backend nhập tay trên Codespace
 
-Ưu tiên Supabase CLI theo workflow login/link hiện tại. Hai migration
-`20261022090000` và `20261026090000` đã được chạy trực tiếp trên Supabase;
-đánh dấu chúng đã applied để CLI không chạy lại SQL. `migration repair` chỉ sửa
-history, không thực thi lại nội dung migration.
+Ưu tiên Supabase CLI theo workflow login/link hiện tại. Khi SQL đã chạy trực
+tiếp ngoài CLI, cần đối chiếu schema trước khi đánh dấu applied. Có dòng trong
+history chưa chứng minh bảng/hàm đã tồn tại. `migration repair` chỉ sửa history,
+không thực thi lại nội dung migration.
 
 ```bash
 cd /workspaces/QRpallet
@@ -733,7 +733,6 @@ git switch dev && git pull --ff-only
 npx supabase login
 npx supabase link --project-ref YOUR_PROJECT_REF
 npx supabase migration list
-npx supabase migration repair 20261022090000 20261026090000 --status applied
 npx supabase db push --dry-run
 ```
 
@@ -752,6 +751,30 @@ Nếu dry-run liệt kê thêm migration cũ hoặc báo lệch history khác, c
 những migration đó với schema thực tế trước; không đánh dấu hàng loạt tất cả
 file đã applied. Migration mới tạo batch, khóa chống trùng và RPC nhập tay;
 không ghi tồn đầu kỳ hoặc nối luồng scan.
+
+#### History có 20261026090000 nhưng bảng inv_incoming chưa tồn tại
+
+Lỗi `relation "public.inv_incoming" does not exist` khi chạy
+`20261026100000` có nghĩa prerequisite tạo bảng chưa có trên database đích.
+Nếu history đang đánh dấu `20261026090000` applied, bỏ đúng dấu đó rồi áp dụng
+SQL thật theo thứ tự; không đánh dấu migration tạo bảng applied thêm lần nữa.
+
+```bash
+npx supabase migration repair 20261026090000 --status reverted
+npx supabase db push --dry-run
+```
+
+Với trạng thái history này, dry-run phải liệt kê hai migration:
+`20261026090000_inventory_incoming.sql` và
+`20261026100000_post_manual_inventory.sql`. Khi đúng hai file, chạy:
+
+```bash
+npx supabase db push
+npx supabase migration list
+```
+
+`repair --status reverted` ở đây chỉ bỏ dấu trong history, không xóa bảng hay
+dữ liệu nghiệp vụ. Không revert migration khác hoặc dùng reset để xử lý lỗi này.
 
 ---
 
