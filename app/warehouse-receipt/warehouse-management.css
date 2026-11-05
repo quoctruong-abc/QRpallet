@@ -106,3 +106,16 @@
 .warehouse-opening-preview .scan-table-wrap { max-height: 42vh; }
 .warehouse-opening-errors ul { max-height: 28vh; overflow: auto; padding-left: 22px; }
 .warehouse-opening-dialog .modal-actions { flex-wrap: wrap; }
+
+.warehouse-outgoing { display: grid; gap: 16px; }
+.warehouse-outgoing-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.warehouse-outgoing-toolbar > input { width: min(100%, 380px); }
+.warehouse-outgoing-checkbox { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+.warehouse-outgoing-checkbox input { width: 18px; height: 18px; min-height: 0; flex-shrink: 0; }
+.warehouse-outgoing-name { min-width: 220px; max-width: 320px; white-space: normal; }
+.warehouse-outgoing-name small { display: block; margin-top: 5px; color: var(--muted); }
+.warehouse-table .warehouse-outgoing-shortage td { background: #fffaeb; }
+.warehouse-outgoing-preview { max-height: 48vh; margin: 16px 0; }
+.warehouse-outgoing-preview select { min-width: 250px; }
+.warehouse-outgoing-error { white-space: pre-wrap; }
+.warehouse-outgoing .warehouse-opening-dialog h3 { margin: 20px 0 10px; }

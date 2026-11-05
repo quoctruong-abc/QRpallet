@@ -825,6 +825,76 @@ select
 
 Nếu cả hai hàm đã tồn tại, chạy `notify pgrst, 'reload schema';` rồi thử lại.
 
+
+### 11.5 Xuất kho, lịch giao ERP và On order
+
+Migration: `20261105120000_delivery_reservations.sql`. Các migration tồn kho
+trước đó cần được áp dụng đầy đủ. Trong Codespace đã link đúng Supabase:
+
+```bash
+git switch dev && git pull --ff-only
+npx supabase login
+npx supabase migration list
+npx supabase db push --dry-run
+# Kiểm tra danh sách migration chờ chạy rồi áp dụng:
+npx supabase db push
+npm run test:delivery
+```
+
+Tab **Xuất kho** có Nạp lịch giao ERP, Bổ sung On order, tìm PO/Sales ID/item/
+khách hàng và tùy chọn hiện cả Done/Đã hủy. Mọi API và RPC yêu cầu user đang
+hoạt động có quyền `receipt.view`. Chưa nối tự động luồng confirm scan.
+
+- Nhận file `.xlsx` tối đa 4 MB và 500 dòng hàng, sheet
+  `Srithai_Sales_Delivery_Schedule`. Đọc B: ngày giao, I: Purchorder,
+  N: Sales ID, Q: No, S: Item, AC: Sales Qty; D/X/AF bổ sung tên khách,
+  tên sản phẩm, đơn vị. Chỉ bung giá trị trong đúng vùng merge.
+- Kiểm tra file chỉ xem trước; **Xác nhận danh sách và giữ hàng** mới lưu yêu cầu
+  và phân bổ tồn. Khóa nghiệp vụ là PO + Sales ID + itemcode + ngày giao;
+  UUID nội bộ ổn định khi dời ngày. Dòng trùng trong một file bị chặn.
+- Nếu cùng PO/Sales ID/item đã có ở ngày khác, phải chọn rõ tạo lịch mới
+  hoặc dời một lịch đang có. Không tự cộng Sales Qty giữa các lần upload.
+  Dòng giống nhau được bỏ qua; không thấy dòng trong file mới không có nghĩa
+  tự hủy. Yêu cầu đã hủy được bỏ qua khi upload lại cùng khóa.
+- PCS/Cái chuẩn hóa thành EA; Bộ/SET cần user xác nhận cùng itemcode quản lý
+  theo 1 Bộ = 1 đơn vị tồn. Không tự quy đổi/tách BOM. Một item không được
+  đăng ký giao với hai nhóm đơn vị khác nhau.
+- `inv_incoming.reserved_qty` là On order;
+  `available_qty = received_qty - issued_qty - reserved_qty`.
+  Tồn vật lý `balance_qty` vẫn bằng nhập trừ đã xuất. Chỉ giữ tối đa số
+  có thể cấp; phần thiếu hiển thị vàng. Lịch mới được phân bổ theo ngày giao,
+  lô theo `coalesce(production_date, received_date), received_date, id`.
+  On order đã đăng ký trước được giữ nguyên; không tự chuyển hàng giữa yêu cầu.
+- Sau khi nhập thêm hàng, nhấn **Bổ sung On order** để cấp phần thiếu theo
+  ngày giao rồi thứ tự tạo. Thao tác này chưa xuất kho.
+- Nút **Xuất** nhận số thực xuất và ngày thực xuất riêng với ngày giao ERP.
+  Chỉ được xuất tối đa số đang giữ. Ghi nhận giảm On order, tăng đã xuất,
+  lưu người xuất và chi tiết lô cùng một transaction.
+- Chờ xuất → Xuất một phần → Done theo số đã xuất so với số yêu cầu.
+  Sửa số yêu cầu không được thấp hơn đã xuất; giảm yêu cầu/hủy phần chờ
+  trả lại On order nhưng không sửa lịch sử xuất. Không hủy yêu cầu đã Done.
+- Mỗi thao tác ghi dùng UUID chống trùng, được lưu trên trình duyệt theo
+  tài khoản trước khi gửi. Khi lỗi kết nối/chưa rõ kết quả, UI khóa thao tác
+  mới và cho thử lại nguyên UUID/payload, kể cả sau khi tải trang.
+  Hai user thao tác qua cùng khóa giao dịch; kiểm tra version chặn dữ liệu cũ.
+
+| Bảng | Vai trò |
+| --- | --- |
+| `inv_delivery_requests` | Yêu cầu, ngày dự kiến, số yêu cầu/đã xuất/đã giữ, version và trạng thái hủy |
+| `inv_delivery_reservations` | Số đang giữ của từng yêu cầu tại từng `inv_incoming.id` |
+| `inv_delivery_issues` | Mỗi lần xuất thực tế, người xuất và ngày xuất |
+| `inv_delivery_issue_lines` | Số lượng mỗi lần xuất lấy từ từng lô nhập |
+| `inv_delivery_commands` | Audit và kết quả chống ghi trùng theo UUID thao tác |
+
+Browser không được ghi trực tiếp các bảng/counters. RPC `manage_delivery`
+sở hữu việc ghi, khóa lô tồn và cập nhật các bảng trong cùng transaction.
+`list_delivery` trả 100 dòng mỗi trang. Chi tiết hiển thị tối đa 500 lần xuất
+và 1.000 lô đang giữ của yêu cầu; ledger đầy đủ vẫn nằm trong database.
+
+`npm run test:delivery` chạy PostgreSQL cục bộ qua PGlite, không kết nối database
+Supabase thật. Bao gồm FIFO, thiếu hàng tổng, xuất một phần, retry, sửa/hủy/
+dời ngày, quyền truy cập và đối chiếu counter với ledger.
+
 ---
 
 ## 12. Dashboard sản xuất

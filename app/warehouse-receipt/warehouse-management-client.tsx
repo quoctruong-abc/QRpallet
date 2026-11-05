@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { WarehouseHistoryClient } from "./warehouse-history-client";
+import { WarehouseOutgoingClient } from "./warehouse-outgoing-client";
 import { WarehouseIncomingClient } from "./warehouse-incoming-client";
 import "./warehouse-management.css";
 
@@ -76,7 +77,7 @@ export function WarehouseManagementClient({ canLoadOpeningInventory, profileId }
           role="tabpanel"
           tabIndex={0}
         >
-          {tab.id === "incoming" ? <WarehouseIncomingClient canLoadOpeningInventory={canLoadOpeningInventory} profileId={profileId} /> : tab.id === "receipt" ? (
+          {tab.id === "outgoing" ? <WarehouseOutgoingClient profileId={profileId} /> : tab.id === "incoming" ? <WarehouseIncomingClient canLoadOpeningInventory={canLoadOpeningInventory} profileId={profileId} /> : tab.id === "receipt" ? (
             receiptOpened ? <WarehouseHistoryClient /> : null
           ) : (
             <section className="warehouse-management-placeholder">
