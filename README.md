@@ -796,7 +796,7 @@ dữ liệu từ dòng 6. Các lỗi chỉ rõ dòng Excel; cả file phải h�
 | Cột | Quy tắc |
 | --- | --- |
 | A, F | Bỏ qua |
-| B | Ngày nhập bắt buộc, ô ngày Excel hoặc text tháng/ngày/năm |
+| B | Ngày nhập, ô ngày Excel hoặc text tháng/ngày/năm |
 | C | Ngày sản xuất nếu có, ô ngày Excel hoặc text ngày/tháng/năm; chấp nhận dấu nháy đầu |
 | D, E, G | Mã, tên sản phẩm và WO; mã có số 0 đầu nên lưu dưới dạng Text |
 | H | Số nhận của lô tồn đầu, không có ngày sản xuất |
@@ -805,6 +805,8 @@ dữ liệu từ dòng 6. Các lỗi chỉ rõ dòng Excel; cả file phải h�
 Dòng chỉ có H kiểm tra K = H − J; nếu không xuất, K trống được hiểu bằng H.
 Dòng chỉ có I kiểm tra K = I − J. Khi có cả H và I, kiểm tra K = H + I − J,
 tách thành hai lô và phân số xuất vào lô H trước. Database tự tính tồn từng lô.
+Nếu dòng chỉ có tồn đầu và cột B trống, chọn **Ngày nhập cho tồn đầu thiếu ngày**
+trong hộp thoại. Ngày này không thay thế ngày có sẵn hoặc ngày của dòng nhập I.
 Tên sản phẩm và khách hàng ưu tiên từng trường từ `item_pallet_config`, nếu
 thiếu thì tìm trong `pallet_data` và bổ sung cấu hình. Nếu vẫn thiếu tên,
 dùng cột E; nếu vẫn thiếu khách hàng, để trống. Bản xem trước hiển thị kết quả tra cứu.

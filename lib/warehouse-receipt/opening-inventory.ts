@@ -78,7 +78,7 @@ function readText(value: Cell, column: string, max: number, allowNumber = false)
   return text;
 }
 
-export function parseOpeningInventory(sheet: Cell[][]) {
+export function parseOpeningInventory(sheet: Cell[][], openingDate?: string) {
   if (sheet.length > MAX_DETAIL_ROWS + FIRST_DATA_ROW - 1) {
     throw new Error(`Sheet Detail hỗ trợ tối đa ${MAX_DETAIL_ROWS.toLocaleString("vi-VN")} dòng dữ liệu mỗi file.`);
   }
@@ -114,8 +114,13 @@ export function parseOpeningInventory(sheet: Cell[][]) {
       if (!rawCode) throw new Error("Cột D: thiếu mã sản phẩm.");
       let productName = "";
       try { productName = readText(e, "E", 500); } catch { /* The file name is only a fallback. */ }
+      const needsOpeningDate = blank(b) && opening > 0 && received === 0;
+      if (needsOpeningDate && !isInventoryDate(openingDate)) {
+        throw new Error("Cột B trống. Hãy chọn Ngày nhập cho tồn đầu thiếu ngày.");
+      }
       const common = {
-        excel_row: i + 1, received_date: readDate(b, "mdy", "B"),
+        excel_row: i + 1,
+        received_date: needsOpeningDate && openingDate ? openingDate : readDate(b, "mdy", "B"),
         itemcode: normalizeWarehouseItemcode(rawCode), product_name: productName, wo: readText(g, "G", 200, true) || null,
       };
       const productionDate = received > 0 && !blank(c) ? readDate(c, "dmy", "C") : null;

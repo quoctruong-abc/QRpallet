@@ -101,6 +101,8 @@
 .warehouse-opening-dialog { width: min(1080px, calc(100% - 24px)); margin: auto; }
 .warehouse-opening-dialog::backdrop { background: rgba(16, 24, 40, .55); }
 .warehouse-opening-dialog .alert, .warehouse-opening-preview { margin-top: 16px; }
+.warehouse-opening-date { margin-top: 12px; }
+.warehouse-opening-date input { max-width: 230px; }
 .warehouse-opening-preview .scan-table-wrap { max-height: 42vh; }
 .warehouse-opening-errors ul { max-height: 28vh; overflow: auto; padding-left: 22px; }
 .warehouse-opening-dialog .modal-actions { flex-wrap: wrap; }

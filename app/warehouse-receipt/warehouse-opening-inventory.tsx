@@ -12,6 +12,7 @@ export function WarehouseOpeningInventory() {
   const dialog = useRef<HTMLDialogElement>(null);
   const busyRef = useRef(false);
   const [file, setFile] = useState<File | null>(null);
+  const [openingDate, setOpeningDate] = useState("");
   const [preview, setPreview] = useState<OpeningPreview | null>(null);
   const [error, setError] = useState<ImportError | null>(null);
   const [result, setResult] = useState<OpeningResult | null>(null);
@@ -28,6 +29,7 @@ export function WarehouseOpeningInventory() {
       const body = new FormData();
       body.set("file", file);
       body.set("action", action);
+      if (openingDate) body.set("openingDate", openingDate);
       if (action === "import" && preview) body.set("fingerprint", preview.fingerprint);
       const response = await fetch("/api/warehouse-receipt/opening-inventory", { method: "POST", body });
       const data = await response.json().catch(() => null);
@@ -69,6 +71,16 @@ export function WarehouseOpeningInventory() {
           setError(null);
           setResult(null);
         }} type="file" /></label>
+        <label className="warehouse-opening-date">
+          Ngày nhập cho tồn đầu thiếu ngày
+          <input disabled={Boolean(busy)} onChange={(event) => {
+            setOpeningDate(event.target.value);
+            setPreview(null);
+            setError(null);
+            setResult(null);
+          }} type="date" value={openingDate} />
+          <span className="muted small">Chỉ áp dụng cho dòng tồn đầu (cột H) không có ngày nhập ở cột B.</span>
+        </label>
         {error ? <div className="alert alert-error warehouse-opening-errors" role="alert">
           {error.error}
           {error.errors?.length ? <ul>{error.errors.map((issue) => <li key={issue.row}>Dòng {issue.row}: {issue.message}</li>)}</ul> : null}

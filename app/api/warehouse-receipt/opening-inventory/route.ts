@@ -1,6 +1,7 @@
 import { readSheet } from "read-excel-file/node";
 import { authorizeProfile } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isInventoryDate } from "@/lib/warehouse-receipt/incoming";
 import { MAX_OPENING_FILE_BYTES, openingFingerprint, parseOpeningInventory } from "@/lib/warehouse-receipt/opening-inventory";
 
 export const runtime = "nodejs";
@@ -21,21 +22,25 @@ export async function POST(request: Request) {
   const form = await request.formData().catch(() => null);
   const file = form?.get("file");
   const action = form?.get("action");
+  const openingDate = form?.get("openingDate");
   if (!(file instanceof File) || !file.name.toLowerCase().endsWith(".xlsx") || !file.size) {
     return fail("Vui lòng chọn file Excel .xlsx có sheet Detail.", 400);
   }
   if (file.size > MAX_OPENING_FILE_BYTES) return fail("File Excel vượt quá 4 MB.", 413);
   if (action !== "preview" && action !== "import") return fail("Thao tác không hợp lệ.", 400);
+  if (openingDate && !isInventoryDate(openingDate)) return fail("Ngày nhập cho tồn đầu không hợp lệ.", 400);
 
   let sheet;
   try {
-    sheet = await readSheet(Buffer.from(await file.arrayBuffer()), "Detail");
+    // Excel can store a text formula with no cached value. Leave trimming
+    // to our cell parsers so the reader treats those cells as empty.
+    sheet = await readSheet(Buffer.from(await file.arrayBuffer()), "Detail", { trim: false });
   } catch {
     return fail("Không đọc được sheet Detail. Kiểm tra tên sheet và định dạng .xlsx.", 400);
   }
   let parsed;
   try {
-    parsed = parseOpeningInventory(sheet);
+    parsed = parseOpeningInventory(sheet, isInventoryDate(openingDate) ? openingDate : undefined);
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Dữ liệu Excel không hợp lệ.", 400);
   }
