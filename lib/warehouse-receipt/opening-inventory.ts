@@ -24,7 +24,7 @@ export type OpeningLine = {
 
 export type OpeningPreview = {
   fingerprint: string;
-  rows: OpeningLine[];
+  rows: (OpeningLine & { customer: string })[];
   summary: { lines: number; opening: number; received: number; issued: number; balance: number };
 };
 
@@ -90,6 +90,8 @@ export function parseOpeningInventory(sheet: Cell[][]) {
     throw new Error("Dòng 5 của sheet Detail phải có tiêu đề ở các cột B–E và G–K.");
   }
   const rows: OpeningLine[] = [];
+  const legacyRows: OpeningLine[] = [];
+  let canMatchLegacy = true;
   const errors: { row: number; message: string }[] = [];
   let errorCount = 0;
   const summary = { lines: 0, opening: 0, received: 0, issued: 0, balance: 0 };
@@ -101,33 +103,39 @@ export function parseOpeningInventory(sheet: Cell[][]) {
       const received = readQuantity(inCell, "I");
       const issued = readQuantity(j, "J");
       const balance = readQuantity(k, "K");
-      if (received > 0 || issued > 0) {
-        if (blank(k) || issued > received || balance !== received - issued) {
-          throw new Error(`Cột K phải bằng I − J (${received} − ${issued} = ${received - issued}) và J không được lớn hơn I.`);
-        }
-      } else if (balance !== 0 && balance !== opening) {
-        throw new Error("Cột K không khớp: dòng chỉ có tồn đầu phải để trống, bằng 0 hoặc bằng cột H.");
+      const total = opening + received;
+      const expected = total - issued;
+      const formula = opening > 0 ? (received > 0 ? "H + I − J" : "H − J") : "I − J";
+      if (issued > total || (blank(k) ? received > 0 || issued > 0 : balance !== expected)) {
+        throw new Error(`Cột K phải bằng ${formula} (${expected}) và J không được lớn hơn tổng số nhận.`);
       }
-      if (opening === 0 && received === 0) continue;
+      if (total === 0) continue;
       const rawCode = readText(d, "D", 200, true);
       if (!rawCode) throw new Error("Cột D: thiếu mã sản phẩm.");
-      const productName = readText(e, "E", 500);
-      if (!productName) throw new Error("Cột E: thiếu tên sản phẩm.");
+      let productName = "";
+      try { productName = readText(e, "E", 500); } catch { /* The file name is only a fallback. */ }
       const common = {
         excel_row: i + 1, received_date: readDate(b, "mdy", "B"),
         itemcode: normalizeWarehouseItemcode(rawCode), product_name: productName, wo: readText(g, "G", 200, true) || null,
       };
       const productionDate = received > 0 && !blank(c) ? readDate(c, "dmy", "C") : null;
+      const issuedOpening = Math.min(opening, issued);
       if (opening > 0) {
-        rows.push({ ...common, kind: "opening", production_date: null, received_qty: opening, issued_qty: 0, balance_qty: opening });
+        const line: OpeningLine = { ...common, kind: "opening", production_date: null, received_qty: opening, issued_qty: issuedOpening, balance_qty: opening - issuedOpening };
+        rows.push(line);
+        legacyRows.push({ ...line, issued_qty: 0, balance_qty: opening });
       }
       if (received > 0) {
-        rows.push({ ...common, kind: "receipt", production_date: productionDate, received_qty: received, issued_qty: issued, balance_qty: balance });
+        const issuedReceipt = issued - issuedOpening;
+        const line: OpeningLine = { ...common, kind: "receipt", production_date: productionDate, received_qty: received, issued_qty: issuedReceipt, balance_qty: received - issuedReceipt };
+        rows.push(line);
+        legacyRows.push({ ...line, issued_qty: issued, balance_qty: received - issued });
       }
+      if (issued > received) canMatchLegacy = false;
       summary.opening += opening;
       summary.received += received;
       summary.issued += issued;
-      summary.balance += opening + (received - issued);
+      summary.balance += expected;
     } catch (error) {
       errorCount++;
       if (errors.length < 100) errors.push({ row: i + 1, message: error instanceof Error ? error.message : "Dữ liệu không hợp lệ." });
@@ -135,7 +143,7 @@ export function parseOpeningInventory(sheet: Cell[][]) {
   }
   summary.lines = rows.length;
   if (!rows.length && !errorCount) throw new Error("Không có dòng tồn đầu hoặc số lượng nhập hợp lệ trong sheet Detail.");
-  return { rows, summary, errors, errorCount };
+  return { rows, summary, errors, errorCount, legacyRows: canMatchLegacy ? legacyRows : null };
 }
 
 export function openingFingerprint(rows: OpeningLine[]) {

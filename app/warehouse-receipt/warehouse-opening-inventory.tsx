@@ -82,16 +82,16 @@ export function WarehouseOpeningInventory() {
         {preview ? <section aria-label="Xem trước tồn kho" className="warehouse-opening-preview">
           <p role="status"><strong>{quantity(preview.summary.lines)} dòng sẽ ghi</strong> · Tồn đầu: {quantity(preview.summary.opening)} · Nhập: {quantity(preview.summary.received)} · Đã xuất: {quantity(preview.summary.issued)} · Tồn còn: {quantity(preview.summary.balance)}</p>
           <div className="scan-table-wrap"><table className="warehouse-table">
-            <thead><tr><th>Dòng Excel</th><th>Nguồn</th><th>Ngày nhập</th><th>Ngày sản xuất</th><th>Mã sản phẩm</th><th>Tên sản phẩm</th><th>WO</th><th>Số nhận</th><th>Số xuất</th><th>Tồn</th></tr></thead>
+            <thead><tr><th>Dòng Excel</th><th>Nguồn</th><th>Ngày nhập</th><th>Ngày sản xuất</th><th>Mã sản phẩm</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>WO</th><th>Số nhận</th><th>Số xuất</th><th>Tồn</th></tr></thead>
             <tbody>{preview.rows.map((row) => <tr key={`${row.excel_row}-${row.kind}`}>
               <td>{row.excel_row}</td><td>{row.kind === "opening" ? "Tồn đầu (H)" : "Nhập (I–K)"}</td>
               <td>{date(row.received_date)}</td><td>{date(row.production_date)}</td>
-              <td>{row.itemcode}</td><td>{row.product_name}</td><td>{row.wo || "—"}</td>
+              <td>{row.itemcode}</td><td>{row.product_name}</td><td>{row.customer || "—"}</td><td>{row.wo || "—"}</td>
               <td>{quantity(row.received_qty)}</td><td>{quantity(row.issued_qty)}</td><td>{quantity(row.balance_qty)}</td>
             </tr>)}</tbody>
           </table></div>
           {preview.summary.lines > preview.rows.length ? <p className="muted small">Hiển thị {preview.rows.length} dòng đầu. Tổng số ở trên tính cho cả file.</p> : null}
-          <p className="muted small">Khách hàng được tra theo mã sản phẩm khi ghi tồn kho. Mã không tìm thấy khách hàng vẫn được nạp.</p>
+          <p className="muted small">Tên sản phẩm và khách hàng ưu tiên dữ liệu hệ thống. Nếu không tìm thấy tên, dùng cột E; nếu không tìm thấy khách hàng, để trống.</p>
         </section> : null}
         <div className="modal-actions">
           <button className="button button-secondary" disabled={Boolean(busy)} onClick={() => dialog.current?.close()} type="button">Đóng</button>

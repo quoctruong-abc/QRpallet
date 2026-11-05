@@ -745,8 +745,9 @@ Thay `YOUR_PROJECT_REF` bằng Project ID của đúng database cần cập nh�
 Codespace đã link đúng project, có thể bỏ bước link.
 
 Kiểm tra dry-run: thứ tự là `20261026100000_post_manual_inventory.sql`,
-`20261105090000_optional_inventory_note.sql` và
-`20261105100000_opening_inventory_import.sql` cho các bước chưa chạy. Khi
+`20261105090000_optional_inventory_note.sql`,
+`20261105100000_opening_inventory_import.sql` và
+`20261105110000_opening_inventory_outflow_and_catalog.sql` cho các bước chưa chạy. Khi
 danh sách khớp với schema hiện tại, chạy:
 
 ```bash
@@ -774,8 +775,9 @@ npx supabase db push --dry-run
 Với trạng thái history này, dry-run phải liệt kê lần lượt
 `20261026090000_inventory_incoming.sql`,
 `20261026100000_post_manual_inventory.sql`,
-`20261105090000_optional_inventory_note.sql` và
-`20261105100000_opening_inventory_import.sql`. Khi danh sách khớp, chạy:
+`20261105090000_optional_inventory_note.sql`,
+`20261105100000_opening_inventory_import.sql` và
+`20261105110000_opening_inventory_outflow_and_catalog.sql`. Khi danh sách khớp, chạy:
 
 ```bash
 npx supabase db push
@@ -797,13 +799,15 @@ dữ liệu từ dòng 6. Các lỗi chỉ rõ dòng Excel; cả file phải h�
 | B | Ngày nhập bắt buộc, ô ngày Excel hoặc text tháng/ngày/năm |
 | C | Ngày sản xuất nếu có, ô ngày Excel hoặc text ngày/tháng/năm; chấp nhận dấu nháy đầu |
 | D, E, G | Mã, tên sản phẩm và WO; mã có số 0 đầu nên lưu dưới dạng Text |
-| H | Số dương tạo dòng tồn đầu riêng, số xuất bằng 0, không có ngày sản xuất |
-| I, J, K | Số nhận, số xuất và số tồn của dòng nhập. Khi I có số lượng dương, K bắt buộc bằng I − J |
+| H | Số nhận của lô tồn đầu, không có ngày sản xuất |
+| I, J, K | Số nhận bổ sung, tổng số đã xuất và số tồn của dòng Excel |
 
-Dòng chỉ có H chấp nhận K trống, 0 hoặc bằng H. Khi có cả H và I, K đối chiếu
-riêng với I − J và tổng tồn nạp là H + K. Database tự tính số tồn.
-Khách hàng lấy từ `item_pallet_config`, nếu thiếu thì tìm trong `pallet_data`
-và bổ sung cấu hình; vẫn nạp nếu không tìm thấy. Tên trên dòng tồn lấy từ cột E.
+Dòng chỉ có H kiểm tra K = H − J; nếu không xuất, K trống được hiểu bằng H.
+Dòng chỉ có I kiểm tra K = I − J. Khi có cả H và I, kiểm tra K = H + I − J,
+tách thành hai lô và phân số xuất vào lô H trước. Database tự tính tồn từng lô.
+Tên sản phẩm và khách hàng ưu tiên từng trường từ `item_pallet_config`, nếu
+thiếu thì tìm trong `pallet_data` và bổ sung cấu hình. Nếu vẫn thiếu tên,
+dùng cột E; nếu vẫn thiếu khách hàng, để trống. Bản xem trước hiển thị kết quả tra cứu.
 Giao dịch ghi toàn bộ file cùng lúc và lưu số dòng Excel để truy vết. Nội dung
 tồn kho giống hệt đã nạp sẽ không được ghi lại, kể cả đổi tên file hoặc thứ tự dòng.
 
