@@ -34,7 +34,6 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const [preview, setPreview] = useState<DeliveryPreviewLine[] | null>(null);
   const [uploadError, setUploadError] = useState("");
   const [choices, setChoices] = useState<Record<number, string>>({});
-  const [confirmSets, setConfirmSets] = useState(false);
   const [selected, setSelected] = useState<DeliveryRequest | null>(null);
   const [mode, setMode] = useState<"ship" | "edit" | "cancel" | "history">("ship");
   const [quantity, setQuantity] = useState("");
@@ -158,7 +157,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       const response = await fetch("/api/warehouse-receipt/outgoing", { method: "POST", body: form });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error([data.error, ...(data.errors || []).map((e: { row: number; message: string }) => `Dòng ${e.row}: ${e.message}`)].join("\n"));
-      const parsed = data.rows as DeliveryPreviewLine[];
+      const parsed = (data.rows as DeliveryPreviewLine[]).slice().sort((a, b) => a.excel_row - b.excel_row);
       setPreview(parsed);
       setChoices(Object.fromEntries(parsed.map((row) => [row.excel_row, row.existing?.id || (row.candidates.length ? "" : "new")])));
     } catch (error) { setUploadError(error instanceof Error ? error.message : "Không kiểm tra được file."); }
@@ -175,7 +174,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         mode: choice === "new" ? "new" : "update", target_id: target?.id ?? null, expected_version: target?.version ?? null,
       };
     });
-    void execute("import", { rows: inputs, file_name: file.name, confirm_sets: confirmSets });
+    void execute("import", { rows: inputs, file_name: file.name });
   }
 
   async function openAction(row: DeliveryRequest, action: typeof mode) {
@@ -201,7 +200,6 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
     } catch (error) { if (version === detailVersion.current) setDetailError(error instanceof Error ? error.message : "Không tải được chi tiết."); }
   }
 
-  const hasSet = preview?.some((row) => row.unit === "SET") ?? false;
   const invalidChoice = preview?.some((row) => {
     const chosen = row.existing?.id === choices[row.excel_row] ? row.existing : row.candidates.find((c) => c.id === choices[row.excel_row]);
     return !choices[row.excel_row] || (chosen && !chosen.cancelled && row.ordered_qty < chosen.shipped_qty);
@@ -250,7 +248,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
 
     <dialog aria-labelledby={`${id}-import-title`} className="modal-card warehouse-opening-dialog" onCancel={(event) => { if (busy) event.preventDefault(); }} ref={importDialog}>
       <div className="modal-heading"><h2 id={`${id}-import-title`}>Nạp lịch giao ERP</h2><button aria-label="Đóng nạp ERP" className="modal-close" disabled={busy} onClick={() => importDialog.current?.close()} type="button">×</button></div>
-      <label>File lịch giao<input accept=".xlsx" disabled={locked} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setPreview(null); setUploadError(""); setConfirmSets(false); }} type="file" /></label>
+      <label>File lịch giao<input accept=".xlsx" disabled={locked} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setPreview(null); setUploadError(""); }} type="file" /></label>
       <p className="muted small">Đọc đúng vùng merge. Khóa chống trùng: PO + Sales ID + Item + ngày giao. Kiểm tra file chưa đăng ký On order.</p>
       {uploadError ? <p role="alert" className="alert alert-error warehouse-outgoing-error">{uploadError}</p> : null}
       {notice ? <p role="status" className="alert">{notice}</p> : null}
@@ -258,9 +256,9 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       {preview ? <>
         <p><strong>{preview.length} dòng.</strong> Có {preview.filter((row) => row.shortage_qty > 0).length} dòng thiếu hàng dự kiến. Số giữ thực tế được kiểm tra lại lúc xác nhận.</p>
         <div className="scan-table-wrap warehouse-outgoing-preview"><table className="warehouse-table">
-          <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item / ĐVT</th><th>Yêu cầu</th><th>Đã xuất</th><th>Dự kiến giữ</th><th>Thiếu</th><th>Cách nạp</th></tr></thead>
+          <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Yêu cầu</th><th>Đã xuất</th><th>Dự kiến giữ</th><th>Thiếu</th><th>Cách nạp</th></tr></thead>
           <tbody>{preview.map((row) => <tr key={row.excel_row} className={row.shortage_qty > 0 ? "warehouse-outgoing-shortage" : undefined}>
-            <td>{row.excel_row}</td><td>{date(row.delivery_date)}</td><td>{row.purorder}<br />{row.sales_id}</td><td>{row.itemcode}<br />{row.unit_label}</td>
+            <td>{row.excel_row}</td><td>{date(row.delivery_date)}</td><td>{row.purorder}<br />{row.sales_id}</td><td>{row.itemcode}</td>
             <td>{num(row.ordered_qty)}</td><td>{num(row.existing?.shipped_qty ?? 0)}</td><td>{num(row.suggested_reserved)}</td><td>{num(row.shortage_qty)}</td>
             <td>{row.existing ? (row.existing.cancelled ? "Đã hủy — bỏ qua" : row.existing.ordered_qty === row.ordered_qty ? "Không đổi — bỏ qua" : "Cập nhật số lượng") : row.candidates.length ?
               <select aria-label={`Cách nạp dòng ${row.excel_row}`} disabled={locked} onChange={(event) => setChoices((old) => ({ ...old, [row.excel_row]: event.target.value }))} value={choices[row.excel_row] || ""}>
@@ -270,12 +268,11 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
           </tr>)}</tbody>
         </table></div>
         <p className="muted small">Khi chọn dời lịch, lượng giữ dự kiến trong bảng có thể thay đổi. Lượng yêu cầu mới phải bằng hoặc lớn hơn số đã xuất của lịch cũ.</p>
-        {hasSet ? <label className="warehouse-outgoing-checkbox"><input checked={confirmSets} disabled={locked} onChange={(event) => setConfirmSets(event.target.checked)} type="checkbox" />Tôi xác nhận các item có đơn vị Bộ đang được quản lý tồn theo cùng itemcode, 1 Bộ = 1 đơn vị tồn (không tách thành phần).</label> : null}
       </> : null}
       <div className="modal-actions">
         <button className="button button-secondary" disabled={busy} onClick={() => importDialog.current?.close()} type="button">Đóng</button>
         <button className="button button-secondary" disabled={!file || locked} onClick={() => { void upload(); }} type="button">Kiểm tra file</button>
-        <button className="button button-primary" disabled={locked || !preview || invalidChoice || (hasSet && !confirmSets)} onClick={importRows} type="button">Xác nhận danh sách và giữ hàng</button>
+        <button className="button button-primary" disabled={locked || !preview || invalidChoice} onClick={importRows} type="button">Xác nhận danh sách và giữ hàng</button>
       </div>
     </dialog>
 

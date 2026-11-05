@@ -829,7 +829,8 @@ Nếu cả hai hàm đã tồn tại, chạy `notify pgrst, 'reload schema';` r�
 ### 11.5 Xuất kho, lịch giao ERP và On order
 
 Migration: `20261105120000_delivery_reservations.sql`. Các migration tồn kho
-trước đó cần được áp dụng đầy đủ. Trong Codespace đã link đúng Supabase:
+trước đó cần được áp dụng đầy đủ. Bổ sung migration
+`20261105130000_delivery_import_units_optional.sql` để bỏ các điều kiện về đơn vị. Trong Codespace đã link đúng Supabase:
 
 ```bash
 git switch dev && git pull --ff-only
@@ -856,9 +857,10 @@ hoạt động có quyền `receipt.view`. Chưa nối tự động luồng conf
   hoặc dời một lịch đang có. Không tự cộng Sales Qty giữa các lần upload.
   Dòng giống nhau được bỏ qua; không thấy dòng trong file mới không có nghĩa
   tự hủy. Yêu cầu đã hủy được bỏ qua khi upload lại cùng khóa.
-- PCS/Cái chuẩn hóa thành EA; Bộ/SET cần user xác nhận cùng itemcode quản lý
-  theo 1 Bộ = 1 đơn vị tồn. Không tự quy đổi/tách BOM. Một item không được
-  đăng ký giao với hai nhóm đơn vị khác nhau.
+- Đơn vị chỉ lưu làm thông tin nguồn, không chặn nạp và không yêu cầu xác nhận
+  Bộ. Giữ nguyên Sales Qty; logic quy đổi Bộ/BOM sẽ bổ sung sau.
+- Bảng kiểm tra file hiển thị theo số dòng Excel từ trên xuống dưới.
+  Thứ tự ưu tiên giữ hàng vẫn theo ngày giao và FIFO, không thay đổi theo cách hiển thị.
 - `inv_incoming.reserved_qty` là On order;
   `available_qty = received_qty - issued_qty - reserved_qty`.
   Tồn vật lý `balance_qty` vẫn bằng nhập trừ đã xuất. Chỉ giữ tối đa số

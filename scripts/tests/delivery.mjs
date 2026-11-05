@@ -56,7 +56,7 @@ const migrate = async file => db.exec(await readFile(new URL("../../supabase/mig
 for(const file of [
   "20261026090000_inventory_incoming.sql","20261026100000_post_manual_inventory.sql","20261105090000_optional_inventory_note.sql",
   "20261105100000_opening_inventory_import.sql","20261105110000_opening_inventory_outflow_and_catalog.sql",
-  "20261105120000_delivery_reservations.sql",
+  "20261105120000_delivery_reservations.sql","20261105130000_delivery_import_units_optional.sql",
 ]) await migrate(file);
 const seed=async(item,qty,production)=>db.query("insert into public.inv_incoming(itemcode,product_name,customer,received_qty,received_date,production_date,note) values($1,'Product','Customer',$2,'2026-10-01',$3,'test') returning id",[item,qty,production]);
 await seed("A",60,"2026-09-01"); await seed("A",40,"2026-09-02"); await seed("B",12,"2026-09-01"); await seed("S",10,"2026-09-01");
@@ -117,9 +117,14 @@ assert.deepEqual(await rpc("edit",editPayload,editID),{changed:1,skipped:0});
 assert.deepEqual(await rpc("edit",editPayload,editID),{changed:1,skipped:0});
 assert.equal((await request(pb.id)).delivery_date,"2026-10-29");
 assert.equal((await get("PB")).length,2,"Rescheduling preserves the ID");
-await assert.rejects(rpc("import",{rows:[line("SET","S",3,"2026-10-27",{unit:"SET",unit_label:"Bộ"})]}),/DELIVERY_CONFIRM_SET_UNIT/);
-await rpc("import",{rows:[line("SET","S",3,"2026-10-27",{unit:"SET",unit_label:"Bộ"})],confirm_sets:true});
-await assert.rejects(rpc("import",{rows:[line("BADUNIT","S",2)]}),/DELIVERY_UNIT_CONFLICT/);
+
+await rpc("import",{rows:[line("SET","S",3,"2026-10-27",{unit:"SET",unit_label:"Bộ"})]});
+await rpc("import",{rows:[line("OTHERUNIT","S",2,"2026-10-28",{unit:"EA",unit_label:"Any label"})]});
+assert.equal((await totals("S")).reserved,5,"Unit labels do not block or convert source quantities");
+const noUnit=structuredClone(source[1]);noUnit[31]=null;
+assert.equal(parseDeliverySheet([header,noUnit]).rows[0].ordered_qty,70);
+const otherUnit=structuredClone(source[1]);otherUnit[31]="Thùng";
+assert.equal(parseDeliverySheet([header,otherUnit]).errors.length,0);
 await assert.rejects(rpc("import",{rows:[line("ROLLBACK","A",4),line("LATEBAD","B",-1,"2026-12-01")]}),/DELIVERY_INVALID_ROW/);
 assert.equal((await get("ROLLBACK")).length,0,"The whole file rolls back on a late error");
 await Promise.all([rpc("import",{rows:[line("C1","C",70)]}),rpc("import",{rows:[line("C2","C",70)]})]);

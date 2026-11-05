@@ -73,11 +73,11 @@ export function parseDeliverySheet(sheet: unknown[][]) {
     try {
       const qty = typeof cells[28] === "number" ? cells[28] : /^\d+$/.test(String(cells[28] ?? "").trim()) ? Number(cells[28]) : NaN;
       if (!Number.isInteger(qty) || qty <= 0 || qty > 2147483647) throw new Error("Sales Qty phải là số nguyên dương.");
-      const label = text(cells[31], "Đơn vị").normalize("NFC");
+      const label = typeof cells[31] === "string" ? cells[31].trim().normalize("NFC") : "";
       const normalizedUnit = label.toLowerCase();
-      const unit = ["pcs", "cái", "cai", "ea", "pc"].includes(normalizedUnit) ? "EA"
-        : ["bộ", "bo", "set"].includes(normalizedUnit) ? "SET" : null;
-      if (!unit) throw new Error(`Đơn vị ${label} chưa được hỗ trợ; cần quy đổi trước khi nạp.`);
+      // Preserve labels for future unit handling. Quantities are not converted
+      // or rejected on unit labels in the current import flow.
+      const unit = ["bộ", "bo", "set"].includes(normalizedUnit) ? "SET" : "EA";
       const row: DeliveryInput = {
         excel_row: i + 1, delivery_date: parseDeliveryDate(cells[1]),
         purorder: text(cells[8], "Purchorder"), sales_id: text(cells[13], "Sales ID"),
