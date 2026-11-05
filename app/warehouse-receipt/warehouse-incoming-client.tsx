@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 import { isInventoryDate, MAX_MANUAL_INCOMING_ROWS, parseManualIncomingRequest, todayInVietnam, type ManualIncomingLine } from "@/lib/warehouse-receipt/incoming";
+import { incomingStorageKey, INCOMING_DRAFT_TTL, parseStoredIncoming, type StoredIncoming } from "@/lib/warehouse-receipt/incoming-storage";
 
 type ItemDetails = { itemcode: string; product_name: string; customer: string };
 type LookupResult = { ok: true; item: ItemDetails } | { ok: false; error: string; aborted?: boolean };
@@ -17,8 +18,7 @@ type IncomingDraft = ItemDetails & {
   lookupError: string;
   lookupVersion: number;
 };
-type PendingSubmission = { request_id: string; drafts: IncomingDraft[] };
-const PENDING_STORAGE_KEY = "warehouse-incoming-pending-v1";
+const LEGACY_PENDING_KEY = "warehouse-incoming-pending-v1";
 
 function postingRows(drafts: IncomingDraft[]): ManualIncomingLine[] {
   return drafts.map((row) => ({
@@ -27,8 +27,9 @@ function postingRows(drafts: IncomingDraft[]): ManualIncomingLine[] {
   }));
 }
 
-export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOpeningInventory: boolean }) {
+export function WarehouseIncomingClient({ canLoadOpeningInventory, profileId }: { canLoadOpeningInventory: boolean; profileId: string }) {
   const id = useId();
+  const storageKey = incomingStorageKey(profileId);
   const itemInputRef = useRef<HTMLInputElement>(null);
   const quantityInputRef = useRef<HTMLInputElement>(null);
   const requests = useRef(new Map<string, { promise: Promise<LookupResult>; controller: AbortController }>());
@@ -50,7 +51,12 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
   const [drafts, setDrafts] = useState<IncomingDraft[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState(false);
-  const [submission, setSubmission] = useState<PendingSubmission | null>(null);
+  const [savedList, setSavedList] = useState<StoredIncoming | null>(null);
+  const storedRaw = useRef<string | null>(null);
+  const legacyRaw = useRef<string | null>(null);
+  const [storageReady, setStorageReady] = useState(false);
+  const [storageConflict, setStorageConflict] = useState(false);
+  const submission = savedList?.status === "pending" ? savedList : null;
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [saveNotice, setSaveNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -68,38 +74,7 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    // Restore an uncertain submission after hydration so reload + retry uses
-    // exactly the original request UUID and payload, including receipt dates.
-    void Promise.resolve().then(() => {
-      if (cancelled) return;
-      let raw: string | null;
-      try { raw = window.sessionStorage.getItem(PENDING_STORAGE_KEY); } catch { return; }
-      if (!raw) return;
-      try {
-        const pending = JSON.parse(raw) as PendingSubmission;
-        const parsed = parseManualIncomingRequest({ request_id: pending.request_id, rows: postingRows(pending.drafts) });
-        const restored = parsed.rows.map((row, index): IncomingDraft => ({
-          ...row, production_date: row.production_date || "", wo: row.wo || "",
-          product_name: pending.drafts[index].product_name, customer: pending.drafts[index].customer,
-          id: index + 1, lookupStatus: "ready", lookupError: "", lookupVersion: nextLookupVersion.current++,
-        }));
-        if (restored.some((row) => !row.product_name?.trim() || !row.customer?.trim())) throw new Error("Invalid pending metadata");
-        nextDraftId.current = restored.length + 1;
-        setDrafts(restored);
-        setSubmission({ request_id: parsed.request_id, drafts: restored });
-        setReviewing(true);
-        setSaveNotice({ type: "error", text: "Có lần nhập kho chưa xác nhận được kết quả. Nhấn Thử lại ghi nhận để kiểm tra; hệ thống sẽ không ghi trùng." });
-      } catch {
-        setRecoveryBlocked(true);
-        setSaveNotice({ type: "error", text: "Không thể khôi phục danh sách đang chờ xác nhận. Vui lòng kiểm tra lần nhập trước trước khi tạo danh sách mới." });
-      }
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  function lookupCode(code: string): Promise<LookupResult> {
+  const lookupCode = useCallback((code: string): Promise<LookupResult> => {
     const cached = itemCache.current.get(code);
     if (cached) return Promise.resolve({ ok: true, item: cached });
     const pending = requests.current.get(code);
@@ -133,16 +108,16 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
       if (requests.current.get(code)?.controller === controller) requests.current.delete(code);
     });
     return promise;
-  }
+  }, []);
 
-  function changeItemcode(value: string) {
+  const changeItemcode = useCallback((value: string) => {
     formVersion.current += 1;
     setItemcode(value);
     setItem(null);
     setLookupError("");
     setLookingUp(false);
     setFormError("");
-  }
+  }, []);
 
   async function lookupForm(value = itemcode) {
     let code: string;
@@ -163,7 +138,7 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
     setLookupError(result.ok ? "" : result.error);
   }
 
-  async function resolveDraft(draft: IncomingDraft) {
+  const resolveDraft = useCallback(async (draft: IncomingDraft) => {
     const result = await lookupCode(draft.itemcode);
     if (!mounted.current || (!result.ok && result.aborted)) return;
     setDrafts((current) => current.map((row) => {
@@ -172,9 +147,9 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
         ? { ...row, ...result.item, lookupStatus: "ready", lookupError: "" }
         : { ...row, product_name: "", customer: "", lookupStatus: "error", lookupError: result.error };
     }));
-  }
+  }, [lookupCode]);
 
-  function clearForm(resetDate = true) {
+  const clearForm = useCallback((resetDate = true) => {
     changeItemcode("");
     setProductionDate("");
     if (resetDate) setReceivedDate(todayInVietnam());
@@ -183,11 +158,138 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
     setNote("");
     setEditingId(null);
     itemInputRef.current?.focus();
+  }, [changeItemcode]);
+
+  const writeSavedList = useCallback((next: StoredIncoming | null) => {
+    try {
+      if (window.localStorage.getItem(storageKey) !== storedRaw.current) {
+        setStorageConflict(true);
+        return false;
+      }
+      const raw = next ? JSON.stringify(next) : null;
+      if (raw === null) window.localStorage.removeItem(storageKey);
+      else window.localStorage.setItem(storageKey, raw);
+      storedRaw.current = raw;
+      setSavedList(next);
+      return true;
+    } catch {
+      setSaveNotice({ type: "error", text: "Không thể cập nhật bản nháp trên trình duyệt. Kiểm tra quyền lưu dữ liệu rồi thử lại." });
+      return false;
+    }
+  }, [storageKey]);
+
+  const expireSavedList = useCallback((pending: boolean) => {
+    if (!writeSavedList(null)) return;
+    setDrafts([]);
+    setReviewing(false);
+    clearForm();
+    setSaveNotice({
+      type: "error",
+      text: pending
+        ? "Danh sách đã hết hạn 7 ngày. Lần nhập trước chưa rõ kết quả; hãy kiểm tra tồn kho trước khi nhập lại."
+        : "Danh sách chờ nhập đã hết hạn 7 ngày và được xóa.",
+    });
+  }, [clearForm, writeSavedList]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      try {
+        storedRaw.current = window.localStorage.getItem(storageKey);
+        let stored = storedRaw.current ? parseStoredIncoming(storedRaw.current) : null;
+        // Older versions kept in-flight requests in the current tab only.
+        // Keep those requests in that tab rather than copying them to localStorage.
+        let legacyDrafts: IncomingDraft[] | undefined;
+        if (!stored) {
+          try { legacyRaw.current = window.sessionStorage.getItem(LEGACY_PENDING_KEY); } catch { /* Local storage is enough for new drafts. */ }
+          if (legacyRaw.current) {
+            const legacy = JSON.parse(legacyRaw.current);
+            legacyDrafts = legacy.drafts;
+            stored = {
+              ...parseManualIncomingRequest({ request_id: legacy.request_id, rows: postingRows(legacy.drafts) }),
+              status: "pending", expiresAt: Date.now() + INCOMING_DRAFT_TTL,
+            };
+          }
+        }
+        if (!stored) return;
+        if (stored.expiresAt <= Date.now()) {
+          expireSavedList(stored.status === "pending");
+          return;
+        }
+        const pending = stored.status === "pending";
+        const restored = stored.rows.map((row, index): IncomingDraft => ({
+          ...row, production_date: row.production_date || "", wo: row.wo || "",
+          product_name: legacyDrafts?.[index]?.product_name ?? "", customer: legacyDrafts?.[index]?.customer ?? "",
+          id: nextDraftId.current++, lookupStatus: pending ? "ready" : "loading",
+          lookupError: "", lookupVersion: nextLookupVersion.current++,
+        }));
+        setSavedList(stored);
+        setDrafts(restored);
+        setReviewing(pending);
+        if (pending) {
+          setSaveNotice({ type: "error", text: "Có lần nhập kho chưa xác nhận được kết quả. Nhấn Thử lại ghi nhận để kiểm tra; hệ thống sẽ không ghi trùng." });
+        } else {
+          for (const row of restored) void resolveDraft(row);
+        }
+      } catch {
+        setRecoveryBlocked(true);
+        setSaveNotice({ type: "error", text: "Không thể đọc danh sách đã lưu. Vui lòng kiểm tra lần nhập trước và quyền lưu dữ liệu của trình duyệt." });
+      } finally {
+        setStorageReady(true);
+      }
+    });
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea === window.localStorage && (event.key === storageKey || event.key === null)) {
+        setStorageConflict(window.localStorage.getItem(storageKey) !== storedRaw.current);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [expireSavedList, resolveDraft, storageKey]);
+
+  useEffect(() => {
+    if (!savedList || saving || storageConflict || legacyRaw.current) return;
+    const expire = () => {
+      if (Date.now() >= savedList.expiresAt && !savingRef.current) expireSavedList(savedList.status === "pending");
+    };
+    const timer = window.setTimeout(expire, Math.max(0, savedList.expiresAt - Date.now()));
+    window.addEventListener("focus", expire);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", expire);
+    };
+  }, [expireSavedList, savedList, saving, storageConflict]);
+
+  function persistDrafts(next: IncomingDraft[]) {
+    if (!storageReady || storageConflict || recoveryBlocked || savingRef.current || submission) return false;
+    if (savedList && savedList.expiresAt <= Date.now()) {
+      expireSavedList(false);
+      return false;
+    }
+    const record: StoredIncoming | null = next.length ? {
+      request_id: window.crypto.randomUUID(), rows: postingRows(next),
+      status: "draft", expiresAt: Date.now() + INCOMING_DRAFT_TTL,
+    } : null;
+    if (!writeSavedList(record)) return false;
+    setSaveNotice(null);
+    // Keep lookup results that may have arrived while this edit was queued.
+    setDrafts((current) => {
+      const byId = new Map(current.map((row) => [row.id, row]));
+      return next.map((row) => {
+        const latest = byId.get(row.id);
+        return latest?.lookupVersion === row.lookupVersion ? latest : row;
+      });
+    });
+    return true;
   }
 
   function saveDraft(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (savingRef.current || submission || recoveryBlocked) return;
+    if (!storageReady || storageConflict || savingRef.current || submission || recoveryBlocked) return;
     setFormError("");
     if (editingId === null && drafts.length >= MAX_MANUAL_INCOMING_ROWS) {
       setFormError(`Mỗi lần ghi nhận tối đa ${MAX_MANUAL_INCOMING_ROWS} dòng.`);
@@ -209,12 +311,9 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
       setFormError("Số lượng phải là số nguyên từ 1 đến 2.147.483.647.");
       return;
     }
-    if (productionDate) {
-      const date = new Date(`${productionDate}T00:00:00Z`);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(productionDate) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== productionDate) {
-        setFormError("Ngày sản xuất không hợp lệ.");
-        return;
-      }
+    if (productionDate && !isInventoryDate(productionDate)) {
+      setFormError("Ngày sản xuất không hợp lệ.");
+      return;
     }
     const cached = itemCache.current.get(code);
     const draft: IncomingDraft = {
@@ -231,7 +330,7 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
       lookupError: "",
       lookupVersion: nextLookupVersion.current++,
     };
-    setDrafts((current) => editingId === null ? [...current, draft] : current.map((row) => row.id === editingId ? draft : row));
+    if (!persistDrafts(editingId === null ? [...drafts, draft] : drafts.map((row) => row.id === editingId ? draft : row))) return;
     setReviewing(false);
     clearForm(false);
     if (!cached) void resolveDraft(draft);
@@ -252,7 +351,7 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
   }
 
   function removeDraft(draftId: number) {
-    setDrafts((current) => current.filter((row) => row.id !== draftId));
+    if (!persistDrafts(drafts.filter((row) => row.id !== draftId))) return;
     if (editingId === draftId) clearForm();
     setReviewing(false);
   }
@@ -265,20 +364,40 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
 
   const loadingCount = drafts.filter((row) => row.lookupStatus === "loading").length;
   const errorCount = drafts.filter((row) => row.lookupStatus === "error").length;
-  const canProceed = drafts.length > 0 && drafts.length <= MAX_MANUAL_INCOMING_ROWS && loadingCount === 0 && errorCount === 0 && editingId === null && !recoveryBlocked;
+  const canProceed = storageReady && !storageConflict && !recoveryBlocked && drafts.length > 0
+    && loadingCount === 0 && errorCount === 0 && editingId === null;
+
+  function clearLegacySubmission() {
+    if (!legacyRaw.current) return;
+    try {
+      window.sessionStorage.removeItem(LEGACY_PENDING_KEY);
+      legacyRaw.current = null;
+    } catch { /* The old request can still be safely retried with its original UUID. */ }
+  }
 
   async function postInventory() {
-    if (savingRef.current || !canProceed) return;
-    let pending = submission;
-    if (!pending) {
-      pending = { request_id: window.crypto.randomUUID(), drafts: drafts.map((row) => ({ ...row })) };
+    if (savingRef.current || !canProceed || !savedList) return;
+    if (!legacyRaw.current && savedList.expiresAt <= Date.now()) {
+      expireSavedList(Boolean(submission));
+      return;
+    }
+    const pending: StoredIncoming = submission ?? {
+      ...savedList, status: "pending", expiresAt: Date.now() + INCOMING_DRAFT_TTL,
+    };
+    if (legacyRaw.current) {
+      // Retry an older tab's request only while that exact session record still exists.
       try {
-        window.sessionStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(pending));
+        if (window.sessionStorage.getItem(LEGACY_PENDING_KEY) !== legacyRaw.current
+            || window.localStorage.getItem(storageKey) !== storedRaw.current) {
+          setStorageConflict(true);
+          return;
+        }
       } catch {
-        setSaveNotice({ type: "error", text: "Không thể lưu trạng thái lần nhập trên trình duyệt. Vui lòng cho phép lưu dữ liệu rồi thử lại." });
+        setSaveNotice({ type: "error", text: "Không thể đọc lần nhập đã lưu để thử lại." });
         return;
       }
-      setSubmission(pending);
+    } else if (!writeSavedList(pending)) {
+      return;
     }
     savingRef.current = true;
     setSaving(true);
@@ -286,24 +405,28 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
     try {
       const response = await fetch("/api/warehouse-receipt/incoming", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ request_id: pending.request_id, rows: postingRows(pending.drafts) }),
+        body: JSON.stringify({ profile_id: profileId, request_id: pending.request_id, rows: pending.rows }),
       });
       const result = await response.json();
       if (!response.ok || !result.success) {
-        if ([400, 404].includes(response.status)) {
-          try { window.sessionStorage.removeItem(PENDING_STORAGE_KEY); } catch { /* A rejected request has not posted stock. */ }
-          setSubmission(null);
-          if (response.status === 404 && typeof result.itemcode === "string") {
-            itemCache.current.delete(result.itemcode);
-            setDrafts((current) => current.map((row) => row.itemcode === result.itemcode ? { ...row, product_name: "", customer: "", lookupStatus: "error", lookupError: result.error } : row));
-            setReviewing(false);
-          }
+        if ([400, 404].includes(response.status) && writeSavedList({ ...pending, status: "draft" })) {
+          clearLegacySubmission();
+          const missing = response.status === 404 && typeof result.itemcode === "string" ? result.itemcode : null;
+          if (missing) itemCache.current.delete(missing);
+          const editable = drafts.map((row): IncomingDraft => {
+            if (row.itemcode === missing) return { ...row, product_name: "", customer: "", lookupStatus: "error", lookupError: result.error };
+            if (row.product_name && row.customer) return row;
+            return { ...row, lookupStatus: "loading", lookupVersion: nextLookupVersion.current++ };
+          });
+          setDrafts(editable);
+          setReviewing(false);
+          for (const row of editable) if (row.lookupStatus === "loading") void resolveDraft(row);
         }
         throw new Error(result.error || "Chưa xác nhận được kết quả nhập kho. Vui lòng thử lại.");
       }
-      if (result.batch?.batch_id !== pending.request_id || result.batch.row_count !== pending.drafts.length) throw new Error("Chưa xác nhận được kết quả nhập kho. Vui lòng thử lại.");
-      try { window.sessionStorage.removeItem(PENDING_STORAGE_KEY); } catch { /* Retrying this UUID will return the saved batch. */ }
-      setSubmission(null);
+      if (result.batch?.batch_id !== pending.request_id || result.batch.row_count !== pending.rows.length) throw new Error("Chưa xác nhận được kết quả nhập kho. Vui lòng thử lại.");
+      clearLegacySubmission();
+      if (!writeSavedList(null)) return;
       setDrafts([]);
       setReviewing(false);
       clearForm();
@@ -319,6 +442,7 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
   return (
     <div className="warehouse-incoming">
       {saveNotice ? <p aria-live="polite" className={`alert alert-${saveNotice.type}`}>{saveNotice.text}</p> : null}
+      {storageConflict ? <p role="alert" className="alert alert-error">Danh sách đã thay đổi ở tab khác. Tải lại trang để tiếp tục với danh sách mới nhất.</p> : null}
       {!reviewing ? <form className="warehouse-incoming-form" onSubmit={saveDraft}>
         <div className="warehouse-incoming-heading">
           <div><h2>{editingId === null ? "Nhập kho thủ công" : `Sửa dòng ${editingId}`}</h2>
@@ -369,14 +493,14 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
         {formError ? <p className="alert alert-error" role="alert">{formError}</p> : null}
         <div className="warehouse-incoming-actions">
           <button className="button button-secondary" onClick={() => clearForm()} type="button">{editingId === null ? "Xóa nội dung" : "Hủy sửa"}</button>
-          <button className="button button-primary" type="submit">{editingId === null ? "Thêm vào danh sách" : "Lưu thay đổi"}</button>
+          <button className="button button-primary" disabled={!storageReady || storageConflict || recoveryBlocked} type="submit">{editingId === null ? "Thêm vào danh sách" : "Lưu thay đổi"}</button>
         </div>
       </form> : null}
 
       <section className="scan-table-card">
         <div className="warehouse-incoming-draft-heading">
           <h2>{reviewing ? "Kiểm tra danh sách nhập kho" : "Danh sách chờ nhập"} <span className="muted">({drafts.length})</span></h2>
-          <p className="muted small">Danh sách chưa ghi nhận vào tồn kho. Tải lại trang sẽ xóa các dòng đang chờ.</p>
+          <p className="muted small">Danh sách được lưu trên trình duyệt này trong 7 ngày kể từ lần lưu gần nhất và tự xóa khi xác nhận nhập kho thành công.</p>
           {!reviewing ? <p aria-live="polite" className={errorCount ? "warehouse-incoming-row-message" : "muted small"}>
             {errorCount ? `${errorCount} dòng chưa tra cứu thành công. Sửa mã hoặc thử lại trước khi tiếp tục.` : loadingCount ? `Đang cập nhật thông tin cho ${loadingCount} dòng...` : editingId !== null ? "Lưu thay đổi hoặc hủy sửa trước khi tiếp tục." : drafts.length ? "Tất cả dòng đã có thông tin sản phẩm." : ""}
           </p> : null}
@@ -390,8 +514,8 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOp
             <td>{draft.production_date ? draft.production_date.split("-").reverse().join("/") : "—"}</td><td>{draft.wo || "—"}</td>
             <td>{draft.quantity.toLocaleString("vi-VN")}</td><td className="warehouse-incoming-draft-note">{draft.note || "—"}</td>
             {!reviewing ? <td><div className="warehouse-incoming-row-actions">
-              <button aria-label={`Sửa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" onClick={() => editDraft(draft)} type="button">Sửa</button>
-              <button aria-label={`Xóa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" onClick={() => removeDraft(draft.id)} type="button">Xóa</button>
+              <button aria-label={`Sửa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" disabled={storageConflict} onClick={() => editDraft(draft)} type="button">Sửa</button>
+              <button aria-label={`Xóa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" disabled={storageConflict} onClick={() => removeDraft(draft.id)} type="button">Xóa</button>
               {draft.lookupStatus === "error" ? <button aria-label={`Tra cứu lại dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" onClick={() => retryDraft(draft)} type="button">Thử lại</button> : null}
             </div></td> : null}
           </tr>)}</tbody>

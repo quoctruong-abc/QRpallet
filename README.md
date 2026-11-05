@@ -672,11 +672,14 @@ WH-DDMMYY-002
   dữ liệu, sau đó gọi RPC `post_manual_inventory(uuid,jsonb)` bằng JWT user.
   RPC tự lấy người nhập từ `auth.uid()` và tên/khách hàng từ database, không
   tin các trường này từ frontend. Một dòng lỗi sẽ rollback cả lần nhập.
-- Mỗi lần ghi nhận có UUID cố định để chống trùng khi retry. Nếu lỗi mạng hoặc
-  chưa rõ kết quả, danh sách được khóa sửa và giữ trong `sessionStorage` để
-  tải lại trang vẫn thử lại đúng yêu cầu cũ. Ghi nhận thành công mới xóa danh sách.
-- Đổi tab giữ danh sách. Các dòng nháp chưa bấm ghi nhận sẽ mất khi tải lại trang;
-  danh sách đã gửi nhưng chưa xác nhận được kết quả sẽ được khôi phục.
+- Các dòng đã thêm vào danh sách chờ được lưu trong `localStorage` theo tài
+  khoản trên trình duyệt đang dùng. Thời hạn 7 ngày tính từ lần thêm, sửa,
+  xóa dòng gần nhất hoặc khi gửi xác nhận. Mở lại danh sách sẽ tra cứu lại
+  thông tin sản phẩm của các dòng chưa gửi. Bản nháp hết hạn sẽ được xóa
+  khi trang Nhập kho còn mở hoặc khi quay lại.
+- Nếu chưa rõ kết quả ghi nhận, danh sách được khóa sửa và giữ nguyên UUID
+  cùng dữ liệu đã gửi để thử lại. Xác nhận thành công hoặc xóa hết dòng chờ
+  sẽ xóa bản lưu. Nếu danh sách thay đổi ở tab khác, cần tải lại trang.
 
 Chạy script `supabase/migrations/20261022090000_warehouse_item_catalog.sql`
 trước khi dùng tra cứu. Script thêm `product_name`, `customer`, backfill một lần

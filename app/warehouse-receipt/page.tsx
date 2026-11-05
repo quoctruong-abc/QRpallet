@@ -7,7 +7,7 @@ export default async function WarehouseReceiptPage() {
 
   return (
     <PageShell profile={profile} title="Quản lý kho">
-      <WarehouseManagementClient canLoadOpeningInventory={profile.role === "superadmin"} />
+      <WarehouseManagementClient canLoadOpeningInventory={profile.role === "superadmin"} key={profile.id} profileId={profile.id} />
     </PageShell>
   );
 }

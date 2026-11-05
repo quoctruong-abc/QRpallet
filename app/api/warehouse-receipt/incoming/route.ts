@@ -6,9 +6,13 @@ export async function POST(request: Request) {
   const authorization = await authorizePermission("receipt.view");
   if (!authorization.ok) return Response.json({ success: false, error: authorization.error }, { status: authorization.status });
 
+  const payload = await request.json().catch(() => null);
+  if (payload?.profile_id !== undefined && payload.profile_id !== authorization.profile.id) {
+    return Response.json({ success: false, error: "Tài khoản đã thay đổi. Tải lại trang trước khi xác nhận nhập kho." }, { status: 403 });
+  }
   let body: ReturnType<typeof parseManualIncomingRequest>;
   try {
-    body = parseManualIncomingRequest(await request.json().catch(() => null));
+    body = parseManualIncomingRequest(payload);
   } catch (error) {
     return Response.json({ success: false, error: error instanceof Error ? error.message : "Dữ liệu nhập kho không hợp lệ." }, { status: 400 });
   }
