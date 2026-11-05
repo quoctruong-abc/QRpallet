@@ -644,11 +644,13 @@ WH-DDMMYY-002
 
 ### 11.1 Nhập kho thủ công
 
-- Bắt buộc: Ngày nhập kho, Mã sản phẩm (`itemcode`), Số lượng (số nguyên dương), Ghi chú.
+- Bắt buộc: Ngày nhập kho, Mã sản phẩm (`itemcode`), Số lượng (số nguyên dương).
 - Ngày nhập kho mặc định ngày lịch hiện tại tại `Asia/Ho_Chi_Minh` (không trừ
   cutoff 06:00); có thể sửa theo từng dòng và được giữ trong lúc nhập liên tiếp.
-- Không bắt buộc: Ngày sản xuất, WO.
-- Tên sản phẩm và Khách hàng chỉ đọc, tự điền khi rời ô itemcode hoặc nhấn Enter.
+- Không bắt buộc: Ngày sản xuất, WO, Ghi chú.
+- Nhập mã sản phẩm → Tab sang Số lượng → Enter để thêm vào danh sách và
+  quay về ô Mã sản phẩm. Tên sản phẩm và Khách hàng tự điền khi rời ô mã.
+- Nút Nạp nhập kho lần đầu chỉ hiển thị cho superadmin; chưa nạp dữ liệu.
 - Mã viết tắt có một dấu `*` được chèn số 0 cho đủ 13 ký tự, ví dụ
   `11011*209` → `1101100000209`. Mã không có `*` được giữ nguyên sau khi trim.
   Frontend và API cùng dùng quy tắc này; mã viết tắt không hợp lệ bị từ chối.
@@ -705,7 +707,7 @@ confirm scan chưa nối.
 | Người nhập | `entered_by`, `entered_by_name` | FK profiles + tên chụp tại thời điểm tạo |
 | Thời điểm ghi nhận | `created_at` | timestamptz, mặc định now() |
 | Liên kết phiếu nhập | `receipt_id` | FK `wh_receipt.receipt_id`, có thể NULL cho nhập tay |
-| Ghi chú | `note` | bắt buộc, giữ theo form nhập tay |
+| Ghi chú | `note` | không bắt buộc, lưu chuỗi rỗng khi bỏ trống |
 | Cập nhật cuối | `updated_at` | timestamptz, tự cập nhật khi sửa |
 | Lần ghi nhận thủ công | `manual_batch_id`, `manual_line_no` | FK batch + số dòng, duy nhất trong mỗi lần ghi nhận |
 
@@ -739,8 +741,10 @@ npx supabase db push --dry-run
 Thay `YOUR_PROJECT_REF` bằng Project ID của đúng database cần cập nhật. Nếu
 Codespace đã link đúng project, có thể bỏ bước link.
 
-Chỉ khi dry-run liệt kê đúng migration mới
-`20261026100000_post_manual_inventory.sql`, chạy:
+Kiểm tra dry-run: nếu đã cài chức năng nhập tay, chỉ còn
+`20261105090000_optional_inventory_note.sql`. Nếu đã có bảng tồn nhưng chưa
+cài chức năng nhập tay, cần có cả `20261026100000_post_manual_inventory.sql`
+trước migration ghi chú. Khi danh sách khớp với schema hiện tại, chạy:
 
 ```bash
 npx supabase db push
@@ -749,8 +753,8 @@ npx supabase migration list
 
 Nếu dry-run liệt kê thêm migration cũ hoặc báo lệch history khác, cần đối chiếu
 những migration đó với schema thực tế trước; không đánh dấu hàng loạt tất cả
-file đã applied. Migration mới tạo batch, khóa chống trùng và RPC nhập tay;
-không ghi tồn đầu kỳ hoặc nối luồng scan.
+file đã applied. Migration nhập tay tạo batch, khóa chống trùng và RPC; migration
+ghi chú cho phép để trống ghi chú ở cả RPC và bảng tồn kho.
 
 #### History có 20261026090000 nhưng bảng inv_incoming chưa tồn tại
 
@@ -764,9 +768,10 @@ npx supabase migration repair 20261026090000 --status reverted
 npx supabase db push --dry-run
 ```
 
-Với trạng thái history này, dry-run phải liệt kê hai migration:
-`20261026090000_inventory_incoming.sql` và
-`20261026100000_post_manual_inventory.sql`. Khi đúng hai file, chạy:
+Với trạng thái history này, dry-run phải liệt kê lần lượt
+`20261026090000_inventory_incoming.sql`,
+`20261026100000_post_manual_inventory.sql` và
+`20261105090000_optional_inventory_note.sql`. Khi danh sách khớp, chạy:
 
 ```bash
 npx supabase db push

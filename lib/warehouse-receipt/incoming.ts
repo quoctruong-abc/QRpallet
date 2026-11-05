@@ -44,7 +44,7 @@ export function parseManualIncomingRequest(value: unknown): { request_id: string
     if (typeof row.quantity !== "number" || !Number.isInteger(row.quantity) || row.quantity <= 0 || row.quantity > 2147483647) {
       throw new Error(`Dòng ${index + 1}: số lượng phải là số nguyên dương hợp lệ.`);
     }
-    if (typeof row.note !== "string" || !row.note.trim() || row.note.trim().length > 2000) throw new Error(`Dòng ${index + 1}: vui lòng nhập ghi chú, tối đa 2000 ký tự.`);
+    if (row.note !== null && row.note !== undefined && (typeof row.note !== "string" || row.note.trim().length > 2000)) throw new Error(`Dòng ${index + 1}: ghi chú không hợp lệ (tối đa 2000 ký tự).`);
     if (row.wo !== null && row.wo !== undefined && (typeof row.wo !== "string" || row.wo.trim().length > 200)) throw new Error(`Dòng ${index + 1}: WO không hợp lệ.`);
     return {
       itemcode,
@@ -52,7 +52,7 @@ export function parseManualIncomingRequest(value: unknown): { request_id: string
       production_date: typeof row.production_date === "string" && row.production_date ? row.production_date : null,
       wo: typeof row.wo === "string" ? row.wo.trim() || null : null,
       quantity: row.quantity,
-      note: row.note.trim(),
+      note: typeof row.note === "string" ? row.note.trim() : "",
     };
   });
   return { request_id: body.request_id.toLowerCase(), rows };

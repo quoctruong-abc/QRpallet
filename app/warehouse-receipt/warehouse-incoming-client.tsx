@@ -27,9 +27,10 @@ function postingRows(drafts: IncomingDraft[]): ManualIncomingLine[] {
   }));
 }
 
-export function WarehouseIncomingClient() {
+export function WarehouseIncomingClient({ canLoadOpeningInventory }: { canLoadOpeningInventory: boolean }) {
   const id = useId();
   const itemInputRef = useRef<HTMLInputElement>(null);
+  const quantityInputRef = useRef<HTMLInputElement>(null);
   const requests = useRef(new Map<string, { promise: Promise<LookupResult>; controller: AbortController }>());
   const itemCache = useRef(new Map<string, ItemDetails>());
   const formVersion = useRef(0);
@@ -54,6 +55,7 @@ export function WarehouseIncomingClient() {
   const savingRef = useRef(false);
   const [saveNotice, setSaveNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [recoveryBlocked, setRecoveryBlocked] = useState(false);
+  const [showOpeningInventory, setShowOpeningInventory] = useState(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -202,10 +204,6 @@ export function WarehouseIncomingClient() {
       setFormError(error instanceof Error ? error.message : "Mã sản phẩm không hợp lệ.");
       return;
     }
-    if (!note.trim()) {
-      setFormError("Vui lòng nhập ghi chú.");
-      return;
-    }
     const amount = Number(quantity);
     if (!Number.isInteger(amount) || amount <= 0 || amount > 2147483647) {
       setFormError("Số lượng phải là số nguyên từ 1 đến 2.147.483.647.");
@@ -324,9 +322,14 @@ export function WarehouseIncomingClient() {
       {!reviewing ? <form className="warehouse-incoming-form" onSubmit={saveDraft}>
         <div className="warehouse-incoming-heading">
           <div><h2>{editingId === null ? "Nhập kho thủ công" : `Sửa dòng ${editingId}`}</h2>
-          <p className="muted small">Các trường có dấu * là bắt buộc. Có thể thêm dòng trong lúc thông tin sản phẩm đang được tra cứu.</p></div>
-          <label><span>Ngày nhập kho <span className="warehouse-required">*</span></span><input aria-label="Ngày nhập kho" onChange={(event) => setReceivedDate(event.target.value)} required type="date" value={receivedDate} /></label>
+          <p className="muted small">Nhập mã sản phẩm, nhấn Tab để nhập số lượng, rồi nhấn Enter để thêm dòng.</p></div>
+          {canLoadOpeningInventory ? (
+            <button aria-controls={`${id}-opening-inventory`} aria-expanded={showOpeningInventory} className="button button-secondary" onClick={() => setShowOpeningInventory((open) => !open)} type="button">
+              Nạp nhập kho lần đầu
+            </button>
+          ) : null}
         </div>
+        {canLoadOpeningInventory ? <p className="muted small" hidden={!showOpeningInventory} id={`${id}-opening-inventory`}>Chức năng nạp tồn đầu kỳ chưa được triển khai.</p> : null}
         <div className="warehouse-incoming-fields">
           <label>
             <span>Mã sản phẩm <span className="warehouse-required">*</span></span>
@@ -337,22 +340,30 @@ export function WarehouseIncomingClient() {
               maxLength={200}
               onBlur={() => { void lookupForm(); }}
               onChange={(event) => changeItemcode(event.target.value)}
-              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void lookupForm(); } }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  quantityInputRef.current?.focus();
+                }
+              }}
               placeholder="Nhập itemcode, ví dụ 11011*209"
               ref={itemInputRef}
               required
               value={itemcode}
             />
           </label>
-          <label>Tên sản phẩm<input placeholder="Tự động điền theo mã sản phẩm" readOnly value={item?.product_name ?? ""} /></label>
-          <label>Khách hàng<input placeholder="Tự động điền theo mã sản phẩm" readOnly value={item?.customer ?? ""} /></label>
+          <label><span>Số lượng <span className="warehouse-required">*</span></span><input inputMode="numeric" max={2147483647} min={1} onChange={(event) => setQuantity(event.target.value)} placeholder="Nhập số lượng" ref={quantityInputRef} required step={1} type="number" value={quantity} /></label>
+          <label><span>Ngày nhập kho <span className="warehouse-required">*</span></span><input onChange={(event) => setReceivedDate(event.target.value)} required type="date" value={receivedDate} /></label>
+          <dl className="warehouse-incoming-item-details">
+            <div><dt>Tên sản phẩm</dt><dd>{item?.product_name || "—"}</dd></div>
+            <div><dt>Khách hàng</dt><dd>{item?.customer || "—"}</dd></div>
+          </dl>
           <p aria-live="polite" className="muted small warehouse-incoming-lookup-note" id={`${id}-lookup-note`}>
-            {lookingUp ? "Đang tra cứu sản phẩm, bạn có thể nhập tiếp và thêm vào danh sách." : "Dấu * được thay bằng số 0 để đủ 13 ký tự. Nhấn Enter hoặc rời ô để tra cứu."}
+            {lookingUp ? "Đang tra cứu sản phẩm, bạn có thể nhập tiếp và thêm vào danh sách." : "Dấu * được thay bằng số 0 để đủ 13 ký tự. Tên sản phẩm và khách hàng tự điền theo mã."}
           </p>
           <label><span>Ngày sản xuất <small className="warehouse-field-hint">Không bắt buộc</small></span><input onChange={(event) => setProductionDate(event.target.value)} type="date" value={productionDate} /></label>
           <label><span>WO <small className="warehouse-field-hint">Không bắt buộc</small></span><input maxLength={200} onChange={(event) => setWO(event.target.value)} placeholder="Nhập WO nếu có" value={wo} /></label>
-          <label><span>Số lượng <span className="warehouse-required">*</span></span><input inputMode="numeric" max={2147483647} min={1} onChange={(event) => setQuantity(event.target.value)} placeholder="Nhập số lượng" required step={1} type="number" value={quantity} /></label>
-          <label className="warehouse-incoming-note"><span>Ghi chú <span className="warehouse-required">*</span></span><textarea maxLength={2000} onChange={(event) => setNote(event.target.value)} placeholder="Nhập lý do hoặc nội dung nhập kho" required rows={3} value={note} /></label>
+          <label className="warehouse-incoming-note"><span>Ghi chú <small className="warehouse-field-hint">Không bắt buộc</small></span><textarea maxLength={2000} onChange={(event) => setNote(event.target.value)} placeholder="Nhập lý do hoặc nội dung nhập kho nếu có" rows={3} value={note} /></label>
         </div>
         {lookupError ? <p className="alert alert-error" id={`${id}-lookup-error`} role="alert">{lookupError}</p> : null}
         {formError ? <p className="alert alert-error" role="alert">{formError}</p> : null}
@@ -377,7 +388,7 @@ export function WarehouseIncomingClient() {
             <td><strong>{draft.itemcode}</strong>{draft.lookupStatus !== "ready" ? <span className="warehouse-incoming-row-message" role="status">{draft.lookupStatus === "loading" ? "Đang tra cứu..." : draft.lookupError}</span> : null}</td>
             <td>{draft.product_name || "—"}</td><td>{draft.customer || "—"}</td>
             <td>{draft.production_date ? draft.production_date.split("-").reverse().join("/") : "—"}</td><td>{draft.wo || "—"}</td>
-            <td>{draft.quantity.toLocaleString("vi-VN")}</td><td className="warehouse-incoming-draft-note">{draft.note}</td>
+            <td>{draft.quantity.toLocaleString("vi-VN")}</td><td className="warehouse-incoming-draft-note">{draft.note || "—"}</td>
             {!reviewing ? <td><div className="warehouse-incoming-row-actions">
               <button aria-label={`Sửa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" onClick={() => editDraft(draft)} type="button">Sửa</button>
               <button aria-label={`Xóa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" onClick={() => removeDraft(draft.id)} type="button">Xóa</button>
