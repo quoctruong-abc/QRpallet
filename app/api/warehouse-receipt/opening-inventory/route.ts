@@ -14,6 +14,22 @@ function invalidRows(errors: { row: number; message: string }[], errorCount: num
   return Response.json({ success: false, error: "File có dòng không hợp lệ. Chưa ghi tồn kho.", errors, errorCount }, { status: 422 });
 }
 
+function databaseFailure(error: unknown, action: "preview" | "import", fingerprint: string) {
+  console.error("Opening inventory database request failed", { action, fingerprint, error });
+  const rawCode = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  const code = typeof rawCode === "string" && /^(?:[0-9A-Z]{5}|PGRST\d{3})$/.test(rawCode) ? rawCode : "";
+  const reference = code ? ` (${code})` : "";
+  if (code === "PGRST202" || code === "42883") {
+    return fail(`Ứng dụng chưa thấy hàm nạp tồn đầu kỳ trên Supabase${reference}. Kiểm tra migration 20261105110000 trên database của ứng dụng.`, 503);
+  }
+  if (code === "42501") {
+    return fail(`Supabase từ chối quyền truy cập dữ liệu tồn đầu kỳ${reference}. Quản trị viên cần kiểm tra quyền của kết nối ứng dụng.`, 503);
+  }
+  return action === "preview"
+    ? fail(`Chưa tra cứu được tên sản phẩm và khách hàng từ Supabase${reference}. Nếu lỗi lặp lại, gửi thông báo này cho quản trị viên.`, 503)
+    : fail(`Chưa xác nhận được kết quả nạp kho${reference}. Có thể thử lại với cùng file mà không ghi trùng.`, 500);
+}
+
 export async function POST(request: Request) {
   const authorization = await authorizeProfile();
   if (!authorization.ok) return fail(authorization.error, authorization.status);
@@ -66,8 +82,7 @@ export async function POST(request: Request) {
         }
       }
     } catch (error) {
-      console.error("Opening inventory preview lookup failed", { fingerprint, error });
-      return fail("Chưa tra cứu được tên sản phẩm và khách hàng. Vui lòng thử kiểm tra file lại.", 500);
+      return databaseFailure(error, action, fingerprint);
     }
     const missingNames = [...new Set(fallbackRows.filter((row) => !items.get(row.itemcode)?.product_name).map((row) => row.excel_row))];
     if (missingNames.length) {
@@ -96,7 +111,6 @@ export async function POST(request: Request) {
     if (!data?.[0]) throw new Error("Missing opening inventory result");
     return Response.json({ success: true, result: data[0] });
   } catch (error) {
-    console.error("Opening inventory import failed", { fingerprint, error });
-    return fail("Chưa xác nhận được kết quả nạp kho. Có thể thử lại với cùng file mà không ghi trùng.", 500);
+    return databaseFailure(error, action, fingerprint);
   }
 }

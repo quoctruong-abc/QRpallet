@@ -813,6 +813,18 @@ dùng cột E; nếu vẫn thiếu khách hàng, để trống. Bản xem trư�
 Giao dịch ghi toàn bộ file cùng lúc và lưu số dòng Excel để truy vết. Nội dung
 tồn kho giống hệt đã nạp sẽ không được ghi lại, kể cả đổi tên file hoặc thứ tự dòng.
 
+Nếu xem trước báo Supabase chưa thấy hàm (ví dụ `PGRST202`), kiểm tra migration
+`20261105110000_opening_inventory_outflow_and_catalog.sql` trên đúng project mà
+ứng dụng đang dùng. Có thể kiểm tra trực tiếp trong SQL Editor:
+
+```sql
+select
+  to_regprocedure('public.lookup_opening_inventory_items(text[])') as lookup_rpc,
+  to_regprocedure('public.post_opening_inventory(uuid,text,text,jsonb,text)') as import_rpc;
+```
+
+Nếu cả hai hàm đã tồn tại, chạy `notify pgrst, 'reload schema';` rồi thử lại.
+
 ---
 
 ## 12. Dashboard sản xuất
