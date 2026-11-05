@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 import { isInventoryDate, MAX_MANUAL_INCOMING_ROWS, parseManualIncomingRequest, todayInVietnam, type ManualIncomingLine } from "@/lib/warehouse-receipt/incoming";
 import { incomingStorageKey, INCOMING_DRAFT_TTL, parseStoredIncoming, type StoredIncoming } from "@/lib/warehouse-receipt/incoming-storage";
+import { WarehouseOpeningInventory } from "./warehouse-opening-inventory";
 
 type ItemDetails = { itemcode: string; product_name: string; customer: string };
 type LookupResult = { ok: true; item: ItemDetails } | { ok: false; error: string; aborted?: boolean };
@@ -61,7 +62,6 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory, profileId }: 
   const savingRef = useRef(false);
   const [saveNotice, setSaveNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [recoveryBlocked, setRecoveryBlocked] = useState(false);
-  const [showOpeningInventory, setShowOpeningInventory] = useState(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -443,59 +443,56 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory, profileId }: 
     <div className="warehouse-incoming">
       {saveNotice ? <p aria-live="polite" className={`alert alert-${saveNotice.type}`}>{saveNotice.text}</p> : null}
       {storageConflict ? <p role="alert" className="alert alert-error">Danh sách đã thay đổi ở tab khác. Tải lại trang để tiếp tục với danh sách mới nhất.</p> : null}
-      {!reviewing ? <form className="warehouse-incoming-form" onSubmit={saveDraft}>
+      {!reviewing ? <div className="warehouse-incoming-form">
         <div className="warehouse-incoming-heading">
           <div><h2>{editingId === null ? "Nhập kho thủ công" : `Sửa dòng ${editingId}`}</h2>
           <p className="muted small">Nhập mã sản phẩm, nhấn Tab để nhập số lượng, rồi nhấn Enter để thêm dòng.</p></div>
-          {canLoadOpeningInventory ? (
-            <button aria-controls={`${id}-opening-inventory`} aria-expanded={showOpeningInventory} className="button button-secondary" onClick={() => setShowOpeningInventory((open) => !open)} type="button">
-              Nạp nhập kho lần đầu
-            </button>
-          ) : null}
+          {canLoadOpeningInventory ? <WarehouseOpeningInventory /> : null}
         </div>
-        {canLoadOpeningInventory ? <p className="muted small" hidden={!showOpeningInventory} id={`${id}-opening-inventory`}>Chức năng nạp tồn đầu kỳ chưa được triển khai.</p> : null}
-        <div className="warehouse-incoming-fields">
-          <label>
-            <span>Mã sản phẩm <span className="warehouse-required">*</span></span>
-            <input
-              aria-describedby={`${id}-lookup-note${lookupError ? ` ${id}-lookup-error` : ""}`}
-              aria-invalid={Boolean(lookupError)}
-              autoComplete="off"
-              maxLength={200}
-              onBlur={() => { void lookupForm(); }}
-              onChange={(event) => changeItemcode(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  quantityInputRef.current?.focus();
-                }
-              }}
-              placeholder="Nhập itemcode, ví dụ 11011*209"
-              ref={itemInputRef}
-              required
-              value={itemcode}
-            />
-          </label>
-          <label><span>Số lượng <span className="warehouse-required">*</span></span><input inputMode="numeric" max={2147483647} min={1} onChange={(event) => setQuantity(event.target.value)} placeholder="Nhập số lượng" ref={quantityInputRef} required step={1} type="number" value={quantity} /></label>
-          <label><span>Ngày nhập kho <span className="warehouse-required">*</span></span><input onChange={(event) => setReceivedDate(event.target.value)} required type="date" value={receivedDate} /></label>
-          <dl className="warehouse-incoming-item-details">
-            <div><dt>Tên sản phẩm</dt><dd>{item?.product_name || "—"}</dd></div>
-            <div><dt>Khách hàng</dt><dd>{item?.customer || "—"}</dd></div>
-          </dl>
-          <p aria-live="polite" className="muted small warehouse-incoming-lookup-note" id={`${id}-lookup-note`}>
-            {lookingUp ? "Đang tra cứu sản phẩm, bạn có thể nhập tiếp và thêm vào danh sách." : "Dấu * được thay bằng số 0 để đủ 13 ký tự. Tên sản phẩm và khách hàng tự điền theo mã."}
-          </p>
-          <label><span>Ngày sản xuất <small className="warehouse-field-hint">Không bắt buộc</small></span><input onChange={(event) => setProductionDate(event.target.value)} type="date" value={productionDate} /></label>
-          <label><span>WO <small className="warehouse-field-hint">Không bắt buộc</small></span><input maxLength={200} onChange={(event) => setWO(event.target.value)} placeholder="Nhập WO nếu có" value={wo} /></label>
-          <label className="warehouse-incoming-note"><span>Ghi chú <small className="warehouse-field-hint">Không bắt buộc</small></span><textarea maxLength={2000} onChange={(event) => setNote(event.target.value)} placeholder="Nhập lý do hoặc nội dung nhập kho nếu có" rows={3} value={note} /></label>
-        </div>
-        {lookupError ? <p className="alert alert-error" id={`${id}-lookup-error`} role="alert">{lookupError}</p> : null}
-        {formError ? <p className="alert alert-error" role="alert">{formError}</p> : null}
-        <div className="warehouse-incoming-actions">
-          <button className="button button-secondary" onClick={() => clearForm()} type="button">{editingId === null ? "Xóa nội dung" : "Hủy sửa"}</button>
-          <button className="button button-primary" disabled={!storageReady || storageConflict || recoveryBlocked} type="submit">{editingId === null ? "Thêm vào danh sách" : "Lưu thay đổi"}</button>
-        </div>
-      </form> : null}
+        <form onSubmit={saveDraft}>
+          <div className="warehouse-incoming-fields">
+            <label>
+              <span>Mã sản phẩm <span className="warehouse-required">*</span></span>
+              <input
+                aria-describedby={`${id}-lookup-note${lookupError ? ` ${id}-lookup-error` : ""}`}
+                aria-invalid={Boolean(lookupError)}
+                autoComplete="off"
+                maxLength={200}
+                onBlur={() => { void lookupForm(); }}
+                onChange={(event) => changeItemcode(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    quantityInputRef.current?.focus();
+                  }
+                }}
+                placeholder="Nhập itemcode, ví dụ 11011*209"
+                ref={itemInputRef}
+                required
+                value={itemcode}
+              />
+            </label>
+            <label><span>Số lượng <span className="warehouse-required">*</span></span><input inputMode="numeric" max={2147483647} min={1} onChange={(event) => setQuantity(event.target.value)} placeholder="Nhập số lượng" ref={quantityInputRef} required step={1} type="number" value={quantity} /></label>
+            <label><span>Ngày nhập kho <span className="warehouse-required">*</span></span><input onChange={(event) => setReceivedDate(event.target.value)} required type="date" value={receivedDate} /></label>
+            <dl className="warehouse-incoming-item-details">
+              <div><dt>Tên sản phẩm</dt><dd>{item?.product_name || "—"}</dd></div>
+              <div><dt>Khách hàng</dt><dd>{item?.customer || "—"}</dd></div>
+            </dl>
+            <p aria-live="polite" className="muted small warehouse-incoming-lookup-note" id={`${id}-lookup-note`}>
+              {lookingUp ? "Đang tra cứu sản phẩm, bạn có thể nhập tiếp và thêm vào danh sách." : "Dấu * được thay bằng số 0 để đủ 13 ký tự. Tên sản phẩm và khách hàng tự điền theo mã."}
+            </p>
+            <label><span>Ngày sản xuất <small className="warehouse-field-hint">Không bắt buộc</small></span><input onChange={(event) => setProductionDate(event.target.value)} type="date" value={productionDate} /></label>
+            <label><span>WO <small className="warehouse-field-hint">Không bắt buộc</small></span><input maxLength={200} onChange={(event) => setWO(event.target.value)} placeholder="Nhập WO nếu có" value={wo} /></label>
+            <label className="warehouse-incoming-note"><span>Ghi chú <small className="warehouse-field-hint">Không bắt buộc</small></span><textarea maxLength={2000} onChange={(event) => setNote(event.target.value)} placeholder="Nhập lý do hoặc nội dung nhập kho nếu có" rows={3} value={note} /></label>
+          </div>
+          {lookupError ? <p className="alert alert-error" id={`${id}-lookup-error`} role="alert">{lookupError}</p> : null}
+          {formError ? <p className="alert alert-error" role="alert">{formError}</p> : null}
+          <div className="warehouse-incoming-actions">
+            <button className="button button-secondary" onClick={() => clearForm()} type="button">{editingId === null ? "Xóa nội dung" : "Hủy sửa"}</button>
+            <button className="button button-primary" disabled={!storageReady || storageConflict || recoveryBlocked} type="submit">{editingId === null ? "Thêm vào danh sách" : "Lưu thay đổi"}</button>
+          </div>
+        </form>
+      </div> : null}
 
       <section className="scan-table-card">
         <div className="warehouse-incoming-draft-heading">

@@ -650,7 +650,7 @@ WH-DDMMYY-002
 - Không bắt buộc: Ngày sản xuất, WO, Ghi chú.
 - Nhập mã sản phẩm → Tab sang Số lượng → Enter để thêm vào danh sách và
   quay về ô Mã sản phẩm. Tên sản phẩm và Khách hàng tự điền khi rời ô mã.
-- Nút Nạp nhập kho lần đầu chỉ hiển thị cho superadmin; chưa nạp dữ liệu.
+- Nút Nạp nhập kho lần đầu chỉ hiển thị cho superadmin; xem mục 11.4.
 - Mã viết tắt có một dấu `*` được chèn số 0 cho đủ 13 ký tự, ví dụ
   `11011*209` → `1101100000209`. Mã không có `*` được giữ nguyên sau khi trim.
   Frontend và API cùng dùng quy tắc này; mã viết tắt không hợp lệ bị từ chối.
@@ -744,10 +744,10 @@ npx supabase db push --dry-run
 Thay `YOUR_PROJECT_REF` bằng Project ID của đúng database cần cập nhật. Nếu
 Codespace đã link đúng project, có thể bỏ bước link.
 
-Kiểm tra dry-run: nếu đã cài chức năng nhập tay, chỉ còn
-`20261105090000_optional_inventory_note.sql`. Nếu đã có bảng tồn nhưng chưa
-cài chức năng nhập tay, cần có cả `20261026100000_post_manual_inventory.sql`
-trước migration ghi chú. Khi danh sách khớp với schema hiện tại, chạy:
+Kiểm tra dry-run: thứ tự là `20261026100000_post_manual_inventory.sql`,
+`20261105090000_optional_inventory_note.sql` và
+`20261105100000_opening_inventory_import.sql` cho các bước chưa chạy. Khi
+danh sách khớp với schema hiện tại, chạy:
 
 ```bash
 npx supabase db push
@@ -773,8 +773,9 @@ npx supabase db push --dry-run
 
 Với trạng thái history này, dry-run phải liệt kê lần lượt
 `20261026090000_inventory_incoming.sql`,
-`20261026100000_post_manual_inventory.sql` và
-`20261105090000_optional_inventory_note.sql`. Khi danh sách khớp, chạy:
+`20261026100000_post_manual_inventory.sql`,
+`20261105090000_optional_inventory_note.sql` và
+`20261105100000_opening_inventory_import.sql`. Khi danh sách khớp, chạy:
 
 ```bash
 npx supabase db push
@@ -783,6 +784,28 @@ npx supabase migration list
 
 `repair --status reverted` ở đây chỉ bỏ dấu trong history, không xóa bảng hay
 dữ liệu nghiệp vụ. Không revert migration khác hoặc dùng reset để xử lý lỗi này.
+
+### 11.4 Nạp nhập kho lần đầu
+
+Trong **Quản lý kho → Nhập kho**, superadmin chọn file `.xlsx` (tối đa 4 MB,
+20.000 dòng), kiểm tra file và xác nhận nạp. Sheet **Detail** có tiêu đề dòng 5,
+dữ liệu từ dòng 6. Các lỗi chỉ rõ dòng Excel; cả file phải hợp lệ trước khi ghi.
+
+| Cột | Quy tắc |
+| --- | --- |
+| A, F | Bỏ qua |
+| B | Ngày nhập bắt buộc, ô ngày Excel hoặc text tháng/ngày/năm |
+| C | Ngày sản xuất nếu có, ô ngày Excel hoặc text ngày/tháng/năm; chấp nhận dấu nháy đầu |
+| D, E, G | Mã, tên sản phẩm và WO; mã có số 0 đầu nên lưu dưới dạng Text |
+| H | Số dương tạo dòng tồn đầu riêng, số xuất bằng 0, không có ngày sản xuất |
+| I, J, K | Số nhận, số xuất và số tồn của dòng nhập. Khi I có số lượng dương, K bắt buộc bằng I − J |
+
+Dòng chỉ có H chấp nhận K trống, 0 hoặc bằng H. Khi có cả H và I, K đối chiếu
+riêng với I − J và tổng tồn nạp là H + K. Database tự tính số tồn.
+Khách hàng lấy từ `item_pallet_config`, nếu thiếu thì tìm trong `pallet_data`
+và bổ sung cấu hình; vẫn nạp nếu không tìm thấy. Tên trên dòng tồn lấy từ cột E.
+Giao dịch ghi toàn bộ file cùng lúc và lưu số dòng Excel để truy vết. Nội dung
+tồn kho giống hệt đã nạp sẽ không được ghi lại, kể cả đổi tên file hoặc thứ tự dòng.
 
 ---
 
