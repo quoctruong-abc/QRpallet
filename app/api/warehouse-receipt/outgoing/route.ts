@@ -13,13 +13,13 @@ const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
   if (["PGRST202", "42883", "42P01", "42703"].includes(error.code ?? "")) {
-    return fail("Supabase chưa có cấu trúc Xuất kho. Cần chạy migration 20261105120000_delivery_reservations.sql.", 503);
+    return fail("Supabase chưa có cấu trúc Xuất kho. Cần chạy migration 20261105140000_item_stock_summary.sql.", 503);
   }
   const messages: [string, string][] = [
     ["DELIVERY_NOT_AUTHORIZED", "Bạn không có quyền xuất kho."],
     ["DELIVERY_STALE", "Dữ liệu đã thay đổi. Tải lại danh sách và kiểm tra trước khi xác nhận."],
     ["DELIVERY_COMMAND_CONFLICT", "Mã thao tác đã dùng cho nội dung khác. Tải lại trang để kiểm tra kết quả."],
-    ["DELIVERY_INSUFFICIENT_RESERVED", "Số thực xuất phải từ 1 đến số lượng đã giữ. Hãy bổ sung On order nếu cần."],
+    ["DELIVERY_INSUFFICIENT_STOCK", "Tồn thực tế không đủ số thực xuất. Tải lại gợi ý FIFO và kiểm tra số lượng."],
     ["DELIVERY_BELOW_SHIPPED", "Số yêu cầu không được nhỏ hơn số đã xuất."],
     ["DELIVERY_CHOOSE_SCHEDULE", "Chọn tạo lịch mới hoặc dời lịch cũ cho dòng có ngày giao khác."],
     ["DELIVERY_DUPLICATE_TARGET", "Hai dòng đang cùng cập nhật một lịch giao. Kiểm tra lại lựa chọn dời lịch."],
@@ -48,18 +48,23 @@ export async function GET(request: Request) {
       .select("id,quantity,shipped_date,created_at,entered_by_name,inv_delivery_issue_lines(incoming_id,quantity,inv_incoming(production_date,received_date))")
       .eq("request_id", id).order("created_at", { ascending: false }).limit(500);
     if (error) return dbError(error);
-    const { data: allocations, error: allocationError } = await db.from("inv_delivery_reservations")
-      .select("incoming_id,quantity,inv_incoming(production_date,received_date,balance_qty,reserved_qty,available_qty)")
-      .eq("request_id", id).gt("quantity", 0).order("incoming_id").limit(1000);
-    if (allocationError) return dbError(allocationError);
-    return Response.json({ success: true, history: data, allocations }, { headers: { "Cache-Control": "no-store" } });
+    const quantity = url.searchParams.get("quantity");
+    if (quantity !== null && (!Number.isSafeInteger(Number(quantity)) || Number(quantity) < 0 || Number(quantity) > 2147483647)) return fail("Số lượng xem FIFO không hợp lệ.");
+    const { data: fifoPreview, error: fifoError } = await db.rpc("preview_delivery_fifo", {
+      p_id: id, p_quantity: quantity === null ? null : Number(quantity),
+    });
+    if (fifoError) return dbError(fifoError);
+    return Response.json({ success: true, history: data, ...fifoPreview }, { headers: { "Cache-Control": "no-store" } });
   }
   const offset = Number(url.searchParams.get("offset") || 0);
   if (!Number.isSafeInteger(offset) || offset < 0) return fail("Trang không hợp lệ.");
-  const { data, error } = await db.rpc("list_delivery", {
-    p_offset: offset, p_search: (url.searchParams.get("search") || "").trim().slice(0, 200), p_closed: url.searchParams.get("closed") === "true",
-  });
+  const p_search = (url.searchParams.get("search") || "").trim().slice(0, 200);
+  const summary = url.searchParams.get("view") === "summary";
+  const { data, error } = summary
+    ? await db.rpc("list_stock_summary", { p_offset: offset, p_search, p_shortage_only: url.searchParams.get("shortage") === "true" })
+    : await db.rpc("list_delivery", { p_offset: offset, p_search, p_closed: url.searchParams.get("closed") === "true" });
   if (error) return dbError(error);
+  if (data?.model_version !== 2) return fail("Cần chạy migration 20261105140000_item_stock_summary.sql để chuyển mô hình tồn kho.", 503);
   return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -80,6 +85,7 @@ export async function POST(request: Request) {
       if (parsed.errors.length) return Response.json({ success: false, error: "File có dòng không hợp lệ.", errors: parsed.errors.slice(0, 100) }, { status: 422 });
       const { data, error } = await db.rpc("manage_delivery", { p_action: "preview", p_command_id: null, p_payload: { rows: parsed.rows } });
       if (error) return dbError(error);
+      if (data?.model_version !== 2) return fail("Cần chạy migration 20261105140000_item_stock_summary.sql để chuyển mô hình tồn kho.", 503);
       // A fingerprint identifies the parsed source, independent of uploaded filename.
       const fingerprint = createHash("sha256").update(JSON.stringify(parsed.rows)).digest("hex");
       return Response.json({ success: true, ...data, fingerprint, file_name: file.name });

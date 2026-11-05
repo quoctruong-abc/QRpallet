@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 require.extensions[".ts"] = (module, file) => module._compile(ts.transpileModule(readFileSync(file, "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, file);
-const { parseDeliverySheet } = require("../../lib/warehouse-receipt/outgoing.ts");
+const { parseDeliverySheet, previewDeliveryDemand } = require("../../lib/warehouse-receipt/outgoing.ts");
 const { expandMergedCells } = require("../../lib/excel-merged.ts");
 
 const header = Array(33).fill(null);
@@ -35,6 +35,9 @@ assert.equal(parseDeliverySheet([header,bad]).errors.length,1);
 const set=structuredClone(source[1]); set[31]="Bộ";
 assert.equal(parseDeliverySheet([header,set]).rows[0].unit,"SET");
 
+const demandRows=[{...parsed.rows[0],existing:null,candidates:[{id:"move",ordered_qty:60,shipped_qty:20,cancelled:false}],item_stock_qty:100,item_on_order_qty:90,item_on_order_after:160,item_shortage_after:60}];
+assert.equal(previewDeliveryDemand(demandRows,{[demandRows[0].excel_row]:"new"})[0].item_on_order_after,160);
+assert.equal(previewDeliveryDemand(demandRows,{[demandRows[0].excel_row]:"move"})[0].item_on_order_after,100);
 const db=new PGlite();
 const actor=randomUUID();
 await db.exec(`
@@ -153,5 +156,93 @@ select count(*)::int as failures from (
    or d.shipped_qty <> coalesce((select sum(s.quantity) from public.inv_delivery_issues s where s.request_id=d.id),0)
 ) bad`);
 assert.equal(invariants.rows[0].failures,0,"All counters match their allocation/issue ledgers");
+
+// Upgrade a populated database. Historical issues must survive unchanged.
+const preUpgradeRequest=await request(pb.id);
+const priorHistory=(await db.query("select id,request_id,quantity,shipped_date from public.inv_delivery_issues order by id")).rows;
+const priorIssued=(await db.query("select id,issued_qty from public.inv_incoming order by id")).rows;
+await db.exec("reset role");
+await migrate("20261105140000_item_stock_summary.sql");
+assert.deepEqual((await db.query("select id,request_id,quantity,shipped_date from public.inv_delivery_issues order by id")).rows,priorHistory);
+assert.deepEqual((await db.query("select id,issued_qty from public.inv_incoming order by id")).rows,priorIssued);
+assert.equal((await db.query("select count(*)::int as n from information_schema.columns where table_schema='public' and table_name='inv_incoming' and column_name='reserved_qty'")).rows[0].n,0);
+assert.equal((await request(pb.id)).version,preUpgradeRequest.version+1,"Migration invalidates unexecuted old-screen actions");
+await assert.rejects(rpc("ship",{id:pb.id,version:preUpgradeRequest.version,quantity:1,shipped_date:"2026-11-05"}),/DELIVERY_STALE/);
+assert.equal((await rpc("ship",ship,shipID)).shipped,20,"Already-committed old commands still retry without issuing again");
+const summary=async item=>(await db.query("select * from public.inv_stock_summary where itemcode=$1",[item])).rows[0];
+assert.equal(Number((await summary("C")).on_order_qty),140,"Full pending demand, including the unreserved part, is rebuilt");
+assert.equal(Number((await summary("C")).shortage_qty),40);
+const unaffected=(await summary("A")).updated_at;
+const oldest=(await seed("SUMMARY",60,"2026-01-01")).rows[0].id;
+const newer=(await seed("SUMMARY",40,"2026-02-01")).rows[0].id;
+assert.equal(Number((await summary("SUMMARY")).balance_qty),100,"Incoming statements refresh the affected item");
+assert.deepEqual((await summary("A")).updated_at,unaffected,"Unrelated summaries are untouched");
+await db.exec("set role authenticated");
+const modelPreview=await rpc("preview",{rows:[line("SUM1","SUMMARY",70),line("SUM2","SUMMARY",50,"2026-10-28")]});
+assert.equal(modelPreview.model_version,2);
+assert.ok(modelPreview.rows.every(row=>row.item_stock_qty===100 && row.item_on_order_after===120 && row.item_shortage_after===20));
+assert.equal(Number((await summary("SUMMARY")).on_order_qty),0,"Preview never books demand");
+await rpc("import",{rows:[line("SUM1","SUMMARY",70),line("SUM2","SUMMARY",50,"2026-10-28")]});
+assert.equal(Number((await summary("SUMMARY")).balance_qty),100);
+assert.equal(Number((await summary("SUMMARY")).on_order_qty),120);
+assert.equal(Number((await summary("SUMMARY")).available_qty),-20,"Projected stock may be negative");
+const sum1=(await get("SUM1"))[0], sum2=(await get("SUM2"))[0];
+const fifo=async(id,qty)=>(await db.query("select public.preview_delivery_fifo($1,$2) as data",[id,qty])).rows[0].data;
+assert.equal((await fifo(sum1.id,60)).fifo[0].incoming_id,Number(oldest));
+const secondShip={id:sum2.id,version:sum2.version,quantity:20,shipped_date:"2026-11-05"};
+const secondID=randomUUID();
+assert.equal((await rpc("ship",secondShip,secondID)).shipped,20);
+assert.equal((await rpc("ship",secondShip,secondID)).shipped,20);
+assert.equal(Number((await summary("SUMMARY")).on_order_qty),100);
+assert.equal(Number((await summary("SUMMARY")).balance_qty),80);
+assert.equal(Number((await summary("SUMMARY")).shortage_qty),20);
+const firstID=randomUUID();
+await rpc("ship",{id:sum1.id,version:sum1.version,quantity:60,shipped_date:"2026-11-05"},firstID);
+assert.deepEqual((await db.query("select incoming_id::int,quantity from public.inv_delivery_issue_lines where issue_id=$1 order by incoming_id",[firstID])).rows,
+ [{incoming_id:Number(oldest),quantity:40},{incoming_id:Number(newer),quantity:20}],
+ "The first confirmed delivery gets the oldest stock, regardless of schedule priority or earlier previews");
+let currentSum2=await request(sum2.id);
+await assert.rejects(rpc("ship",{id:sum2.id,version:currentSum2.version,quantity:21,shipped_date:"2026-11-05"}),/DELIVERY_INSUFFICIENT_STOCK/);
+assert.equal(Number((await summary("SUMMARY")).balance_qty),20);
+assert.equal(Number((await summary("SUMMARY")).on_order_qty),40);
+await rpc("cancel",{id:sum2.id,version:currentSum2.version});
+assert.equal(Number((await summary("SUMMARY")).on_order_qty),10);
+let currentSum1=await request(sum1.id);
+await rpc("edit",{id:sum1.id,version:currentSum1.version,ordered_qty:60,delivery_date:currentSum1.delivery_date});
+assert.equal(Number((await summary("SUMMARY")).on_order_qty),0);
+assert.equal(Number((await summary("SUMMARY")).balance_qty),20);
+await db.query("select * from public.post_manual_inventory($1,$2::jsonb)",[randomUUID(),JSON.stringify([{itemcode:"SUMMARY",received_date:"2026-11-05",production_date:null,quantity:10,note:""}])]);
+assert.equal(Number((await summary("SUMMARY")).balance_qty),30,"Manual receipts immediately update the item summary");
+await db.exec("reset role");
+const extra=(await seed("REKEY-A",7,null)).rows[0].id;
+await db.query("update public.inv_incoming set itemcode='REKEY-B' where id=$1",[extra]);
+assert.equal(Number((await summary("REKEY-A")).balance_qty),0);
+assert.equal(Number((await summary("REKEY-B")).balance_qty),7);
+await db.query("delete from public.inv_incoming where id=$1",[extra]);
+assert.equal(Number((await summary("REKEY-B")).balance_qty),0);
+await db.exec("insert into public.item_pallet_config(itemcode,product_name,customer) values ('SUMMARY','Renamed','New Customer')");
+assert.equal((await summary("SUMMARY")).product_name,"Renamed");
+await db.exec("grant select on public.profiles,public.item_pallet_config,public.pallet_data to service_role; grant insert,update on public.item_pallet_config to service_role; set role service_role");
+await db.query("select * from public.post_opening_inventory($1,$2,$3,$4::jsonb,$5)",[actor,"e".repeat(64),"opening.xlsx",JSON.stringify([{excel_row:6,kind:"opening",itemcode:"SUMMARY-OPEN",product_name:"Opening",received_date:"2026-11-05",production_date:null,wo:null,received_qty:13,issued_qty:3,balance_qty:10}]),null]);
+await db.exec("reset role");
+assert.equal(Number((await summary("SUMMARY-OPEN")).balance_qty),10,"Service-role opening imports also update summaries");
+const modelList=(await db.query("select public.list_delivery(0,'SUM1',true) as data")).rows[0].data;
+assert.equal(modelList.model_version,2);
+assert.equal(modelList.rows[0].status,"done");
+assert.equal(modelList.rows[0].remaining_qty,0);
+await db.exec("set role authenticated");
+await assert.rejects(db.exec("update public.inv_stock_summary set on_order_qty=0"),/permission denied/);
+await assert.rejects(db.query("select public.refresh_stock_summary(array['SUMMARY'])"),/permission denied/);
+await assert.rejects(db.exec("select * from public.inv_delivery_reservations_legacy"),/permission denied/);
+await assert.rejects(rpc("import",{rows:[line("NEW-ROLLBACK","SUMMARY",2),line("BAD-AFTER","SUMMARY",-1,"2027-01-01")]}),/DELIVERY_INVALID_ROW/);
+assert.equal((await get("NEW-ROLLBACK")).length,0);
+assert.equal(Number((await summary("SUMMARY")).on_order_qty),0,"Late import errors roll back summary triggers too");
+const finalCheck=await db.query("select count(*)::int as failures from public.inv_stock_summary s where s.balance_qty <> coalesce((select sum(i.balance_qty) from public.inv_incoming i where i.itemcode=s.itemcode),0) or s.on_order_qty <> coalesce((select sum(d.ordered_qty-d.shipped_qty) from public.inv_delivery_requests d where d.itemcode=s.itemcode and not d.cancelled),0)");
+assert.equal(finalCheck.rows[0].failures,0,"Every item summary matches its stock and pending-demand sources");
+const summaryRead=(await db.query("select public.list_stock_summary(0,'C',true) as data")).rows[0].data;
+assert.equal(summaryRead.model_version,2);
+assert.ok(summaryRead.rows.some(row=>row.itemcode==="C" && row.shortage_qty===40));
+console.log("PASS: populated migration, automatic item-only refresh, uncapped On order, first-confirmed FIFO, partial/cancel/edit, retry, rekeys/deletes, summary permissions and source reconciliation.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

@@ -14,16 +14,17 @@ export type DeliveryInput = {
   ordered_qty: number;
 };
 export type DeliveryRequest = DeliveryInput & {
-  id: string; shipped_qty: number; reserved_qty: number; shortage_qty: number;
+  id: string; shipped_qty: number; remaining_qty: number;
+  item_stock_qty: number; item_on_order_qty: number; item_available_qty: number; item_shortage_qty: number;
   cancelled: boolean; version: number; status: "pending" | "partial" | "done" | "cancelled";
 };
 export type DeliveryCandidate = {
-  id: string; delivery_date: string; ordered_qty: number; shipped_qty: number; reserved_qty: number;
+  id: string; delivery_date: string; ordered_qty: number; shipped_qty: number;
   version: number; unit: string; cancelled: boolean;
 };
 export type DeliveryPreviewLine = DeliveryInput & {
   existing: DeliveryCandidate | null; candidates: DeliveryCandidate[];
-  available_qty: number; suggested_reserved: number; shortage_qty: number;
+  item_stock_qty: number; item_on_order_qty: number; item_on_order_after: number; item_shortage_after: number;
 };
 export type DeliveryHistory = {
   id: string; quantity: number; shipped_date: string; created_at: string; entered_by_name: string;
@@ -97,4 +98,31 @@ export function parseDeliverySheet(sheet: unknown[][]) {
   if (rows.length > MAX_DELIVERY_ROWS) throw new Error(`Mỗi file tối đa ${MAX_DELIVERY_ROWS} dòng hàng.`);
   if (!rows.length && !errors.length) throw new Error("Không tìm thấy dòng hàng trong file.");
   return { rows, errors };
+}
+
+export type StockSummary = {
+  itemcode: string; product_name: string; customer: string;
+  received_qty: number; issued_qty: number; balance_qty: number; on_order_qty: number;
+  available_qty: number; shortage_qty: number; updated_at: string;
+};
+export type FifoPreview = {
+  model_version: number; request_version: number; item_stock_qty: number;
+  remaining_qty: number; quantity: number; can_ship: boolean;
+  fifo: { incoming_id: number; quantity: number; received_date: string; production_date: string | null }[];
+};
+
+// Recompute the displayed item demand after choosing "new" versus rescheduling
+// an existing request. This is an estimate; the database rechecks on submission.
+export function previewDeliveryDemand(rows: DeliveryPreviewLine[], choices: Record<number, string>): DeliveryPreviewLine[] {
+  const delta = new Map<string, number>();
+  for (const row of rows) {
+    const target = row.existing || row.candidates.find((candidate) => candidate.id === choices[row.excel_row]);
+    const adjustment = target?.cancelled ? 0 : Math.max(0, row.ordered_qty - (target?.shipped_qty ?? 0))
+      - (target ? target.ordered_qty - target.shipped_qty : 0);
+    delta.set(row.itemcode, (delta.get(row.itemcode) ?? 0) + adjustment);
+  }
+  return rows.map((row) => {
+    const onOrder = row.item_on_order_qty + (delta.get(row.itemcode) ?? 0);
+    return { ...row, item_on_order_after: onOrder, item_shortage_after: Math.max(0, onOrder - row.item_stock_qty) };
+  });
 }
