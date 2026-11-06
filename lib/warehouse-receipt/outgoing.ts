@@ -14,7 +14,7 @@ export type DeliveryInput = {
   ordered_qty: number;
 };
 export type DeliveryRequest = DeliveryInput & {
-  id: string; shipped_qty: number; remaining_qty: number;
+  id: string; system_customer_name: string | null; shipped_qty: number; remaining_qty: number;
   item_stock_qty: number; item_on_order_qty: number; item_available_qty: number; item_shortage_qty: number;
   cancelled: boolean; version: number; status: "pending" | "partial" | "done" | "cancelled";
 };

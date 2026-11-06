@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { todayInVietnam } from "@/lib/warehouse-receipt/incoming";
+import { loadWarehouseRows, matchesWarehouseSearch, warehouseSearchTokens, WAREHOUSE_PAGE_SIZE } from "@/lib/warehouse-receipt/outgoing-list";
 import { previewDeliveryDemand, type DeliveryPreviewLine, type DeliveryRequest, type FifoPreview } from "@/lib/warehouse-receipt/outgoing";
 
 type Command = { action: string; command_id: string; profile_id: string; payload: Record<string, unknown> };
@@ -22,10 +23,10 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const [blocked, setBlocked] = useState(false);
   const [pending, setPending] = useState<Command | null>(null);
   const [rows, setRows] = useState<DeliveryRequest[]>([]);
-  const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [systemCustomer, setSystemCustomer] = useState("");
   const [closed, setClosed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
@@ -41,34 +42,27 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const [actionDate, setActionDate] = useState(todayInVietnam);
   const [history, setHistory] = useState<History[]>([]);
   const [fifo, setFifo] = useState<FifoPreview | null>(null);
-  const [summaryRevision, setSummaryRevision] = useState(0);
+  const [revision, setRevision] = useState(0);
   const [detailError, setDetailError] = useState("");
-  const loadVersion = useRef(0);
   const detailVersion = useRef(0);
   const locked = busy || Boolean(pending) || blocked || !ready;
 
-  const load = useCallback(async () => {
-    const version = ++loadVersion.current;
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ search, offset: String(offset), closed: String(closed) });
-      const response = await fetch(`/api/warehouse-receipt/outgoing?${params}`, { cache: "no-store" });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || "Không tải được danh sách chờ.");
-      if (version !== loadVersion.current) return;
-      setRows(data.rows);
-      setTotal(data.total);
-      if (offset > 0 && offset >= data.total) setOffset(data.total > 0 ? Math.floor((data.total - 1) / 100) * 100 : 0);
-      setListError("");
-    } catch (error) {
-      if (version === loadVersion.current) setListError(error instanceof Error ? error.message : "Không tải được danh sách.");
-    } finally {
-      if (version === loadVersion.current) setLoading(false);
-    }
-  }, [search, offset, closed]);
-
-  const cancelLoad = useCallback(() => { loadVersion.current++; }, []);
-  useEffect(() => { void Promise.resolve().then(load); return cancelLoad; }, [load, cancelLoad]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.resolve().then(async () => {
+      if (controller.signal.aborted) return;
+      setLoading(true);
+      try {
+        const data = await loadWarehouseRows<DeliveryRequest>({ closed: String(closed) }, (row) => row.id, controller.signal);
+        if (controller.signal.aborted) return;
+        setRows(data);
+        setListError("");
+      } catch (error) {
+        if (!controller.signal.aborted) setListError(error instanceof Error ? error.message : "Không tải được danh sách.");
+      } finally { if (!controller.signal.aborted) setLoading(false); }
+    });
+    return () => controller.abort();
+  }, [closed, revision]);
   useEffect(() => {
     let cancelled = false;
     void Promise.resolve().then(() => {
@@ -138,8 +132,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         : current.action === "cancel" ? "Đã hủy phần chờ và cập nhật On order của item."
         : current.action === "reserve" ? "On order được tính tự động từ danh sách còn phải giao."
         : "Đã cập nhật yêu cầu giao hàng.");
-      await load();
-      setSummaryRevision((value) => value + 1);
+      setRevision((value) => value + 1);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Chưa xác nhận được kết quả. Hãy thử lại cùng thao tác.");
     } finally {
@@ -221,28 +214,59 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
     return !choices[row.excel_row] || (chosen && !chosen.cancelled && row.ordered_qty < chosen.shipped_qty);
   }) ?? true);
 
+  const loaded = useMemo(() => closed ? rows : rows.filter((row) => !row.cancelled && row.remaining_qty > 0), [rows, closed]);
+  const dateOptions = useMemo(() => [...new Set(loaded.map((row) => row.delivery_date))].sort(), [loaded]);
+  const customerOptions = useMemo(() => [...new Set(loaded.map((row) => row.system_customer_name).filter((name): name is string => Boolean(name)))]
+    .sort((a, b) => a.localeCompare(b, "vi")), [loaded]);
+  const hasUnnamedCustomer = loaded.some((row) => !row.system_customer_name);
+  const activeDate = dateOptions.includes(deliveryDate) ? deliveryDate : "";
+  const activeCustomer = (systemCustomer === "missing" && hasUnnamedCustomer) || customerOptions.includes(systemCustomer.slice(5))
+    ? systemCustomer : "";
+  const filtered = useMemo(() => {
+    const tokens = warehouseSearchTokens(search);
+    return loaded.filter((row) => (!activeDate || row.delivery_date === activeDate)
+      && (!activeCustomer || (activeCustomer === "missing" ? !row.system_customer_name : `name:${row.system_customer_name}` === activeCustomer))
+      && matchesWarehouseSearch(tokens, [row.purorder, row.sales_id, row.itemcode, row.product_name, row.customer, row.system_customer_name]));
+  }, [loaded, activeDate, activeCustomer, search]);
+  const total = filtered.length;
+  const pageStart = Math.min(offset, Math.max(0, Math.floor((total - 1) / WAREHOUSE_PAGE_SIZE) * WAREHOUSE_PAGE_SIZE));
+  const visible = filtered.slice(pageStart, pageStart + WAREHOUSE_PAGE_SIZE);
+
   return <div className="warehouse-outgoing">
     <div className="warehouse-outgoing-toolbar">
       <button className="button button-primary" disabled={locked} onClick={() => importDialog.current?.showModal()} type="button">Nạp lịch giao ERP</button>
-      <button className="button button-secondary" disabled={loading} onClick={() => { void load(); setSummaryRevision((value) => value + 1); }} type="button">Tải lại</button>
+      <button className="button button-secondary" disabled={loading} onClick={() => setRevision((value) => value + 1)} type="button">Tải lại</button>
     </div>
     <p className="muted small">On order là tổng số còn phải giao của từng item. Chỉ chọn lô FIFO và trừ tồn khi xác nhận xuất thực tế.</p>
     {notice ? <p role="status" className="alert">{notice}</p> : null}
     {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">{busy ? "Đang xử lý…" : "Thử lại thao tác chưa rõ kết quả"}</button> : null}
     {listError ? <p role="alert" className="alert alert-error">{listError}</p> : null}
-    <WarehouseStockSummary revision={summaryRevision} />
-    <form className="warehouse-outgoing-toolbar" onSubmit={(event) => { event.preventDefault(); setOffset(0); setSearch(searchInput); }}>
-      <input aria-label="Tìm yêu cầu xuất" onChange={(event) => setSearchInput(event.target.value)} placeholder="Tìm PO, Sales ID, item, khách hàng" value={searchInput} />
-      <button className="button button-secondary" type="submit">Tìm</button>
+    <WarehouseStockSummary revision={revision} />
+    <div className="warehouse-outgoing-toolbar">
+      <input type="search" aria-label="Tìm yêu cầu xuất" onChange={(event) => { setSearch(event.target.value); setOffset(0); }}
+        placeholder="Tìm PO, Sales ID, item, khách hàng" value={search} />
+      <label>Ngày giao
+        <select value={activeDate} onChange={(event) => { setDeliveryDate(event.target.value); setOffset(0); }}>
+          <option value="">Tất cả ngày giao</option>
+          {dateOptions.map((value) => <option key={value} value={value}>{date(value)}</option>)}
+        </select>
+      </label>
+      <label>Khách hệ thống
+        <select value={activeCustomer} onChange={(event) => { setSystemCustomer(event.target.value); setOffset(0); }}>
+          <option value="">Tất cả khách hệ thống</option>
+          {customerOptions.map((value) => <option key={value} value={`name:${value}`}>{value}</option>)}
+          {hasUnnamedCustomer ? <option value="missing">Chưa có tên hệ thống</option> : null}
+        </select>
+      </label>
       <label className="warehouse-outgoing-checkbox"><input checked={closed} onChange={(event) => { setClosed(event.target.checked); setOffset(0); }} type="checkbox" />Hiện cả Done / Đã hủy</label>
-    </form>
+    </div>
     <section className="scan-table-card">
       <div className="warehouse-incoming-draft-heading"><h2>Danh sách chờ xuất hàng ({total})</h2></div>
       <div className="scan-table-wrap"><table className="warehouse-table">
-        <thead><tr><th>Ngày giao</th><th>PO</th><th>Sales ID</th><th>Item</th><th>Tên / Khách hàng</th><th>ĐVT</th><th>Yêu cầu</th><th>Đã xuất</th><th>Còn phải giao</th><th>Thiếu của item</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
-        <tbody>{rows.map((row) => <tr key={row.id} className={row.item_shortage_qty > 0 ? "warehouse-outgoing-shortage" : undefined}>
+        <thead><tr><th>Ngày giao</th><th>PO</th><th>Sales ID</th><th>Item</th><th>Tên / Khách ERP</th><th>Khách hệ thống</th><th>ĐVT</th><th>Yêu cầu</th><th>Đã xuất</th><th>Còn phải giao</th><th>Thiếu của item</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+        <tbody>{visible.map((row) => <tr key={row.id} className={row.item_shortage_qty > 0 ? "warehouse-outgoing-shortage" : undefined}>
           <td>{date(row.delivery_date)}</td><td>{row.purorder}</td><td>{row.sales_id}</td><td>{row.itemcode}</td>
-          <td className="warehouse-outgoing-name">{row.product_name}<small>{row.customer}</small></td><td>{row.unit_label}</td>
+          <td className="warehouse-outgoing-name">{row.product_name}<small>{row.customer}</small></td><td>{row.system_customer_name || "—"}</td><td>{row.unit_label}</td>
           <td>{num(row.ordered_qty)}</td><td>{num(row.shipped_qty)}</td><td>{num(row.remaining_qty)}</td><td>{num(row.item_shortage_qty)}</td><td>{statusLabel[row.status]}</td>
           <td><div className="warehouse-incoming-row-actions">
             {!row.cancelled && row.shipped_qty < row.ordered_qty ? <>
@@ -254,11 +278,11 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
           </div></td>
         </tr>)}</tbody>
       </table></div>
-      {!rows.length ? <p className="scan-empty">{loading ? "Đang tải…" : "Không có yêu cầu giao hàng."}</p> : null}
+      {!visible.length ? <p className="scan-empty">{loading ? "Đang tải…" : "Không có yêu cầu giao hàng."}</p> : null}
       <div className="warehouse-incoming-next">
-        <button className="button button-secondary" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - 100))} type="button">Trước</button>
-        <span>{total ? `${offset + 1}–${Math.min(offset + 100, total)} / ${total}` : "0"}</span>
-        <button className="button button-secondary" disabled={offset + 100 >= total || loading} onClick={() => setOffset(offset + 100)} type="button">Sau</button>
+        <button className="button button-secondary" disabled={pageStart === 0} onClick={() => setOffset(pageStart - WAREHOUSE_PAGE_SIZE)} type="button">Trước</button>
+        <span>{total ? `${pageStart + 1}–${Math.min(pageStart + WAREHOUSE_PAGE_SIZE, total)} / ${total}` : "0"}</span>
+        <button className="button button-secondary" disabled={pageStart + WAREHOUSE_PAGE_SIZE >= total} onClick={() => setOffset(pageStart + WAREHOUSE_PAGE_SIZE)} type="button">Sau</button>
       </div>
     </section>
 

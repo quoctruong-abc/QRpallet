@@ -841,8 +841,9 @@ npx supabase db push
 npm run test:delivery
 ```
 
-**Tổng hợp tồn kho** nằm đầu tab Xuất kho, có tìm item/tên/khách hàng và lọc
-chỉ item thiếu hàng. Một dòng cho mỗi item trong `inv_stock_summary`:
+**Tổng hợp tồn kho** nằm đầu tab Xuất kho, thu gọn mặc định. Khi mở,
+tìm item/tên/khách hàng ngay khi gõ và có thể lọc chỉ item thiếu hàng.
+Cột Khách hàng hiển thị riêng. Một dòng cho mỗi item trong `inv_stock_summary`:
 
 | Cột | Ý nghĩa |
 | --- | --- |
@@ -899,6 +900,16 @@ Migration chỉ xây lại tổng hợp và chuyển mô hình đăng ký. Khôn
 phiếu xuất hoặc chi tiết lô đã xuất. Version yêu cầu được tăng để trình duyệt cũ
 không gửi tiếp lệnh chưa thực hiện theo dữ liệu cũ; lệnh đã ghi vẫn retry được
 bằng UUID cũ. Dữ liệu giữ lô cũ không còn tham gia tính tồn/On order.
+
+Migration `20261105150000_delivery_system_customer.sql` thêm
+`inv_delivery_requests.system_customer_name`. Tên khách hệ thống lấy theo item:
+ưu tiên danh mục `item_pallet_config`, sau đó lấy tên khách gần nhất có giá trị
+trong `inv_incoming`. Nếu cả hai nguồn trống thì để trống; giữ nguyên tên khách
+ERP trong `customer`. Migration bổ sung tên cho lịch đã có, và thay đổi nguồn
+tên sẽ đồng bộ cho item liên quan. Danh sách chờ xuất có cột Khách hệ thống
+và bộ lọc ngày giao/khách hệ thống; các lựa chọn lấy từ dữ liệu đã tải.
+Bảng tổng hợp và danh sách chờ tải các trang một lần mỗi lần làm mới,
+sau đó tìm kiếm/lọc tại trình duyệt.
 
 API/RPC yêu cầu tài khoản hoạt động có `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.

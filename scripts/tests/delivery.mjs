@@ -244,5 +244,28 @@ assert.equal(summaryRead.model_version,2);
 assert.ok(summaryRead.rows.some(row=>row.itemcode==="C" && row.shortage_qty===40));
 console.log("PASS: populated migration, automatic item-only refresh, uncapped On order, first-confirmed FIFO, partial/cancel/edit, retry, rekeys/deletes, summary permissions and source reconciliation.");
 
+await db.exec("reset role");
+await migrate("20261105150000_delivery_system_customer.sql");
+const backfilled=await request(sum1.id);
+assert.equal(backfilled.system_customer_name,"New Customer","Existing ERP requests get the catalog name");
+assert.equal(backfilled.customer,"Customer","The ERP customer name remains intact");
+assert.equal(backfilled.shipped_qty,60);
+await db.exec("set role authenticated");
+await rpc("import",{rows:[line("NAME-ERP","SUMMARY",4,"2026-11-07",{customer:"ERP Name"}),line("NO-CATALOG","NAME-ONLY-ERP",1,"2026-11-08",{customer:"ERP Only"})]});
+const named=(await get("NAME-ERP"))[0];
+assert.equal(named.system_customer_name,"New Customer");
+assert.equal(named.customer,"ERP Name");
+assert.equal((await get("NO-CATALOG"))[0].system_customer_name,null,"Do not use an ERP name as the system name");
+const namedList=(await db.query("select public.list_delivery(0,'NAME-ERP',false) as data")).rows[0].data;
+assert.equal(namedList.rows[0].system_customer_name,"New Customer");
+await db.exec("reset role; update public.item_pallet_config set customer='Renamed Customer' where itemcode='SUMMARY'");
+assert.equal((await request(named.id)).system_customer_name,"Renamed Customer");
+assert.equal((await request(named.id)).version,named.version,"A metadata refresh does not stale a shipping action");
+await db.exec("update public.item_pallet_config set customer='' where itemcode='SUMMARY'");
+assert.equal((await request(named.id)).system_customer_name,"Customer","Falls back to the latest named incoming lot");
+assert.equal(Number((await summary("SUMMARY")).on_order_qty),4);
+assert.equal(Number((await summary("SUMMARY")).balance_qty),30);
+console.log("PASS: system customer backfill and synchronization, preserved ERP name, incoming fallback, no changes to shipping versions or quantities.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");
