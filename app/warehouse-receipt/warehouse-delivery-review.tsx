@@ -48,11 +48,13 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
   const dialog = useRef<HTMLDialogElement>(null);
   const editor = useRef<HTMLDialogElement>(null);
   const request = useRef<AbortController | null>(null);
+  const selectAll = useRef<HTMLInputElement>(null);
   const [shipDate, setShipDate] = useState(todayInVietnam);
   const [review, setReview] = useState<DeliveryFifoReview | null>(null);
   const [bulk, setBulk] = useState(false);
   const [bulkData, setBulkData] = useState<BulkDeliveryPreview | null>(null);
   const [picked, setPicked] = useState<Map<string, PickAmounts>>(new Map());
+  const [included, setIncluded] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<ReviewRow | null>(null);
   const [draft, setDraft] = useState<PickAmounts>({});
   const [requestedCount, setRequestedCount] = useState(0);
@@ -74,6 +76,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
     setReview(null);
     setBulkData(null);
     setPicked(new Map());
+    setIncluded(new Set());
     setError("");
     setCopied("");
     setSavedLots("");
@@ -94,6 +97,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
         const result = data as BulkDeliveryPreview;
         setBulkData(result);
         setPicked(new Map(result.rows.map((row) => [row.itemcode, suggest(lotsFor(result, row.itemcode), row.quantity)])));
+        setIncluded(new Set(result.rows.map((row) => row.itemcode)));
       }
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Không tải được gợi ý FIFO.");
@@ -130,18 +134,29 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
 
   const editorLots = editing && bulkData ? lotsFor(bulkData, editing.itemcode) : [];
   const draftTotal = Object.values(draft).reduce((total, qty) => total + qty, 0);
-  const invalidDraft = !editing || draftTotal > editing.quantity || editorLots.some((lot) => {
+  const draftExcess = Math.max(0, draftTotal - (editing?.quantity ?? 0));
+  const invalidDraft = !editing || editorLots.some((lot) => {
     const amount = draft[lot.incoming_id] ?? 0;
     return !Number.isInteger(amount) || amount < 0 || amount > lot.balance_qty;
   });
-  const chosenTotal = Array.from(picked.values()).reduce((total, amounts) => total + Object.values(amounts).reduce((sum, qty) => sum + qty, 0), 0);
+  const selectionByItem = new Map(bulkData?.rows.map((row) => [
+    row.itemcode, summarize(lotsFor(bulkData, row.itemcode), picked.get(row.itemcode) ?? {}),
+  ]));
+  const selectedRows = bulkData?.rows.filter((row) => included.has(row.itemcode)) ?? [];
+  const chosenTotal = selectedRows.reduce((total, row) => total + (selectionByItem.get(row.itemcode)?.quantity ?? 0), 0);
+  const excessRows = selectedRows.filter((row) => (selectionByItem.get(row.itemcode)?.quantity ?? 0) > row.quantity);
+  const allSelected = Boolean(bulkData?.rows.length && included.size === bulkData.rows.length);
+  useEffect(() => {
+    if (selectAll.current) selectAll.current.indeterminate = included.size > 0 && !allSelected;
+  }, [included.size, allSelected]);
 
   function saveLotSelection() {
     if (!editing || invalidDraft) return;
     const itemcode = editing.itemcode;
     const saved = Object.fromEntries(Object.entries(draft).filter(([, amount]) => amount > 0));
     setPicked((old) => new Map(old).set(itemcode, saved));
-    setSavedLots(`Đã lưu lô cho ${itemcode}: chọn xuất ${num(draftTotal)}, còn lại ${num(editing.quantity - draftTotal)}.`);
+    const balance = draftExcess ? `vượt yêu cầu ${num(draftExcess)}` : `còn lại ${num(editing.quantity - draftTotal)}`;
+    setSavedLots(`Đã lưu lô cho ${itemcode}: chọn xuất ${num(draftTotal)}, ${balance}.`);
     editor.current?.close();
   }
 
@@ -150,6 +165,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
     const itemcodes = new Set<string>();
     const lots: BulkDeliveryInput["lots"] = [];
     for (const [itemcode, amounts] of picked) {
+      if (!included.has(itemcode)) continue;
       for (const [incoming_id, quantity] of Object.entries(amounts)) {
         if (quantity <= 0) continue;
         itemcodes.add(itemcode);
@@ -181,17 +197,35 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
       {bulk && submitted && notice ? <p className="alert" role="status">{notice}</p> : null}
       {bulk && savedLots ? <p className="muted small" role="status">{savedLots}</p> : null}
       {review ? <>
-        <p><strong>{num(review.rows.length)} item · {num(review.request_count)} yêu cầu chờ xuất</strong>{bulk ? ` · Chọn xuất ${num(chosenTotal)}` : ""}</p>
+        <p><strong>{num(review.rows.length)} item · {num(review.request_count)} yêu cầu chờ xuất</strong>{bulk ? ` · Đã chọn ${num(included.size)}/${num(review.rows.length)} item · Chọn xuất ${num(chosenTotal)}` : ""}</p>
         {review.request_count < requestedCount ? <p className="alert" role="status">Một số yêu cầu không còn chờ xuất. Tải lại danh sách để cập nhật.</p> : null}
         {review.rows.length ? <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table">
-          <thead><tr><th>Ngày xuất</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng cần xuất</th>{bulk ? <th>Chọn xuất</th> : null}<th>Ngày sản xuất / Số lượng {bulk ? "chọn xuất" : "FIFO"}</th><th>{bulk ? "Còn lại sau xuất" : "Còn thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
+          <thead><tr>{bulk ? <th><input type="checkbox" ref={selectAll} aria-label="Chọn tất cả item xuất"
+            checked={allSelected} disabled={locked || !bulkData}
+            onChange={(event) => { setIncluded(new Set(event.target.checked ? bulkData?.rows.map((row) => row.itemcode) : [])); }} /></th> : null}
+          <th>Ngày xuất</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng cần xuất</th>{bulk ? <th>Chọn xuất</th> : null}<th>Ngày sản xuất / Số lượng {bulk ? "chọn xuất" : "FIFO"}</th><th>{bulk ? "Còn lại sau xuất" : "Còn thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
           <tbody>{review.rows.map((row) => {
-            const selection = bulkData ? summarize(lotsFor(bulkData, row.itemcode), picked.get(row.itemcode) ?? {}) : null;
+            const selection = selectionByItem.get(row.itemcode);
+            const checked = included.has(row.itemcode);
             const days = selection?.days ?? row.days;
-            const missing = selection ? row.quantity - selection.quantity : row.shortage_qty;
-            return <tr key={row.itemcode} className={missing > 0 ? "warehouse-outgoing-shortage" : undefined}>
+            const missing = selection ? Math.max(0, row.quantity - selection.quantity) : row.shortage_qty;
+            const excess = Math.max(0, (selection?.quantity ?? 0) - row.quantity);
+            const rowClass = bulk && !checked ? "warehouse-bulk-unselected" : missing > 0 || excess > 0 ? "warehouse-outgoing-shortage" : undefined;
+            return <tr key={row.itemcode} className={rowClass}>
+              {bulk ? <td><input type="checkbox" aria-label={`Chọn xuất ${row.itemcode}`} checked={checked} disabled={locked}
+                onChange={(event) => {
+                  const nextChecked = event.target.checked;
+                  setIncluded((old) => {
+                    const next = new Set(old);
+                    if (nextChecked) next.add(row.itemcode);
+                    else next.delete(row.itemcode);
+                    return next;
+                  });
+                }} /></td> : null}
               <td>{shipDate ? formatDate(shipDate) : "—"}</td><td>{row.itemcode}</td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td className="warehouse-review-number">{num(row.quantity)}</td>
-              {bulk ? <td className="warehouse-review-number"><strong>{num(selection?.quantity ?? 0)}</strong></td> : null}
+              {bulk ? <td className="warehouse-review-number"><strong>{num(selection?.quantity ?? 0)}</strong>
+                {excess > 0 && checked ? <small className="warehouse-bulk-overage">Vượt {num(excess)}</small> : null}
+              </td> : null}
               <td>{days.length ? <ul className="warehouse-outgoing-review-days">{days.map((day) =>
                 <li key={day.production_date ?? "undated"}>
                   <span>{productionDate(day.production_date)}
@@ -202,7 +236,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
               }</ul> : bulk && bulkData && lotsFor(bulkData, row.itemcode).length ? "Chưa chọn lô" : "Không có tồn"}</td>
               <td className="warehouse-review-number">{num(missing)}</td>
               {bulk ? <td><button type="button" className="button button-secondary button-small warehouse-stock-eye" title="Sửa lô xuất"
-                aria-label={`Sửa lô xuất ${row.itemcode}`} disabled={locked || !bulkData || !lotsFor(bulkData, row.itemcode).length} onClick={() => editLots(row)}>
+                aria-label={`Sửa lô xuất ${row.itemcode}`} disabled={locked || !checked || !bulkData || !lotsFor(bulkData, row.itemcode).length} onClick={() => editLots(row)}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                   <path d="m15 5 4 4M4 20l4.5-1L20 7.5 16.5 4 5 15.5 4 20Z" />
                 </svg>
@@ -211,6 +245,9 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
           })}</tbody>
         </table></div> : <p className="scan-empty">Không còn yêu cầu chờ xuất trong kết quả đã lọc.</p>}
       </> : null}
+      {bulk && excessRows.length ? <p className="alert warehouse-bulk-warning" role="alert">
+        {num(excessRows.length)} item đã chọn vượt số còn phải giao. Phần vượt sẽ ghi vào yêu cầu cuối của item theo thứ tự giao.
+      </p> : null}
       {copied ? <p className="muted small" role="status">{copied}</p> : null}
       <div className="modal-actions">
         <button className="button button-secondary" type="button" disabled={bulk && busy} onClick={() => dialog.current?.close()}>Đóng</button>
@@ -228,19 +265,20 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
       {editing ? <>
         <p className="muted small">Bỏ tick để không lấy lô. Nhập số lượng nhỏ hơn tồn lô để chỉ lấy một phần.</p>
         <p>Cần xuất <strong>{num(editing.quantity)}</strong> · Đã chọn <strong>{num(draftTotal)}</strong></p>
-        {invalidDraft ? <p role="alert" className="alert alert-error">Số lấy phải là số nguyên, trong giới hạn tồn từng lô và tổng cần xuất.</p> : null}
+        {invalidDraft ? <p role="alert" className="alert alert-error">Số lấy phải là số nguyên và không vượt tồn từng lô.</p> : null}
+        {draftExcess > 0 && !invalidDraft ? <p role="alert" className="alert warehouse-bulk-warning">Đã vượt số lượng cần xuất: {num(draftExcess)}.</p> : null}
         <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table">
           <thead><tr><th>Chọn</th><th>Lô nhập</th><th>Ngày sản xuất</th><th>Ngày nhập</th><th>Tồn lô</th><th>Số lượng lấy</th></tr></thead>
           <tbody>{editorLots.map((lot) => {
             const amount = draft[lot.incoming_id] ?? 0;
             return <tr key={lot.incoming_id}>
               <td><input aria-label={`Chọn lô ${lot.incoming_id}`} type="checkbox" checked={amount > 0}
-                disabled={amount === 0 && draftTotal >= editing.quantity}
                 onChange={(event) => {
                   const checked = event.target.checked;
                   setDraft((old) => {
                     const total = Object.values(old).reduce((sum, value) => sum + value, 0);
-                    return { ...old, [lot.incoming_id]: checked ? Math.max(0, Math.min(lot.balance_qty, editing.quantity - total)) : 0 };
+                    const remaining = editing.quantity - total;
+                    return { ...old, [lot.incoming_id]: checked ? (remaining > 0 ? Math.min(lot.balance_qty, remaining) : lot.balance_qty) : 0 };
                   });
                 }} /></td>
               <td>#{lot.incoming_id}</td><td>{productionDate(lot.production_date)}</td><td>{formatDate(lot.received_date)}</td><td>{num(lot.balance_qty)}</td>

@@ -139,6 +139,9 @@
 .warehouse-outgoing-review-days { display: grid; gap: 4px; list-style: none; margin: 0; padding: 0; min-width: 165px; }
 .warehouse-outgoing-review-days li { display: flex; justify-content: space-between; gap: 10px; }
 .warehouse-review-lot-ids { display: block; color: var(--muted); margin-top: 3px; }
+.warehouse-bulk-unselected { color: var(--muted); background: var(--surface-soft); }
+.warehouse-bulk-overage { display: block; margin-top: 4px; font-weight: 750; color: #93370d; white-space: nowrap; }
+.warehouse-bulk-warning { color: #93370d; background: #fffaeb; border-color: #fedf89; }
 .warehouse-outgoing-error { white-space: pre-wrap; }
 .warehouse-outgoing .warehouse-opening-dialog h3 { margin: 20px 0 10px; }
 

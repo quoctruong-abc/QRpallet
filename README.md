@@ -938,6 +938,11 @@ Một lần xác nhận ghi toàn bộ phiếu và các lô trong cùng giao d�
 cùng mã thao tác không trừ tồn lần nữa. **Review** có thể sao chép bảng dưới
 dạng ảnh PNG. Bảng xuất hàng loạt hiển thị mã lô và số lượng sau khi sửa.
 
+Migration `20261106140000_bulk_delivery_overship.sql` cho phép xuất vượt
+nhu cầu khi lô còn đủ tồn. Hệ thống đáp ứng các yêu cầu được chọn theo thứ
+tự giao trước, rồi ghi phần vượt vào yêu cầu cuối của item; số yêu cầu
+gốc giữ nguyên. Giao diện cảnh báo số vượt và chỉ ghi các item được tick.
+
 API/RPC yêu cầu tài khoản hoạt động có `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.
 Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đầy đủ vẫn lưu trong DB.

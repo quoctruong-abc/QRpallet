@@ -467,5 +467,34 @@ assert.equal(Number((await summary(bulkItem)).on_order_qty),108);
 assert.equal((await db.query("select balance_qty from public.inv_incoming where id=$1",[undatedId])).rows[0].balance_qty,6);
 console.log("PASS: bulk shipment honors exact edited lots, posts partial orders in delivery order, and rejects stale/invalid batches without duplicate stock deduction.");
 
+await db.exec("reset role");
+await migrate("20261106140000_bulk_delivery_overship.sql");
+const unselectedItem="BULK-UNCHECKED";
+const unselectedLot=String((await seed(unselectedItem,30,null)).rows[0].id);
+const maxLot=String((await seed("BULK-MAX",2147483647,null)).rows[0].id);
+const oneLot=String((await seed("BULK-MAX",1,null)).rows[0].id);
+await db.exec("set role authenticated");
+assert.deepEqual(await postBulk(bulkPayload,bulkCommand),{shipped:10,request_count:2},"Migration preserves previously recorded command results");
+await rpc("import",{rows:[line("BULK-EXTRA-LATE",bulkItem,2,"2026-11-12"),line("BULK-UNCHECKED",unselectedItem,3),line("BULK-MAX", "BULK-MAX",1)]});
+const afterPartial=await request(late.id), extraLate=(await get("BULK-EXTRA-LATE"))[0];
+const excessPayload={shipped_date:"2026-11-12",requests:[extraLate,afterPartial].map(({id,version})=>({id,version})),
+  lots:[{incoming_id:oldId,quantity:4},{incoming_id:newId,quantity:10}]};
+await assert.rejects(postBulk({...excessPayload,lots:[...excessPayload.lots,{incoming_id:unselectedLot,quantity:1}]}),/DELIVERY_BULK_LOT_MISMATCH/);
+const maxOrder=(await get("BULK-MAX"))[0];
+await assert.rejects(postBulk({shipped_date:excessPayload.shipped_date,requests:[{id:maxOrder.id,version:maxOrder.version}],
+  lots:[{incoming_id:maxLot,quantity:2147483647},{incoming_id:oneLot,quantity:1}]}),/DELIVERY_BULK_QTY_LIMIT/);
+assert.equal(Number((await summary("BULK-MAX")).balance_qty),2147483648);
+const excessCommand=randomUUID();
+assert.deepEqual(await postBulk(excessPayload,excessCommand),{shipped:14,request_count:2});
+assert.deepEqual(await postBulk(excessPayload,excessCommand),{shipped:14,request_count:2});
+const firstShipped=await request(late.id), lastShipped=await request(extraLate.id);
+assert.deepEqual([firstShipped.ordered_qty,firstShipped.shipped_qty,lastShipped.ordered_qty,lastShipped.shipped_qty],[10,10,2,6]);
+assert.equal((await get("BULK-NOT-SELECTED"))[0].shipped_qty,0,"Another request for the same item is outside this batch");
+assert.equal((await get("BULK-UNCHECKED"))[0].shipped_qty,0);
+assert.equal(Number((await summary(unselectedItem)).balance_qty),30);
+assert.equal(Number((await summary(bulkItem)).balance_qty),14);
+assert.equal(Number((await summary(bulkItem)).on_order_qty),100,"Excess is not deducted from other open orders");
+console.log("PASS: bulk overshipment is allocated to the last selected request, preserves plans and unselected demand, and remains idempotent.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");
