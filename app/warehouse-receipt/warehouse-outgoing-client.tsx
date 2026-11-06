@@ -311,14 +311,14 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       {notice ? <p role="status" className="alert">{notice}</p> : null}
       {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">Thử lại thao tác chưa rõ kết quả</button> : null}
       {preview ? <>
-        <p><strong>{preview.length} dòng.</strong> Có {new Set(preview.filter((row) => row.item_shortage_after > 0).map((row) => row.itemcode)).size} item thiếu hàng dự kiến. On order được tính theo tổng nhu cầu của item, chưa chọn lô.</p>
+        <p><strong>{preview.length} dòng.</strong> Có {new Set(preview.filter((row) => row.item_shortage_after > 0).map((row) => row.itemcode)).size} item thiếu hàng dự kiến. Số thiếu tính theo tổng nhu cầu của từng item, gồm các lịch đang chờ và thay đổi từ file.</p>
         <div className="scan-table-wrap warehouse-outgoing-preview"><table className="warehouse-table">
-          <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Yêu cầu trong file</th><th>Tồn hiện tại</th><th>Đã yêu cầu</th><th>Tồn khả dụng</th><th>On order sau nạp</th><th>Thiếu của item</th><th>Cách nạp</th></tr></thead>
+          <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Yêu cầu trong file</th><th>Tồn hiện tại</th><th>Đã yêu cầu</th><th>Tồn khả dụng</th><th>Thiếu của item</th><th>Cách nạp</th></tr></thead>
           <tbody>{preview.map((row) => <tr key={row.excel_row} className={row.item_shortage_after > 0 ? "warehouse-outgoing-shortage" : undefined}>
             <td>{row.excel_row}</td><td>{date(row.delivery_date)}</td><td>{row.purorder}<br />{row.sales_id}</td><td>{row.itemcode}</td>
             <td>{num(row.ordered_qty)}</td><td>{num(row.item_stock_qty)}</td><td>{num(row.item_on_order_qty)}</td>
             {/* The preview already contains both operands of inv_stock_summary.available_qty from the same snapshot. */}
-            <td>{num(row.item_stock_qty - row.item_on_order_qty)}</td><td>{num(row.item_on_order_after)}</td><td>{num(row.item_shortage_after)}</td>
+            <td>{num(row.item_stock_qty - row.item_on_order_qty)}</td><td>{num(row.item_shortage_after)}</td>
             <td>{row.existing ? (row.existing.cancelled ? "Đã hủy — bỏ qua" : row.existing.ordered_qty === row.ordered_qty ? "Không đổi — bỏ qua" : "Cập nhật số lượng") : row.candidates.length ?
               <select aria-label={`Cách nạp dòng ${row.excel_row}`} disabled={locked} onChange={(event) => setChoices((old) => ({ ...old, [row.excel_row]: event.target.value }))} value={choices[row.excel_row] || ""}>
                 <option value="">Chọn lịch mới hoặc dời lịch…</option><option value="new">Tạo lịch giao mới</option>

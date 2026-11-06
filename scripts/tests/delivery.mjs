@@ -377,5 +377,21 @@ const afterManualShip=await summary(input.itemcode);
 assert.deepEqual([afterManualShip.balance_qty,afterManualShip.on_order_qty].map(Number),[3,3]);
 console.log("PASS: manual delivery lookup, authorization, idempotency, coexistence with ERP, On order, and normal edit/ship flow.");
 
+await db.exec("reset role");
+await seed("SPLIT-PO",100,"2026-09-01");
+await db.exec("set role authenticated");
+await rpc("import",{rows:[line("SPLIT-A","SPLIT-PO",20,"2026-11-09")]});
+const splitLines=[line("SPLIT-A","SPLIT-PO",45,"2026-11-10",{excel_row:6}),line("SPLIT-B","SPLIT-PO",50,"2026-11-10",{excel_row:7})];
+const splitPreview=(await rpc("preview",{rows:splitLines})).rows;
+assert.deepEqual(splitPreview.map(row=>row.item_shortage_after),[15,15],"Different PO/SO on the same day share one item shortage");
+assert.deepEqual(previewDeliveryDemand(splitPreview,{6:"new",7:"new"}).map(row=>row.item_shortage_after),[15,15]);
+const oldSchedule=splitPreview[0].candidates[0];
+const movedPreview=previewDeliveryDemand(splitPreview,{6:oldSchedule.id,7:"new"});
+assert.deepEqual(movedPreview.map(row=>row.item_shortage_after),[0,0],"Rescheduling replaces the old demand instead of counting it twice");
+assert.equal(Number((await summary("SPLIT-PO")).on_order_qty),20,"Preview does not book the new demand");
+await rpc("import",{rows:[{...splitLines[0],target_id:oldSchedule.id,expected_version:oldSchedule.version},splitLines[1]]});
+assert.deepEqual([(await summary("SPLIT-PO")).on_order_qty,(await summary("SPLIT-PO")).shortage_qty].map(Number),[95,0]);
+console.log("PASS: same-day split PO/SO demand is aggregated by item, with existing demand counted once when rescheduling.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

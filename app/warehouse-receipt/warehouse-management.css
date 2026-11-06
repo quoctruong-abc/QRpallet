@@ -125,8 +125,8 @@
 .warehouse-outgoing-preview { min-height: min(128px, 25dvh); margin: 12px 0; overflow: auto; }
 .warehouse-outgoing-preview .warehouse-table { border-collapse: separate; border-spacing: 0; }
 .warehouse-outgoing-preview thead th { position: sticky; top: 0; z-index: 1; }
-.warehouse-outgoing-preview th:nth-child(n + 5):nth-child(-n + 10),
-.warehouse-outgoing-preview td:nth-child(n + 5):nth-child(-n + 10) { text-align: right; }
+.warehouse-outgoing-preview th:nth-child(n + 5):nth-child(-n + 9),
+.warehouse-outgoing-preview td:nth-child(n + 5):nth-child(-n + 9) { text-align: right; }
 .warehouse-outgoing-preview select { min-width: 250px; }
 .warehouse-outgoing-error { white-space: pre-wrap; }
 .warehouse-outgoing .warehouse-opening-dialog h3 { margin: 20px 0 10px; }
