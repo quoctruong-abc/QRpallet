@@ -918,6 +918,12 @@ cho phép xuất vượt yêu cầu và thêm `list_stock_production_dates`. Nú
 trong bảng tổng hợp tải tồn thực tế theo ngày sản xuất: chỉ đếm lô còn hàng
 và xếp nhóm không có ngày sản xuất lên đầu.
 
+Migration `20261106110000_manual_delivery.sql` thêm nhập lịch giao thủ công.
+Khung nhập mặc định thu gọn; người dùng điền ngày giao, mã sản phẩm và số lượng.
+Tên sản phẩm và khách được tra từ dữ liệu nội bộ. Lịch được đánh dấu **Nhập tay**
+với mã tham chiếu riêng, không cần PO/Sales ID, và cập nhật On order như lịch ERP.
+Gửi lại cùng mã thao tác không tạo thêm lịch.
+
 API/RPC yêu cầu tài khoản hoạt động có `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.
 Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đầy đủ vẫn lưu trong DB.

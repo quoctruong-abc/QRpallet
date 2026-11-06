@@ -15,9 +15,24 @@ export type DeliveryInput = {
 };
 export type DeliveryRequest = DeliveryInput & {
   id: string; system_customer_name: string | null; shipped_qty: number; remaining_qty: number;
+  delivery_source?: "erp" | "manual";
   item_stock_qty: number; item_on_order_qty: number; item_available_qty: number; item_shortage_qty: number;
   cancelled: boolean; version: number; status: "pending" | "partial" | "done" | "cancelled";
 };
+export const MAX_DELIVERY_QUANTITY = 2147483647;
+export type ManualDeliveryInput = Pick<DeliveryInput, "itemcode" | "delivery_date" | "ordered_qty">;
+export type ManualDeliveryItem = { product_name: string; customer: string | null };
+
+export function parseManualDeliveryInput(value: unknown): ManualDeliveryInput {
+  const row = (value ?? {}) as Partial<ManualDeliveryInput>;
+  const itemcode = normalizeWarehouseItemcode(typeof row.itemcode === "string" ? row.itemcode : "");
+  if (!isInventoryDate(row.delivery_date)) throw new Error("Ngày giao không hợp lệ.");
+  const qty = row.ordered_qty;
+  if (typeof qty !== "number" || !Number.isInteger(qty) || qty < 1 || qty > MAX_DELIVERY_QUANTITY) {
+    throw new Error("Số lượng phải là số nguyên dương hợp lệ.");
+  }
+  return { itemcode, delivery_date: row.delivery_date, ordered_qty: qty };
+}
 export type DeliveryCandidate = {
   id: string; delivery_date: string; ordered_qty: number; shipped_qty: number;
   version: number; unit: string; cancelled: boolean;

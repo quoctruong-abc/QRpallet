@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { todayInVietnam } from "@/lib/warehouse-receipt/incoming";
 import { loadWarehouseRows, matchesWarehouseSearch, warehouseSearchTokens, WAREHOUSE_PAGE_SIZE } from "@/lib/warehouse-receipt/outgoing-list";
-import { previewDeliveryDemand, type DeliveryPreviewLine, type DeliveryRequest, type FifoPreview } from "@/lib/warehouse-receipt/outgoing";
+import { MAX_DELIVERY_QUANTITY, previewDeliveryDemand, type DeliveryPreviewLine, type DeliveryRequest, type FifoPreview } from "@/lib/warehouse-receipt/outgoing";
+import { WarehouseManualDelivery } from "./warehouse-manual-delivery";
 
 type Command = { action: string; command_id: string; profile_id: string; payload: Record<string, unknown> };
 type History = { id: string; quantity: number; shipped_date: string; entered_by_name: string; inv_delivery_issue_lines: { incoming_id: number; quantity: number; inv_incoming: { received_date: string; production_date: string | null } }[] };
@@ -11,7 +12,8 @@ import { WarehouseStockSummary } from "./warehouse-stock-summary";
 const num = (n: number) => Number(n).toLocaleString("vi-VN");
 const date = (v: string | null) => v ? v.split("-").reverse().join("/") : "—";
 const statusLabel = { pending: "Chờ xuất", partial: "Xuất một phần", done: "Done", cancelled: "Đã hủy" };
-const maxDeliveryQty = 2147483647;
+const maxDeliveryQty = MAX_DELIVERY_QUANTITY;
+const manualReference = (row: DeliveryRequest) => `NT-${row.id.slice(0, 8).toUpperCase()}`;
 
 export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const id = useId();
@@ -44,6 +46,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const [history, setHistory] = useState<History[]>([]);
   const [fifo, setFifo] = useState<FifoPreview | null>(null);
   const [revision, setRevision] = useState(0);
+  const [manualSaved, setManualSaved] = useState(0);
   const [detailError, setDetailError] = useState("");
   const detailVersion = useRef(0);
   const locked = busy || Boolean(pending) || blocked || !ready;
@@ -72,7 +75,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         const saved = localStorage.getItem(key);
         if (saved) {
           const command = JSON.parse(saved) as Command;
-          if (command.profile_id !== profileId || typeof command.command_id !== "string" || !["import", "edit", "cancel", "reserve", "ship"].includes(command.action) || !command.payload) throw new Error("Invalid saved command");
+          if (command.profile_id !== profileId || typeof command.command_id !== "string" || !["manual", "import", "edit", "cancel", "reserve", "ship"].includes(command.action) || !command.payload) throw new Error("Invalid saved command");
           setPending(command);
           setNotice("Có thao tác xuất kho chưa rõ kết quả. Bấm Thử lại để kiểm tra, không tạo thao tác mới.");
         }
@@ -128,7 +131,9 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       importDialog.current?.close();
       actionDialog.current?.close();
       setSelected(null);
+      if (current.action === "manual") setManualSaved((value) => value + 1);
       setNotice(current.action === "ship" ? `Đã ghi nhận xuất ${num(data.result.shipped)}.`
+        : current.action === "manual" ? "Đã thêm lịch giao thủ công vào danh sách chờ xuất hàng."
         : current.action === "import" ? `Đã nạp/cập nhật ${data.result.changed} dòng; bỏ qua ${data.result.skipped} dòng không đổi.`
         : current.action === "cancel" ? "Đã hủy phần chờ và cập nhật On order của item."
         : current.action === "reserve" ? "On order được tính tự động từ danh sách còn phải giao."
@@ -234,7 +239,8 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
     const tokens = warehouseSearchTokens(search);
     return loaded.filter((row) => (!activeDate || row.delivery_date === activeDate)
       && (!activeCustomer || (activeCustomer === "missing" ? !row.system_customer_name : `name:${row.system_customer_name}` === activeCustomer))
-      && matchesWarehouseSearch(tokens, [row.purorder, row.sales_id, row.itemcode, row.product_name, row.customer, row.system_customer_name]));
+      && matchesWarehouseSearch(tokens, [row.purorder, row.sales_id, row.itemcode, row.product_name, row.customer, row.system_customer_name,
+        row.delivery_source === "manual" ? `Nhập tay ${manualReference(row)}` : null]));
   }, [loaded, activeDate, activeCustomer, search]);
   const total = filtered.length;
   const pageStart = Math.min(offset, Math.max(0, Math.floor((total - 1) / WAREHOUSE_PAGE_SIZE) * WAREHOUSE_PAGE_SIZE));
@@ -249,6 +255,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
     {notice ? <p role="status" className="alert">{notice}</p> : null}
     {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">{busy ? "Đang xử lý…" : "Thử lại thao tác chưa rõ kết quả"}</button> : null}
     {listError ? <p role="alert" className="alert alert-error">{listError}</p> : null}
+    <WarehouseManualDelivery locked={locked} saved={manualSaved} onSubmit={(payload) => { void execute("manual", payload); }} />
     <WarehouseStockSummary revision={revision} />
     <div className="warehouse-outgoing-toolbar">
       <input type="search" aria-label="Tìm yêu cầu xuất" onChange={(event) => { setSearch(event.target.value); setOffset(0); }}
@@ -273,8 +280,10 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       <div className="scan-table-wrap"><table className="warehouse-table">
         <thead><tr><th>Ngày giao</th><th>PO</th><th>Sales ID</th><th>Item</th><th>Tên / Khách ERP</th><th>Khách hệ thống</th><th>ĐVT</th><th>Yêu cầu</th><th>Đã xuất</th><th>Còn phải giao</th><th>Thiếu của item</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
         <tbody>{visible.map((row) => <tr key={row.id} className={row.item_shortage_qty > 0 ? "warehouse-outgoing-shortage" : undefined}>
-          <td>{date(row.delivery_date)}</td><td>{row.purorder}</td><td>{row.sales_id}</td><td>{row.itemcode}</td>
-          <td className="warehouse-outgoing-name">{row.product_name}<small>{row.customer}</small></td><td>{row.system_customer_name || "—"}</td><td>{row.unit_label}</td>
+          <td>{date(row.delivery_date)}</td>
+          <td>{row.delivery_source === "manual" ? <span title={row.purorder}>Nhập tay · {manualReference(row)}</span> : row.purorder}</td>
+          <td>{row.delivery_source === "manual" ? "—" : row.sales_id}</td><td>{row.itemcode}</td>
+          <td className="warehouse-outgoing-name">{row.product_name}{row.delivery_source !== "manual" && row.customer ? <small>{row.customer}</small> : null}</td><td>{row.system_customer_name || "—"}</td><td>{row.unit_label || "—"}</td>
           <td>{num(row.ordered_qty)}</td><td>{num(row.shipped_qty)}</td><td>{num(row.remaining_qty)}</td><td>{num(row.item_shortage_qty)}</td><td>{statusLabel[row.status]}</td>
           <td><div className="warehouse-incoming-row-actions">
             {!row.cancelled && row.shipped_qty < row.ordered_qty ? <>
@@ -328,7 +337,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       <div className="modal-heading"><h2 id={`${id}-action-title`}>{mode === "ship" ? "Xác nhận xuất thực tế" : mode === "edit" ? "Sửa yêu cầu / Dời ngày" : mode === "cancel" ? "Hủy phần chưa xuất" : "Chi tiết giao hàng"}</h2>
         <button aria-label="Đóng chi tiết" className="modal-close" disabled={busy} onClick={() => actionDialog.current?.close()} type="button">×</button></div>
       {selected ? <>
-        <p>{selected.purorder} / {selected.sales_id} / {selected.itemcode}</p>
+        <p>{selected.delivery_source === "manual" ? `Nhập tay · ${manualReference(selected)}` : `${selected.purorder} / ${selected.sales_id}`} / {selected.itemcode}</p>
         <p>Yêu cầu {num(selected.ordered_qty)} · Đã xuất {num(selected.shipped_qty)} · Còn phải giao {num(selected.remaining_qty)} · Tồn item {num(fifo?.item_stock_qty ?? selected.item_stock_qty)}</p>
         {notice ? <p role="status" className="alert">{notice}</p> : null}
         {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">Thử lại thao tác chưa rõ kết quả</button> : null}

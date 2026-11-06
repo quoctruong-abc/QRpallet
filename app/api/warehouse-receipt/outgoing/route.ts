@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { readMergeRanges, expandMergedCells } from "@/lib/excel-merged";
-import { parseDeliverySheet } from "@/lib/warehouse-receipt/outgoing";
+import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
+import { parseDeliverySheet, parseManualDeliveryInput, type ManualDeliveryInput } from "@/lib/warehouse-receipt/outgoing";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -12,6 +13,9 @@ const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}
 
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
+  if (error.code === "PGRST202" && /lookup_manual_delivery_item|post_manual_delivery/.test(message)) {
+    return fail("Cần chạy migration 20261106110000_manual_delivery.sql để nhập lịch giao thủ công.", 503);
+  }
   if (error.code === "PGRST202" && message.includes("list_stock_production_dates")) {
     return fail("Cần chạy migration 20261106100000_stock_fifo_overship.sql để xem tồn theo ngày sản xuất.", 503);
   }
@@ -29,6 +33,7 @@ function dbError(error: { code?: string; message?: string }) {
     ["DELIVERY_DATE_CONFLICT", "Ngày mới trùng với một lịch đã có. Không thể dời lịch vào ngày đó."],
     ["DELIVERY_CANCELLED", "Yêu cầu đã hủy, không thể tiếp tục xuất hoặc chỉnh sửa."],
     ["DELIVERY_DONE", "Yêu cầu đã hoàn tất và không còn phần chờ xuất."],
+    ["DELIVERY_ITEM_NOT_FOUND", "Không tìm thấy item, vui lòng cập nhật database."],
     ["DELIVERY_DUPLICATE_KEY", "File có dòng trùng PO, Sales ID, Itemcode và ngày giao."],
   ];
   const known = messages.find(([key]) => message.includes(key));
@@ -44,6 +49,16 @@ export async function GET(request: Request) {
   if (!auth.ok) return fail(auth.error, auth.status);
   const db = await createClient();
   const url = new URL(request.url);
+  if (url.searchParams.get("view") === "manual-item") {
+    let itemcode: string;
+    try { itemcode = normalizeWarehouseItemcode(url.searchParams.get("itemcode") || ""); }
+    catch (error) { return fail(error instanceof Error ? error.message : "Mã sản phẩm không hợp lệ."); }
+    const { data, error } = await db.rpc("lookup_manual_delivery_item", { p_itemcode: itemcode });
+    if (error) return dbError(error);
+    const item = data?.[0];
+    if (!item) return fail("Không tìm thấy item, vui lòng cập nhật database.", 404);
+    return Response.json({ success: true, item }, { headers: { "Cache-Control": "no-store" } });
+  }
   if (url.searchParams.get("view") === "production-dates") {
     const itemcode = (url.searchParams.get("itemcode") || "").trim();
     if (!itemcode || itemcode.length > 200) return fail("Mã sản phẩm không hợp lệ.");
@@ -104,9 +119,17 @@ export async function POST(request: Request) {
     }
   }
   const body = await request.json().catch(() => null);
-  if (!body || !["import", "edit", "cancel", "reserve", "ship"].includes(body.action) || !uuid(body.command_id) || !body.payload || typeof body.payload !== "object") return fail("Yêu cầu không hợp lệ.");
+  if (!body || !["manual", "import", "edit", "cancel", "reserve", "ship"].includes(body.action) || !uuid(body.command_id) || !body.payload || typeof body.payload !== "object") return fail("Yêu cầu không hợp lệ.");
   if (body.profile_id !== auth.profile.id) return fail("Tài khoản đã thay đổi. Tải lại trang trước khi tiếp tục.", 403);
   try {
+    if (body.action === "manual") {
+      let payload: ManualDeliveryInput;
+      try { payload = parseManualDeliveryInput(body.payload); }
+      catch (error) { return fail(error instanceof Error ? error.message : "Lịch giao không hợp lệ."); }
+      const { data, error } = await db.rpc("post_manual_delivery", { p_command_id: body.command_id, p_payload: payload });
+      if (error) return dbError(error);
+      return Response.json({ success: true, result: data });
+    }
     const { data, error } = await db.rpc("manage_delivery", { p_action: body.action, p_command_id: body.command_id, p_payload: body.payload });
     if (error) return dbError(error);
     return Response.json({ success: true, result: data });

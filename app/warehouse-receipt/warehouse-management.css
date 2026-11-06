@@ -125,3 +125,16 @@
 .warehouse-stock-eye { display: inline-grid; place-items: center; }
 .warehouse-opening-dialog.warehouse-stock-details { width: min(640px, calc(100% - 24px)); }
 .warehouse-stock-details .scan-table-wrap { max-height: 55vh; }
+.warehouse-stock-details .warehouse-table { min-width: 0; table-layout: fixed; }
+.warehouse-stock-details .warehouse-table th,
+.warehouse-stock-details .warehouse-table td { padding: 9px 8px; overflow-wrap: anywhere; }
+.warehouse-stock-details .warehouse-table th:first-child { width: 44%; }
+.warehouse-stock-details .warehouse-table th:not(:first-child),
+.warehouse-stock-details .warehouse-table td:not(:first-child) { text-align: right; }
+.warehouse-manual-delivery { padding: 20px; }
+.warehouse-manual-delivery .alert { margin-top: 12px; }
+@media (max-width: 480px) {
+  .warehouse-opening-dialog.warehouse-stock-details { padding: 14px; }
+  .warehouse-stock-details .warehouse-table th,
+  .warehouse-stock-details .warehouse-table td { padding: 8px 5px; }
+}

@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 require.extensions[".ts"] = (module, file) => module._compile(ts.transpileModule(readFileSync(file, "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, file);
-const { parseDeliverySheet, previewDeliveryDemand } = require("../../lib/warehouse-receipt/outgoing.ts");
+const { parseDeliverySheet, parseManualDeliveryInput, previewDeliveryDemand } = require("../../lib/warehouse-receipt/outgoing.ts");
 const { expandMergedCells } = require("../../lib/excel-merged.ts");
 
 const header = Array(33).fill(null);
@@ -325,6 +325,57 @@ assert.equal((await rpc("import",{rows:[overLine]})).skipped,1,"Reimporting an u
 await rpc("edit",{id:toShip.id,version:closedOver.version,ordered_qty:8,delivery_date:"2026-11-07"});
 assert.equal(Number((await summary(item)).on_order_qty),24);
 console.log("PASS: undated-first stock groups and FIFO, overshipment with ledger and stock reconciliation, insufficient-stock rollback, and idempotent reimport.");
+
+await db.exec("reset role");
+await migrate("20261106110000_manual_delivery.sql");
+const input=parseManualDeliveryInput({itemcode:" 11011*209 ",delivery_date:"2026-11-09",ordered_qty:8});
+assert.equal(input.itemcode,"1101100000209");
+assert.throws(()=>parseManualDeliveryInput({...input,delivery_date:"2026-02-30"}),/Ngày giao/);
+assert.throws(()=>parseManualDeliveryInput({...input,ordered_qty:1.5}),/Số lượng/);
+await seed(input.itemcode,10,"2026-09-01");
+await db.query("insert into public.item_pallet_config(itemcode,product_name,customer) values ($1,'Catalog name','Catalog customer')",[input.itemcode]);
+await db.exec("insert into public.pallet_data(id,itemcode,product_name,customer) values (10,'PALLET-MANUAL','Pallet name','Pallet customer'),(11,'NO-CUSTOMER','Product without customer',null)");
+const lookupManual=async code=>(await db.query("select * from public.lookup_manual_delivery_item($1)",[code])).rows[0];
+const postManual=async (payload,id=randomUUID())=>(await db.query("select public.post_manual_delivery($1,$2::jsonb) as result",[id,JSON.stringify(payload)])).rows[0].result;
+await db.exec("set role anon");
+await assert.rejects(lookupManual(input.itemcode),/permission denied/);
+await assert.rejects(postManual(input),/permission denied/);
+await db.exec("set role authenticated; select set_config('test.permission','no',false)");
+await assert.rejects(postManual(input),/DELIVERY_NOT_AUTHORIZED/);
+await db.exec("select set_config('test.permission','yes',false)");
+assert.deepEqual(await lookupManual(input.itemcode),{product_name:"Catalog name",customer:"Catalog customer"});
+assert.deepEqual(await lookupManual(item),{product_name:"Product",customer:"Customer"},"Opening/stock items work even without a catalog entry");
+assert.deepEqual(await lookupManual("PALLET-MANUAL"),{product_name:"Pallet name",customer:"Pallet customer"});
+assert.deepEqual(await lookupManual("NO-CUSTOMER"),{product_name:"Product without customer",customer:null});
+assert.equal(await lookupManual("ITEM-MISSING"),undefined);
+await assert.rejects(postManual({...input,itemcode:"ITEM-MISSING"}),/DELIVERY_ITEM_NOT_FOUND/);
+await assert.rejects(postManual({...input,ordered_qty:1.5}),/DELIVERY_INVALID_QUANTITY/);
+const manualCommand=randomUUID();
+const result=await postManual(input,manualCommand);
+assert.equal(result.request_id,manualCommand);
+assert.deepEqual(await postManual(input,manualCommand),result);
+await assert.rejects(postManual({...input,ordered_qty:9},manualCommand),/DELIVERY_COMMAND_CONFLICT/);
+const manual=(await request(result.request_id));
+assert.deepEqual([manual.delivery_source,manual.product_name,manual.system_customer_name,manual.ordered_qty,manual.created_by],
+  ["manual","Catalog name","Catalog customer",8,actor]);
+const manualSummary=await summary(input.itemcode);
+assert.deepEqual([manualSummary.balance_qty,manualSummary.on_order_qty].map(Number),[10,8]);
+const sameDate=await postManual({...input,ordered_qty:1});
+assert.notEqual(sameDate.request_id,manual.id,"A deliberate new schedule is distinct from retrying the old one");
+await rpc("import",{rows:[line("ERP-SAME-DAY",input.itemcode,2,input.delivery_date)]});
+const manualQueue=(await db.query("select public.list_delivery(0,$1,false) as data",[input.itemcode])).rows[0].data.rows;
+assert.equal(manualQueue.length,3);
+assert.equal(manualQueue.filter(row=>row.delivery_source==="manual").length,2);
+assert.equal(Number((await summary(input.itemcode)).shortage_qty),1);
+const fallbackOrder=await postManual({...input,itemcode:"PALLET-MANUAL"});
+assert.equal((await request(fallbackOrder.request_id)).system_customer_name,"Pallet customer");
+await rpc("edit",{id:manual.id,version:manual.version,ordered_qty:7,delivery_date:"2026-11-10"});
+const manualMoved=await request(manual.id);
+assert.equal(manualMoved.delivery_source,"manual");
+await rpc("ship",{id:manualMoved.id,version:manualMoved.version,quantity:7,shipped_date:"2026-11-10"});
+const afterManualShip=await summary(input.itemcode);
+assert.deepEqual([afterManualShip.balance_qty,afterManualShip.on_order_qty].map(Number),[3,3]);
+console.log("PASS: manual delivery lookup, authorization, idempotency, coexistence with ERP, On order, and normal edit/ship flow.");
 
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");
