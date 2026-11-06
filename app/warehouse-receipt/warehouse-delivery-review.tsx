@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { isInventoryDate, todayInVietnam } from "@/lib/warehouse-receipt/incoming";
+import { renderReviewImage } from "@/lib/warehouse-receipt/review-image";
 import type { BulkDeliveryInput, BulkDeliveryLot, BulkDeliveryPreview, DeliveryFifoReview, DeliveryRequest } from "@/lib/warehouse-receipt/outgoing";
 
 const num = (qty: number) => qty.toLocaleString("vi-VN");
@@ -22,15 +23,18 @@ function suggest(lots: BulkDeliveryLot[], quantity: number): PickAmounts {
 }
 
 function summarize(lots: BulkDeliveryLot[], picks: PickAmounts) {
-  const byDate = new Map<string | null, number>();
+  const byDate = new Map<string | null, { quantity: number; lots: { id: string; quantity: number }[] }>();
   let quantity = 0;
   for (const lot of lots) {
     const amount = picks[lot.incoming_id] ?? 0;
     if (amount <= 0) continue;
-    byDate.set(lot.production_date, (byDate.get(lot.production_date) ?? 0) + amount);
+    const day = byDate.get(lot.production_date) ?? { quantity: 0, lots: [] };
+    day.quantity += amount;
+    day.lots.push({ id: lot.incoming_id, quantity: amount });
+    byDate.set(lot.production_date, day);
     quantity += amount;
   }
-  return { quantity, days: Array.from(byDate, ([production_date, quantity]) => ({ production_date, quantity })) };
+  return { quantity, byDate, days: Array.from(byDate, ([production_date, day]) => ({ production_date, quantity: day.quantity })) };
 }
 
 type Props = {
@@ -54,6 +58,8 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
   const [requestedCount, setRequestedCount] = useState(0);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const [copying, setCopying] = useState(false);
+  const [savedLots, setSavedLots] = useState("");
   const [submitted, setSubmitted] = useState(false);
   useEffect(() => () => request.current?.abort(), []);
 
@@ -70,6 +76,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
     setPicked(new Map());
     setError("");
     setCopied("");
+    setSavedLots("");
     setSubmitted(false);
     dialog.current?.showModal();
     try {
@@ -94,19 +101,25 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
   }
 
   async function copyReview() {
-    if (!review?.rows.length) return;
+    if (!review?.rows.length || copying) return;
     const columns = ["Ngày xuất", "Itemcode", "Tên sản phẩm", "Khách hàng", "Số lượng cần xuất", "Ngày sản xuất / Số lượng FIFO", "Còn thiếu"];
-    const clean = (value: string | number) => String(value).replace(/[\t\r\n]+/g, " ");
-    const tsv = [columns.join("\t"), ...review.rows.map((row) => [
-      formatDate(shipDate), row.itemcode, row.product_name, row.customer ?? "", row.quantity,
-      row.days.map((day) => `${productionDate(day.production_date)}: ${day.quantity}`).join("; "), row.shortage_qty,
-    ].map(clean).join("\t"))].join("\n");
+    setCopying(true);
+    setCopied("");
     try {
-      await navigator.clipboard.writeText(tsv);
-      setCopied("Đã sao chép bảng.");
-    } catch {
-      setCopied("Không sao chép được. Kiểm tra quyền clipboard của trình duyệt.");
-    }
+      if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+        throw new Error("Trình duyệt chưa hỗ trợ sao chép ảnh vào clipboard.");
+      }
+      const rows = review.rows.map((row) => ({ shortage: row.shortage_qty > 0, cells: [
+        formatDate(shipDate), row.itemcode, row.product_name || "—", row.customer || "—", num(row.quantity),
+        row.days.map((day) => `${productionDate(day.production_date)}: ${num(day.quantity)}`).join("\n") || "Không có tồn", num(row.shortage_qty),
+      ] }));
+      const png = renderReviewImage(columns, rows, "Review xuất kho theo FIFO", `${num(rows.length)} item · ${num(review.request_count)} yêu cầu chờ xuất`);
+      await Promise.all([png, navigator.clipboard.write([new ClipboardItem({ "image/png": png })])]);
+      setCopied("Đã sao chép ảnh bảng.");
+    } catch (cause) {
+      setCopied(cause instanceof Error && !(cause instanceof DOMException) ? cause.message
+        : "Không sao chép được ảnh. Kiểm tra quyền clipboard của trình duyệt.");
+    } finally { setCopying(false); }
   }
 
   function editLots(row: ReviewRow) {
@@ -122,6 +135,15 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
     return !Number.isInteger(amount) || amount < 0 || amount > lot.balance_qty;
   });
   const chosenTotal = Array.from(picked.values()).reduce((total, amounts) => total + Object.values(amounts).reduce((sum, qty) => sum + qty, 0), 0);
+
+  function saveLotSelection() {
+    if (!editing || invalidDraft) return;
+    const itemcode = editing.itemcode;
+    const saved = Object.fromEntries(Object.entries(draft).filter(([, amount]) => amount > 0));
+    setPicked((old) => new Map(old).set(itemcode, saved));
+    setSavedLots(`Đã lưu lô cho ${itemcode}: chọn xuất ${num(draftTotal)}, còn lại ${num(editing.quantity - draftTotal)}.`);
+    editor.current?.close();
+  }
 
   async function confirmBulk() {
     if (!bulkData || locked || !isInventoryDate(shipDate) || !chosenTotal) return;
@@ -157,19 +179,26 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
       {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
       {!review && !error ? <p role="status" className="muted">Đang tính FIFO…</p> : null}
       {bulk && submitted && notice ? <p className="alert" role="status">{notice}</p> : null}
+      {bulk && savedLots ? <p className="muted small" role="status">{savedLots}</p> : null}
       {review ? <>
         <p><strong>{num(review.rows.length)} item · {num(review.request_count)} yêu cầu chờ xuất</strong>{bulk ? ` · Chọn xuất ${num(chosenTotal)}` : ""}</p>
         {review.request_count < requestedCount ? <p className="alert" role="status">Một số yêu cầu không còn chờ xuất. Tải lại danh sách để cập nhật.</p> : null}
         {review.rows.length ? <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table">
-          <thead><tr><th>Ngày xuất</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng cần xuất</th><th>Ngày sản xuất / Số lượng {bulk ? "chọn xuất" : "FIFO"}</th><th>{bulk ? "Còn lại sau xuất" : "Còn thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
+          <thead><tr><th>Ngày xuất</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng cần xuất</th>{bulk ? <th>Chọn xuất</th> : null}<th>Ngày sản xuất / Số lượng {bulk ? "chọn xuất" : "FIFO"}</th><th>{bulk ? "Còn lại sau xuất" : "Còn thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
           <tbody>{review.rows.map((row) => {
             const selection = bulkData ? summarize(lotsFor(bulkData, row.itemcode), picked.get(row.itemcode) ?? {}) : null;
             const days = selection?.days ?? row.days;
             const missing = selection ? row.quantity - selection.quantity : row.shortage_qty;
             return <tr key={row.itemcode} className={missing > 0 ? "warehouse-outgoing-shortage" : undefined}>
               <td>{shipDate ? formatDate(shipDate) : "—"}</td><td>{row.itemcode}</td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td className="warehouse-review-number">{num(row.quantity)}</td>
+              {bulk ? <td className="warehouse-review-number"><strong>{num(selection?.quantity ?? 0)}</strong></td> : null}
               <td>{days.length ? <ul className="warehouse-outgoing-review-days">{days.map((day) =>
-                <li key={day.production_date ?? "undated"}><span>{productionDate(day.production_date)}</span><strong>{num(day.quantity)}</strong></li>)
+                <li key={day.production_date ?? "undated"}>
+                  <span>{productionDate(day.production_date)}
+                    {selection ? <small className="warehouse-review-lot-ids">{selection.byDate.get(day.production_date)?.lots
+                      .map((lot) => `#${lot.id}: ${num(lot.quantity)}`).join(" · ")}</small> : null}
+                  </span><strong>{num(day.quantity)}</strong>
+                </li>)
               }</ul> : bulk && bulkData && lotsFor(bulkData, row.itemcode).length ? "Chưa chọn lô" : "Không có tồn"}</td>
               <td className="warehouse-review-number">{num(missing)}</td>
               {bulk ? <td><button type="button" className="button button-secondary button-small warehouse-stock-eye" title="Sửa lô xuất"
@@ -185,7 +214,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
       {copied ? <p className="muted small" role="status">{copied}</p> : null}
       <div className="modal-actions">
         <button className="button button-secondary" type="button" disabled={bulk && busy} onClick={() => dialog.current?.close()}>Đóng</button>
-        {!bulk ? <button className="button button-primary" type="button" disabled={!review?.rows.length} onClick={() => { void copyReview(); }}>Copy</button>
+        {!bulk ? <button className="button button-primary" type="button" disabled={copying || !review?.rows.length} onClick={() => { void copyReview(); }}>{copying ? "Đang tạo ảnh…" : "Copy ảnh"}</button>
           : onBulkRetry && submitted ? <button className="button button-primary" type="button" disabled={busy} onClick={async () => { if (await onBulkRetry()) dialog.current?.close(); }}>Thử lại thao tác</button>
             : <button className="button button-primary" type="button" disabled={locked || !bulkData || !chosenTotal || !isInventoryDate(shipDate)}
               onClick={() => { void confirmBulk(); }}>Xác nhận xuất hàng loạt</button>}
@@ -207,17 +236,26 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
             return <tr key={lot.incoming_id}>
               <td><input aria-label={`Chọn lô ${lot.incoming_id}`} type="checkbox" checked={amount > 0}
                 disabled={amount === 0 && draftTotal >= editing.quantity}
-                onChange={(event) => setDraft({ ...draft, [lot.incoming_id]: event.target.checked ? Math.min(lot.balance_qty, editing.quantity - draftTotal) : 0 })} /></td>
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setDraft((old) => {
+                    const total = Object.values(old).reduce((sum, value) => sum + value, 0);
+                    return { ...old, [lot.incoming_id]: checked ? Math.max(0, Math.min(lot.balance_qty, editing.quantity - total)) : 0 };
+                  });
+                }} /></td>
               <td>#{lot.incoming_id}</td><td>{productionDate(lot.production_date)}</td><td>{formatDate(lot.received_date)}</td><td>{num(lot.balance_qty)}</td>
               <td><input aria-label={`Số lượng lấy lô ${lot.incoming_id}`} type="number" min={0} max={lot.balance_qty} step={1} value={amount}
-                onChange={(event) => setDraft({ ...draft, [lot.incoming_id]: Number(event.target.value) })} /></td>
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setDraft((old) => ({ ...old, [lot.incoming_id]: value }));
+                }} /></td>
             </tr>;
           })}</tbody>
         </table></div>
         <div className="modal-actions">
           <button className="button button-secondary" type="button" onClick={() => setDraft(suggest(editorLots, editing.quantity))}>Khôi phục FIFO</button>
           <button className="button button-primary" type="button" disabled={invalidDraft}
-            onClick={() => { setPicked((old) => new Map(old).set(editing.itemcode, draft)); editor.current?.close(); }}>Lưu lựa chọn</button>
+            onClick={saveLotSelection}>Lưu lựa chọn</button>
         </div>
       </> : null}
     </dialog>
