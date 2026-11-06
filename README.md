@@ -930,6 +930,13 @@ gộp số còn phải giao theo item và gợi ý lượng lấy theo từng ng
 Ô **Nhập tay** chỉ hiện các yêu cầu chờ được nhập thủ công. Review chỉ đọc
 tồn thực tế, ưu tiên lô không có ngày sản xuất và báo số còn thiếu.
 
+Migration `20261106130000_bulk_delivery_lots.sql` thêm **Xuất hàng loạt**.
+Bảng sử dụng toàn bộ kết quả đã lọc và mặc định chọn lô theo FIFO. Người
+dùng có thể bỏ lô hoặc sửa số lượng lấy; khi xác nhận, database kiểm tra lại
+tồn từng lô và phân số thực xuất vào các yêu cầu theo ngày giao sớm trước.
+Một lần xác nhận ghi toàn bộ phiếu và các lô trong cùng giao dịch; thử lại
+cùng mã thao tác không trừ tồn lần nữa. **Review** có thể sao chép bảng.
+
 API/RPC yêu cầu tài khoản hoạt động có `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.
 Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đầy đủ vẫn lưu trong DB.

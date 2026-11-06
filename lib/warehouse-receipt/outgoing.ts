@@ -29,6 +29,16 @@ export type DeliveryFifoReview = {
     days: { production_date: string | null; quantity: number }[];
   }[];
 };
+export type BulkDeliveryLot = { incoming_id: string; production_date: string | null; received_date: string; balance_qty: number };
+export type BulkDeliveryPreview = DeliveryFifoReview & {
+  requests: { id: string; version: number; itemcode: string }[];
+  lots: Record<string, BulkDeliveryLot[]>;
+};
+export type BulkDeliveryInput = {
+  shipped_date: string;
+  requests: { id: string; version: number }[];
+  lots: { incoming_id: string; quantity: number }[];
+};
 export type ManualDeliveryInput = Pick<DeliveryInput, "itemcode" | "delivery_date" | "ordered_qty">;
 export type ManualDeliveryItem = { product_name: string; customer: string | null };
 

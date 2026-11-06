@@ -426,5 +426,46 @@ assert.deepEqual(reviewData.rows,[
 assert.deepEqual(await summary(reviewItem),stockBeforeReview,"Review neither allocates inventory nor changes demand");
 console.log("PASS: selected-request FIFO review groups items/dates, subtracts prior shipments and excludes closed orders without writing stock.");
 
+await db.exec("reset role");
+await migrate("20261106130000_bulk_delivery_lots.sql");
+const bulkItem="BULK-LOT";
+const undatedId=String((await seed(bulkItem,6,null)).rows[0].id);
+const oldId=String((await seed(bulkItem,12,"2026-01-01")).rows[0].id);
+const newId=String((await seed(bulkItem,20,"2026-02-01")).rows[0].id);
+await db.exec("set role authenticated");
+await rpc("import",{rows:[line("BULK-LATE",bulkItem,10,"2026-11-10"),line("BULK-EARLY",bulkItem,8,"2026-11-09"),line("BULK-NOT-SELECTED",bulkItem,100,"2026-11-08")]});
+const early=(await get("BULK-EARLY"))[0], late=(await get("BULK-LATE"))[0];
+const bulkPreview=(await db.query("select public.preview_bulk_delivery($1::uuid[]) as data",[[late.id,early.id]])).rows[0].data;
+assert.equal(bulkPreview.rows[0].quantity,18);
+assert.deepEqual(bulkPreview.lots[bulkItem].map(l=>l.incoming_id),[undatedId,oldId,newId]);
+const bulkPayload={shipped_date:"2026-11-11",requests:bulkPreview.requests.map(({id,version})=>({id,version})),
+  lots:[{incoming_id:newId,quantity:7},{incoming_id:oldId,quantity:3}]};
+const postBulk=async (payload,id=randomUUID())=>(await db.query("select public.post_bulk_delivery($1,$2::jsonb) as data",[id,JSON.stringify(payload)])).rows[0].data;
+await db.exec("select set_config('test.permission','no',false)");
+await assert.rejects(postBulk(bulkPayload),/DELIVERY_NOT_AUTHORIZED/);
+await db.exec("select set_config('test.permission','yes',false)");
+await assert.rejects(postBulk({...bulkPayload,requests:[{id:early.id,version:early.version+1}]}),/DELIVERY_STALE/);
+await assert.rejects(postBulk({...bulkPayload,lots:[{incoming_id:newId,quantity:21}]}),/DELIVERY_INSUFFICIENT_STOCK/);
+await assert.rejects(postBulk({...bulkPayload,lots:[{incoming_id:newId,quantity:19}]}),/DELIVERY_BULK_OVER_DEMAND/);
+await assert.rejects(postBulk({...bulkPayload,lots:[bulkPayload.lots[0],bulkPayload.lots[0]]}),/DELIVERY_INVALID_BULK/);
+assert.equal(Number((await summary(bulkItem)).balance_qty),38,"Rejected batches leave stock unchanged");
+const bulkCommand=randomUUID();
+assert.deepEqual(await postBulk(bulkPayload,bulkCommand),{shipped:10,request_count:2});
+assert.deepEqual(await postBulk(bulkPayload,bulkCommand),{shipped:10,request_count:2});
+await assert.rejects(postBulk({...bulkPayload,shipped_date:"2026-11-12"},bulkCommand),/DELIVERY_COMMAND_CONFLICT/);
+assert.equal((await request(early.id)).shipped_qty,8);
+assert.equal((await request(late.id)).shipped_qty,2);
+assert.equal((await get("BULK-NOT-SELECTED"))[0].shipped_qty,0);
+const bulkLedger=(await db.query(`select s.request_id,s.shipped_date::text as shipped_date,l.incoming_id::text,l.quantity
+  from public.inv_delivery_issues s join public.inv_delivery_issue_lines l on l.issue_id=s.id
+  where s.request_id=any($1::uuid[]) order by s.request_id,l.incoming_id`,[[early.id,late.id]])).rows;
+assert.deepEqual(bulkLedger.filter(l=>l.request_id===early.id).map(l=>[l.incoming_id,l.quantity,l.shipped_date]),
+  [[oldId,3,"2026-11-11"],[newId,5,"2026-11-11"]]);
+assert.deepEqual(bulkLedger.filter(l=>l.request_id===late.id).map(l=>[l.incoming_id,l.quantity]),[[newId,2]]);
+assert.equal(Number((await summary(bulkItem)).balance_qty),28);
+assert.equal(Number((await summary(bulkItem)).on_order_qty),108);
+assert.equal((await db.query("select balance_qty from public.inv_incoming where id=$1",[undatedId])).rows[0].balance_qty,6);
+console.log("PASS: bulk shipment honors exact edited lots, posts partial orders in delivery order, and rejects stale/invalid batches without duplicate stock deduction.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

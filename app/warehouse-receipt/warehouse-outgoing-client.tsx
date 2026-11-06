@@ -76,7 +76,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         const saved = localStorage.getItem(key);
         if (saved) {
           const command = JSON.parse(saved) as Command;
-          if (command.profile_id !== profileId || typeof command.command_id !== "string" || !["manual", "import", "edit", "cancel", "reserve", "ship"].includes(command.action) || !command.payload) throw new Error("Invalid saved command");
+          if (command.profile_id !== profileId || typeof command.command_id !== "string" || !["manual", "import", "edit", "cancel", "reserve", "ship", "bulk_ship"].includes(command.action) || !command.payload) throw new Error("Invalid saved command");
           setPending(command);
           setNotice("Có thao tác xuất kho chưa rõ kết quả. Bấm Thử lại để kiểm tra, không tạo thao tác mới.");
         }
@@ -134,12 +134,14 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       setSelected(null);
       if (current.action === "manual") setManualSaved((value) => value + 1);
       setNotice(current.action === "ship" ? `Đã ghi nhận xuất ${num(data.result.shipped)}.`
+        : current.action === "bulk_ship" ? `Đã xuất ${num(data.result.shipped)} cho ${num(data.result.request_count)} yêu cầu.`
         : current.action === "manual" ? "Đã thêm lịch giao thủ công vào danh sách chờ xuất hàng."
         : current.action === "import" ? `Đã nạp/cập nhật ${data.result.changed} dòng; bỏ qua ${data.result.skipped} dòng không đổi.`
         : current.action === "cancel" ? "Đã hủy phần chờ và cập nhật On order của item."
         : current.action === "reserve" ? "On order được tính tự động từ danh sách còn phải giao."
         : "Đã cập nhật yêu cầu giao hàng.");
       setRevision((value) => value + 1);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Chưa xác nhận được kết quả. Hãy thử lại cùng thao tác.");
     } finally {
@@ -275,7 +277,10 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         </select>
       </label>
       <label className="warehouse-outgoing-checkbox"><input checked={manualOnly} onChange={(event) => { setManualOnly(event.target.checked); setOffset(0); }} type="checkbox" />Nhập tay</label>
-      <WarehouseDeliveryReview requests={filtered} disabled={busy || loading || Boolean(listError)} />
+      <WarehouseDeliveryReview requests={filtered} disabled={busy || loading || Boolean(listError)} locked={locked}
+        busy={busy} notice={notice}
+        onBulkShip={async (payload) => (await execute("bulk_ship", payload)) === true}
+        onBulkRetry={pending?.action === "bulk_ship" ? async () => (await execute(pending.action, pending.payload, pending)) === true : undefined} />
     </div>
     <section className="scan-table-card">
       <div className="warehouse-incoming-draft-heading"><h2>Danh sách chờ xuất hàng ({total})</h2></div>

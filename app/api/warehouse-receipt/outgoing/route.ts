@@ -13,6 +13,9 @@ const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}
 
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
+  if (error.code === "PGRST202" && /preview_bulk_delivery|post_bulk_delivery/.test(message)) {
+    return fail("Cần chạy migration 20261106130000_bulk_delivery_lots.sql để xuất hàng loạt.", 503);
+  }
   if (error.code === "PGRST202" && message.includes("review_delivery_fifo")) {
     return fail("Cần chạy migration 20261106120000_review_delivery_fifo.sql để xem Review FIFO.", 503);
   }
@@ -30,6 +33,7 @@ function dbError(error: { code?: string; message?: string }) {
     ["DELIVERY_STALE", "Dữ liệu đã thay đổi. Tải lại danh sách và kiểm tra trước khi xác nhận."],
     ["DELIVERY_COMMAND_CONFLICT", "Mã thao tác đã dùng cho nội dung khác. Tải lại trang để kiểm tra kết quả."],
     ["DELIVERY_INSUFFICIENT_STOCK", "Tồn thực tế không đủ số thực xuất. Tải lại gợi ý FIFO và kiểm tra số lượng."],
+    ["DELIVERY_BULK_OVER_DEMAND", "Số chọn xuất vượt số còn phải giao hoặc có lô không thuộc danh sách đang xuất."],
     ["DELIVERY_BELOW_SHIPPED", "Không thể giảm số yêu cầu thấp hơn số đã xuất hoặc số yêu cầu hiện tại nếu đã xuất vượt."],
     ["DELIVERY_CHOOSE_SCHEDULE", "Chọn tạo lịch mới hoặc dời lịch cũ cho dòng có ngày giao khác."],
     ["DELIVERY_DUPLICATE_TARGET", "Hai dòng đang cùng cập nhật một lịch giao. Kiểm tra lại lựa chọn dời lịch."],
@@ -41,7 +45,7 @@ function dbError(error: { code?: string; message?: string }) {
   ];
   const known = messages.find(([key]) => message.includes(key));
   if (known) return fail(known[1], 409);
-  if (message.includes("DELIVERY_INVALID") || ["22P02", "22007", "22008", "23514", "P0002"].includes(error.code ?? "")) return fail("Thông tin xuất kho không hợp lệ. Kiểm tra số lượng, ngày và dòng đang chọn.");
+  if (message.includes("DELIVERY_INVALID") || ["22P02", "22003", "22007", "22008", "23514", "P0002"].includes(error.code ?? "")) return fail("Thông tin xuất kho không hợp lệ. Kiểm tra số lượng, ngày và dòng đang chọn.");
   if (error.code === "23505") return fail("Lịch giao đã tồn tại. Tải lại danh sách để kiểm tra.", 409);
   console.error("Delivery API failed", error);
   return fail("Chưa xác nhận được kết quả. Giữ nguyên thao tác và bấm Thử lại để tránh ghi trùng.", 500);
@@ -122,18 +126,23 @@ export async function POST(request: Request) {
     }
   }
   const body = await request.json().catch(() => null);
-  if (body?.action === "review") {
+  if (body?.action === "review" || body?.action === "bulk_preview") {
     const ids: unknown = body.request_ids;
     if (!Array.isArray(ids) || !ids.length || ids.length > MAX_DELIVERY_REVIEW_REQUESTS || !ids.every(uuid)) {
       return fail("Danh sách Review không hợp lệ hoặc quá lớn. Hãy lọc theo ngày giao hoặc khách hàng rồi thử lại.");
     }
-    const { data, error } = await db.rpc("review_delivery_fifo", { p_request_ids: ids });
+    const { data, error } = await db.rpc(body.action === "review" ? "review_delivery_fifo" : "preview_bulk_delivery", { p_request_ids: ids });
     if (error) return dbError(error);
     return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
   }
-  if (!body || !["manual", "import", "edit", "cancel", "reserve", "ship"].includes(body.action) || !uuid(body.command_id) || !body.payload || typeof body.payload !== "object") return fail("Yêu cầu không hợp lệ.");
+  if (!body || !["manual", "import", "edit", "cancel", "reserve", "ship", "bulk_ship"].includes(body.action) || !uuid(body.command_id) || !body.payload || typeof body.payload !== "object") return fail("Yêu cầu không hợp lệ.");
   if (body.profile_id !== auth.profile.id) return fail("Tài khoản đã thay đổi. Tải lại trang trước khi tiếp tục.", 403);
   try {
+    if (body.action === "bulk_ship") {
+      const { data, error } = await db.rpc("post_bulk_delivery", { p_command_id: body.command_id, p_payload: body.payload });
+      if (error) return dbError(error);
+      return Response.json({ success: true, result: data });
+    }
     if (body.action === "manual") {
       let payload: ManualDeliveryInput;
       try { payload = parseManualDeliveryInput(body.payload); }
