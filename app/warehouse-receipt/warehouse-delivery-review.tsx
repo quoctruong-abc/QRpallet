@@ -185,87 +185,96 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
       onClick={() => { void openReview(true); }}>Xuất hàng loạt</button>
     <dialog aria-labelledby={titleId} className={`modal-card warehouse-opening-dialog warehouse-outgoing-review-dialog${bulk ? " warehouse-bulk-dialog" : ""}`}
       ref={dialog} onClose={() => request.current?.abort()} onCancel={(event) => { if (bulk && busy) event.preventDefault(); }}>
-      <div className="modal-heading">
-        <h2 id={titleId}>{bulk ? "Xuất hàng loạt" : "Review xuất kho theo FIFO"}</h2>
-        <button aria-label={bulk ? "Đóng xuất hàng loạt" : "Đóng Review"} className="modal-close" disabled={bulk && busy} onClick={() => dialog.current?.close()} type="button">×</button>
+      <header className={bulk ? "warehouse-bulk-header" : undefined}>
+        <div className="modal-heading">
+          <h2 id={titleId}>{bulk ? "Xuất hàng loạt" : "Review xuất kho theo FIFO"}</h2>
+          <button aria-label={bulk ? "Đóng xuất hàng loạt" : "Đóng Review"} className="modal-close" disabled={bulk && busy} onClick={() => dialog.current?.close()} type="button">×</button>
+        </div>
+        {bulk ? <div className="warehouse-bulk-meta">
+          <label>Ngày xuất<input type="date" value={shipDate} disabled={locked} onChange={(event) => setShipDate(event.target.value)} /></label>
+          {review ? <p className="muted">
+            {num(review.request_count)} yêu cầu chờ xuất · Đã chọn {num(included.size)}/{num(review.rows.length)} item · <strong>Chọn xuất {num(chosenTotal)}</strong>
+          </p> : null}
+        </div> : null}
+      </header>
+      <div className={bulk ? "warehouse-bulk-body" : undefined}>
+        {!bulk ? <p className="muted small">Gộp số còn phải giao của các yêu cầu đã lọc. Gợi ý dựa trên tồn hiện tại, chưa giữ lô hoặc trừ tồn.</p> : null}
+        {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
+        {!review && !error ? <p role="status" className="muted">Đang tính FIFO…</p> : null}
+        {bulk && submitted && notice ? <p className="alert" role="status">{notice}</p> : null}
+        {bulk && savedLots ? <p className="muted small" role="status">{savedLots}</p> : null}
+        {review ? <>
+          {!bulk ? <p><strong>{num(review.rows.length)} item · {num(review.request_count)} yêu cầu chờ xuất</strong></p> : null}
+          {review.request_count < requestedCount ? <p className="alert" role="status">Một số yêu cầu không còn chờ xuất. Tải lại danh sách để cập nhật.</p> : null}
+          {review.rows.length ? <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table">
+            <thead><tr>{bulk ? <th><input type="checkbox" ref={selectAll} aria-label="Chọn tất cả item xuất"
+              checked={allSelected} disabled={locked || !bulkData}
+              onChange={(event) => { setIncluded(new Set(event.target.checked ? bulkData?.rows.map((row) => row.itemcode) : [])); }} /></th> : null}
+            <th>{bulk ? "Ngày xuất" : "Ngày giao"}</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng cần xuất</th>{bulk ? <th>Chọn xuất</th> : null}<th>Ngày sản xuất / Số lượng {bulk ? "chọn xuất" : "FIFO"}</th><th>{bulk ? "Còn lại sau xuất" : "Còn thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
+            <tbody>{review.rows.map((row) => {
+              const selection = selectionByItem.get(row.itemcode);
+              const checked = included.has(row.itemcode);
+              const days = selection?.days ?? row.days;
+              const missing = selection ? Math.max(0, row.quantity - selection.quantity) : row.shortage_qty;
+              const excess = Math.max(0, (selection?.quantity ?? 0) - row.quantity);
+              const rowClass = bulk && !checked ? "warehouse-bulk-unselected"
+                : bulk && row.shortage_qty > 0 ? "warehouse-bulk-short"
+                  : missing > 0 || excess > 0 ? "warehouse-outgoing-shortage" : undefined;
+              return <tr key={row.itemcode} className={rowClass}>
+                {bulk ? <td><input type="checkbox" aria-label={`Chọn xuất ${row.itemcode}`} checked={checked} disabled={locked}
+                  onChange={(event) => {
+                    const nextChecked = event.target.checked;
+                    setIncluded((old) => {
+                      const next = new Set(old);
+                      if (nextChecked) next.add(row.itemcode);
+                      else next.delete(row.itemcode);
+                      return next;
+                    });
+                  }} /></td> : null}
+                <td>{bulk ? (shipDate ? formatDate(shipDate) : "—") : row.delivery_dates?.length ? row.delivery_dates.map((value) =>
+                  <div className="warehouse-receipt-date" key={value}>{formatDate(value)}</div>) : "—"}</td>
+                <td>{row.itemcode}</td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td className="warehouse-review-number">{num(row.quantity)}</td>
+                {bulk ? <td className="warehouse-review-number"><strong>{num(selection?.quantity ?? 0)}</strong>
+                  {excess > 0 && checked ? <small className="warehouse-bulk-overage">Vượt {num(excess)}</small> : null}
+                </td> : null}
+                <td>{days.length ? <ul className="warehouse-outgoing-review-days">{days.map((day) =>
+                  <li key={day.production_date ?? "undated"}>
+                    <span>{productionDate(day.production_date)}
+                      {selection ? <small className="warehouse-review-lot-ids">{selection.byDate.get(day.production_date)?.lots
+                        .map((lot) => `#${lot.id}: ${num(lot.quantity)}`).join(" · ")}</small> : null}
+                    </span><strong>{num(day.quantity)}</strong>
+                  </li>)
+                }</ul> : bulk && bulkData && lotsFor(bulkData, row.itemcode).length ? "Chưa chọn lô" : "Không có tồn"}</td>
+                <td className="warehouse-review-number">{num(missing)}
+                  {bulk && row.shortage_qty > 0 ? <small className="warehouse-bulk-stock-shortage">Tồn thiếu {num(row.shortage_qty)}</small> : null}
+                </td>
+                {bulk ? <td><button type="button" className="button button-secondary button-small warehouse-stock-eye" title="Sửa lô xuất"
+                  aria-label={`Sửa lô xuất ${row.itemcode}`} disabled={locked || !checked || !bulkData || !lotsFor(bulkData, row.itemcode).length} onClick={() => editLots(row)}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="m15 5 4 4M4 20l4.5-1L20 7.5 16.5 4 5 15.5 4 20Z" />
+                  </svg>
+                </button></td> : null}
+              </tr>;
+            })}</tbody>
+          </table></div> : <p className="scan-empty">Không còn yêu cầu chờ xuất trong kết quả đã lọc.</p>}
+        </> : null}
+        {copied ? <p className="muted small" role="status">{copied}</p> : null}
       </div>
-      {bulk ? <label className="warehouse-outgoing-review-date">Ngày xuất<input type="date" value={shipDate} disabled={locked} onChange={(event) => setShipDate(event.target.value)} /></label> : null}
-      <p className="muted small">{bulk
-        ? "Bấm biểu tượng bút để sửa các lô lấy cho từng item. Khi xác nhận, số thực xuất được phân cho các đơn đã lọc theo ngày giao sớm trước."
-        : "Gộp số còn phải giao của các yêu cầu đã lọc. Gợi ý dựa trên tồn hiện tại, chưa giữ lô hoặc trừ tồn."}</p>
-      {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
-      {!review && !error ? <p role="status" className="muted">Đang tính FIFO…</p> : null}
-      {bulk && submitted && notice ? <p className="alert" role="status">{notice}</p> : null}
-      {bulk && savedLots ? <p className="muted small" role="status">{savedLots}</p> : null}
-      {review ? <>
-        <p><strong>{num(review.rows.length)} item · {num(review.request_count)} yêu cầu chờ xuất</strong>{bulk ? ` · Đã chọn ${num(included.size)}/${num(review.rows.length)} item · Chọn xuất ${num(chosenTotal)}` : ""}</p>
-        {review.request_count < requestedCount ? <p className="alert" role="status">Một số yêu cầu không còn chờ xuất. Tải lại danh sách để cập nhật.</p> : null}
-        {review.rows.length ? <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table">
-          <thead><tr>{bulk ? <th><input type="checkbox" ref={selectAll} aria-label="Chọn tất cả item xuất"
-            checked={allSelected} disabled={locked || !bulkData}
-            onChange={(event) => { setIncluded(new Set(event.target.checked ? bulkData?.rows.map((row) => row.itemcode) : [])); }} /></th> : null}
-          <th>{bulk ? "Ngày xuất" : "Ngày giao"}</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng cần xuất</th>{bulk ? <th>Chọn xuất</th> : null}<th>Ngày sản xuất / Số lượng {bulk ? "chọn xuất" : "FIFO"}</th><th>{bulk ? "Còn lại sau xuất" : "Còn thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
-          <tbody>{review.rows.map((row) => {
-            const selection = selectionByItem.get(row.itemcode);
-            const checked = included.has(row.itemcode);
-            const days = selection?.days ?? row.days;
-            const missing = selection ? Math.max(0, row.quantity - selection.quantity) : row.shortage_qty;
-            const excess = Math.max(0, (selection?.quantity ?? 0) - row.quantity);
-            const rowClass = bulk && !checked ? "warehouse-bulk-unselected"
-              : bulk && row.shortage_qty > 0 ? "warehouse-bulk-short"
-                : missing > 0 || excess > 0 ? "warehouse-outgoing-shortage" : undefined;
-            return <tr key={row.itemcode} className={rowClass}>
-              {bulk ? <td><input type="checkbox" aria-label={`Chọn xuất ${row.itemcode}`} checked={checked} disabled={locked}
-                onChange={(event) => {
-                  const nextChecked = event.target.checked;
-                  setIncluded((old) => {
-                    const next = new Set(old);
-                    if (nextChecked) next.add(row.itemcode);
-                    else next.delete(row.itemcode);
-                    return next;
-                  });
-                }} /></td> : null}
-              <td>{bulk ? (shipDate ? formatDate(shipDate) : "—") : row.delivery_dates?.length ? row.delivery_dates.map((value) =>
-                <div className="warehouse-receipt-date" key={value}>{formatDate(value)}</div>) : "—"}</td>
-              <td>{row.itemcode}</td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td className="warehouse-review-number">{num(row.quantity)}</td>
-              {bulk ? <td className="warehouse-review-number"><strong>{num(selection?.quantity ?? 0)}</strong>
-                {excess > 0 && checked ? <small className="warehouse-bulk-overage">Vượt {num(excess)}</small> : null}
-              </td> : null}
-              <td>{days.length ? <ul className="warehouse-outgoing-review-days">{days.map((day) =>
-                <li key={day.production_date ?? "undated"}>
-                  <span>{productionDate(day.production_date)}
-                    {selection ? <small className="warehouse-review-lot-ids">{selection.byDate.get(day.production_date)?.lots
-                      .map((lot) => `#${lot.id}: ${num(lot.quantity)}`).join(" · ")}</small> : null}
-                  </span><strong>{num(day.quantity)}</strong>
-                </li>)
-              }</ul> : bulk && bulkData && lotsFor(bulkData, row.itemcode).length ? "Chưa chọn lô" : "Không có tồn"}</td>
-              <td className="warehouse-review-number">{num(missing)}
-                {bulk && row.shortage_qty > 0 ? <small className="warehouse-bulk-stock-shortage">Tồn thiếu {num(row.shortage_qty)}</small> : null}
-              </td>
-              {bulk ? <td><button type="button" className="button button-secondary button-small warehouse-stock-eye" title="Sửa lô xuất"
-                aria-label={`Sửa lô xuất ${row.itemcode}`} disabled={locked || !checked || !bulkData || !lotsFor(bulkData, row.itemcode).length} onClick={() => editLots(row)}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <path d="m15 5 4 4M4 20l4.5-1L20 7.5 16.5 4 5 15.5 4 20Z" />
-                </svg>
-              </button></td> : null}
-            </tr>;
-          })}</tbody>
-        </table></div> : <p className="scan-empty">Không còn yêu cầu chờ xuất trong kết quả đã lọc.</p>}
-      </> : null}
-      {bulk && shortSelectedCount > 0 ? <p className="alert alert-error" role="alert">
-        {num(shortSelectedCount)} item đang chọn không đủ tồn kho. Bỏ tick các dòng có nhãn “Tồn thiếu” để tiếp tục.
-      </p> : null}
-      {bulk && excessRows.length ? <p className="alert warehouse-bulk-warning" role="alert">
-        {num(excessRows.length)} item đã chọn vượt số còn phải giao. Phần vượt sẽ ghi vào yêu cầu cuối của item theo thứ tự giao.
-      </p> : null}
-      {copied ? <p className="muted small" role="status">{copied}</p> : null}
-      <div className="modal-actions">
-        <button className="button button-secondary" type="button" disabled={bulk && busy} onClick={() => dialog.current?.close()}>Đóng</button>
-        {!bulk ? <button className="button button-primary" type="button" disabled={copying || !review?.rows.length} onClick={() => { void copyReview(); }}>{copying ? "Đang tạo ảnh…" : "Copy ảnh"}</button>
-          : onBulkRetry && submitted ? <button className="button button-primary" type="button" disabled={busy} onClick={async () => { if (await onBulkRetry()) dialog.current?.close(); }}>Thử lại thao tác</button>
-            : <button className="button button-primary" type="button" disabled={locked || !bulkData || !chosenTotal || shortSelectedCount > 0 || !isInventoryDate(shipDate)}
-              onClick={() => { void confirmBulk(); }}>Xác nhận xuất hàng loạt</button>}
-      </div>
+      <footer className={bulk ? "warehouse-bulk-footer" : undefined}>
+        {bulk && shortSelectedCount > 0 ? <p className="alert alert-error" role="alert">
+          {num(shortSelectedCount)} item đang chọn không đủ tồn kho. Bỏ tick các dòng có nhãn “Tồn thiếu” để tiếp tục.
+        </p> : null}
+        {bulk && excessRows.length ? <p className="alert warehouse-bulk-warning" role="alert">
+          {num(excessRows.length)} item đã chọn vượt số còn phải giao. Phần vượt sẽ ghi vào yêu cầu cuối của item theo thứ tự giao.
+        </p> : null}
+        <div className="modal-actions">
+          <button className="button button-secondary" type="button" disabled={bulk && busy} onClick={() => dialog.current?.close()}>Đóng</button>
+          {!bulk ? <button className="button button-primary" type="button" disabled={copying || !review?.rows.length} onClick={() => { void copyReview(); }}>{copying ? "Đang tạo ảnh…" : "Copy ảnh"}</button>
+            : onBulkRetry && submitted ? <button className="button button-primary" type="button" disabled={busy} onClick={async () => { if (await onBulkRetry()) dialog.current?.close(); }}>Thử lại thao tác</button>
+              : <button className="button button-primary" type="button" disabled={locked || !bulkData || !chosenTotal || shortSelectedCount > 0 || !isInventoryDate(shipDate)}
+                onClick={() => { void confirmBulk(); }}>Xác nhận xuất hàng loạt</button>}
+        </div>
+      </footer>
     </dialog>
     <dialog aria-labelledby={editorTitle} className="modal-card warehouse-opening-dialog warehouse-lot-editor" ref={editor} onClose={() => setEditing(null)}>
       <div className="modal-heading">
