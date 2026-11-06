@@ -115,7 +115,18 @@
 .warehouse-outgoing-name { min-width: 220px; max-width: 320px; white-space: normal; }
 .warehouse-outgoing-name small { display: block; margin-top: 5px; color: var(--muted); }
 .warehouse-table .warehouse-outgoing-shortage td { background: #fffaeb; }
-.warehouse-outgoing-preview { max-height: 48vh; margin: 16px 0; }
+.warehouse-opening-dialog.warehouse-outgoing-import-dialog {
+  width: min(1600px, calc(100% - 24px));
+  max-width: none;
+  max-height: calc(100dvh - 24px);
+}
+.warehouse-outgoing-import-dialog[open] { display: flex; flex-direction: column; }
+.warehouse-outgoing-import-dialog > :not(.warehouse-outgoing-preview) { flex: none; }
+.warehouse-outgoing-preview { min-height: min(128px, 25dvh); margin: 12px 0; overflow: auto; }
+.warehouse-outgoing-preview .warehouse-table { border-collapse: separate; border-spacing: 0; }
+.warehouse-outgoing-preview thead th { position: sticky; top: 0; z-index: 1; }
+.warehouse-outgoing-preview th:nth-child(n + 5):nth-child(-n + 10),
+.warehouse-outgoing-preview td:nth-child(n + 5):nth-child(-n + 10) { text-align: right; }
 .warehouse-outgoing-preview select { min-width: 250px; }
 .warehouse-outgoing-error { white-space: pre-wrap; }
 .warehouse-outgoing .warehouse-opening-dialog h3 { margin: 20px 0 10px; }

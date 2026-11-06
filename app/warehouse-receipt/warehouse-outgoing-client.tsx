@@ -303,7 +303,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       </div>
     </section>
 
-    <dialog aria-labelledby={`${id}-import-title`} className="modal-card warehouse-opening-dialog" onCancel={(event) => { if (busy) event.preventDefault(); }} ref={importDialog}>
+    <dialog aria-labelledby={`${id}-import-title`} className="modal-card warehouse-opening-dialog warehouse-outgoing-import-dialog" onCancel={(event) => { if (busy) event.preventDefault(); }} ref={importDialog}>
       <div className="modal-heading"><h2 id={`${id}-import-title`}>Nạp lịch giao ERP</h2><button aria-label="Đóng nạp ERP" className="modal-close" disabled={busy} onClick={() => importDialog.current?.close()} type="button">×</button></div>
       <label>File lịch giao<input accept=".xlsx" disabled={locked} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setPreview(null); setUploadError(""); }} type="file" /></label>
       <p className="muted small">Đọc đúng vùng merge. Khóa chống trùng: PO + Sales ID + Item + ngày giao. Kiểm tra file chưa cập nhật On order.</p>
@@ -313,10 +313,12 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       {preview ? <>
         <p><strong>{preview.length} dòng.</strong> Có {new Set(preview.filter((row) => row.item_shortage_after > 0).map((row) => row.itemcode)).size} item thiếu hàng dự kiến. On order được tính theo tổng nhu cầu của item, chưa chọn lô.</p>
         <div className="scan-table-wrap warehouse-outgoing-preview"><table className="warehouse-table">
-          <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Yêu cầu</th><th>Đã xuất</th><th>Tồn item</th><th>On order sau nạp</th><th>Thiếu của item</th><th>Cách nạp</th></tr></thead>
+          <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Yêu cầu trong file</th><th>Tồn hiện tại</th><th>Đã yêu cầu</th><th>Tồn khả dụng</th><th>On order sau nạp</th><th>Thiếu của item</th><th>Cách nạp</th></tr></thead>
           <tbody>{preview.map((row) => <tr key={row.excel_row} className={row.item_shortage_after > 0 ? "warehouse-outgoing-shortage" : undefined}>
             <td>{row.excel_row}</td><td>{date(row.delivery_date)}</td><td>{row.purorder}<br />{row.sales_id}</td><td>{row.itemcode}</td>
-            <td>{num(row.ordered_qty)}</td><td>{num((row.existing || row.candidates.find((candidate) => candidate.id === choices[row.excel_row]))?.shipped_qty ?? 0)}</td><td>{num(row.item_stock_qty)}</td><td>{num(row.item_on_order_after)}</td><td>{num(row.item_shortage_after)}</td>
+            <td>{num(row.ordered_qty)}</td><td>{num(row.item_stock_qty)}</td><td>{num(row.item_on_order_qty)}</td>
+            {/* The preview already contains both operands of inv_stock_summary.available_qty from the same snapshot. */}
+            <td>{num(row.item_stock_qty - row.item_on_order_qty)}</td><td>{num(row.item_on_order_after)}</td><td>{num(row.item_shortage_after)}</td>
             <td>{row.existing ? (row.existing.cancelled ? "Đã hủy — bỏ qua" : row.existing.ordered_qty === row.ordered_qty ? "Không đổi — bỏ qua" : "Cập nhật số lượng") : row.candidates.length ?
               <select aria-label={`Cách nạp dòng ${row.excel_row}`} disabled={locked} onChange={(event) => setChoices((old) => ({ ...old, [row.excel_row]: event.target.value }))} value={choices[row.excel_row] || ""}>
                 <option value="">Chọn lịch mới hoặc dời lịch…</option><option value="new">Tạo lịch giao mới</option>
