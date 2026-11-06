@@ -13,6 +13,8 @@ const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}
 
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
+  const shortItem = message.match(/^DELIVERY_BULK_SHORT_STOCK:(.+)$/)?.[1];
+  if (shortItem) return fail(`Item ${shortItem} không còn đủ tồn để xuất. Mở lại Xuất hàng loạt và bỏ tick dòng thiếu tồn.`, 409);
   if (error.code === "PGRST202" && /preview_bulk_delivery|post_bulk_delivery/.test(message)) {
     return fail("Cần chạy migration 20261106130000_bulk_delivery_lots.sql để xuất hàng loạt.", 503);
   }

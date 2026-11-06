@@ -531,5 +531,24 @@ assert.deepEqual(receiptDetail.rows.map(row=>[row.purorder,row.sales_id,row.deli
 assert.deepEqual(receiptDetail.rows.find(row=>row.request_id===late.id).lots.map(lot=>[lot.incoming_id,lot.quantity]),[[oldId,4],[newId,4]]);
 console.log("PASS: required production date for new manual intake, valid retries, review delivery dates, and item/day shipment history with exact request and lot detail.");
 
+await db.exec("reset role");
+await migrate("20261106160000_bulk_delivery_require_stock.sql");
+const shortageLot=String((await seed("BULK-SHORT",10,null)).rows[0].id);
+const enoughLot=String((await seed("BULK-ENOUGH",10,null)).rows[0].id);
+await db.exec("set role authenticated");
+assert.deepEqual(await postBulk(excessPayload,excessCommand),{shipped:14,request_count:2},"Previous commands remain retryable");
+await rpc("import",{rows:[line("BULK-SHORT","BULK-SHORT",15),line("BULK-ENOUGH","BULK-ENOUGH",8)]});
+const shortRequest=(await get("BULK-SHORT"))[0], enoughRequest=(await get("BULK-ENOUGH"))[0];
+const blockedBatch={shipped_date:"2026-11-12",
+  requests:[shortRequest,enoughRequest].map(({id,version})=>({id,version})),
+  lots:[{incoming_id:shortageLot,quantity:3},{incoming_id:enoughLot,quantity:4}]};
+await assert.rejects(postBulk(blockedBatch),/DELIVERY_BULK_SHORT_STOCK:BULK-SHORT/);
+assert.equal(Number((await summary("BULK-ENOUGH")).balance_qty),10,"A selected shortage blocks all writes");
+assert.deepEqual(await postBulk({...blockedBatch,requests:[blockedBatch.requests[1]],lots:[blockedBatch.lots[1]]}),
+  {shipped:4,request_count:1},"Unchecked shortage doesn't block a partial lot choice on a fully stocked item");
+assert.equal(Number((await summary("BULK-SHORT")).balance_qty),10);
+assert.equal((await request(shortRequest.id)).shipped_qty,0);
+console.log("PASS: bulk shipping rejects selected items short of total stock without blocking deliberate partial picks on adequately stocked items.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

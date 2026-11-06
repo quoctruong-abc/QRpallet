@@ -145,6 +145,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
   const selectedRows = bulkData?.rows.filter((row) => included.has(row.itemcode)) ?? [];
   const chosenTotal = selectedRows.reduce((total, row) => total + (selectionByItem.get(row.itemcode)?.quantity ?? 0), 0);
   const excessRows = selectedRows.filter((row) => (selectionByItem.get(row.itemcode)?.quantity ?? 0) > row.quantity);
+  const shortSelectedCount = selectedRows.filter((row) => row.shortage_qty > 0).length;
   const allSelected = Boolean(bulkData?.rows.length && included.size === bulkData.rows.length);
   useEffect(() => {
     if (selectAll.current) selectAll.current.indeterminate = included.size > 0 && !allSelected;
@@ -161,7 +162,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
   }
 
   async function confirmBulk() {
-    if (!bulkData || locked || !isInventoryDate(shipDate) || !chosenTotal) return;
+    if (!bulkData || locked || !isInventoryDate(shipDate) || !chosenTotal || shortSelectedCount) return;
     const itemcodes = new Set<string>();
     const lots: BulkDeliveryInput["lots"] = [];
     for (const [itemcode, amounts] of picked) {
@@ -182,7 +183,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
       onClick={() => { void openReview(false); }}>Review</button>
     <button className="button button-primary" type="button" disabled={disabled || locked || !requests.length}
       onClick={() => { void openReview(true); }}>Xuất hàng loạt</button>
-    <dialog aria-labelledby={titleId} className="modal-card warehouse-opening-dialog warehouse-outgoing-review-dialog"
+    <dialog aria-labelledby={titleId} className={`modal-card warehouse-opening-dialog warehouse-outgoing-review-dialog${bulk ? " warehouse-bulk-dialog" : ""}`}
       ref={dialog} onClose={() => request.current?.abort()} onCancel={(event) => { if (bulk && busy) event.preventDefault(); }}>
       <div className="modal-heading">
         <h2 id={titleId}>{bulk ? "Xuất hàng loạt" : "Review xuất kho theo FIFO"}</h2>
@@ -210,7 +211,9 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
             const days = selection?.days ?? row.days;
             const missing = selection ? Math.max(0, row.quantity - selection.quantity) : row.shortage_qty;
             const excess = Math.max(0, (selection?.quantity ?? 0) - row.quantity);
-            const rowClass = bulk && !checked ? "warehouse-bulk-unselected" : missing > 0 || excess > 0 ? "warehouse-outgoing-shortage" : undefined;
+            const rowClass = bulk && !checked ? "warehouse-bulk-unselected"
+              : bulk && row.shortage_qty > 0 ? "warehouse-bulk-short"
+                : missing > 0 || excess > 0 ? "warehouse-outgoing-shortage" : undefined;
             return <tr key={row.itemcode} className={rowClass}>
               {bulk ? <td><input type="checkbox" aria-label={`Chọn xuất ${row.itemcode}`} checked={checked} disabled={locked}
                 onChange={(event) => {
@@ -236,7 +239,9 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
                   </span><strong>{num(day.quantity)}</strong>
                 </li>)
               }</ul> : bulk && bulkData && lotsFor(bulkData, row.itemcode).length ? "Chưa chọn lô" : "Không có tồn"}</td>
-              <td className="warehouse-review-number">{num(missing)}</td>
+              <td className="warehouse-review-number">{num(missing)}
+                {bulk && row.shortage_qty > 0 ? <small className="warehouse-bulk-stock-shortage">Tồn thiếu {num(row.shortage_qty)}</small> : null}
+              </td>
               {bulk ? <td><button type="button" className="button button-secondary button-small warehouse-stock-eye" title="Sửa lô xuất"
                 aria-label={`Sửa lô xuất ${row.itemcode}`} disabled={locked || !checked || !bulkData || !lotsFor(bulkData, row.itemcode).length} onClick={() => editLots(row)}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -247,6 +252,9 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
           })}</tbody>
         </table></div> : <p className="scan-empty">Không còn yêu cầu chờ xuất trong kết quả đã lọc.</p>}
       </> : null}
+      {bulk && shortSelectedCount > 0 ? <p className="alert alert-error" role="alert">
+        {num(shortSelectedCount)} item đang chọn không đủ tồn kho. Bỏ tick các dòng có nhãn “Tồn thiếu” để tiếp tục.
+      </p> : null}
       {bulk && excessRows.length ? <p className="alert warehouse-bulk-warning" role="alert">
         {num(excessRows.length)} item đã chọn vượt số còn phải giao. Phần vượt sẽ ghi vào yêu cầu cuối của item theo thứ tự giao.
       </p> : null}
@@ -255,7 +263,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
         <button className="button button-secondary" type="button" disabled={bulk && busy} onClick={() => dialog.current?.close()}>Đóng</button>
         {!bulk ? <button className="button button-primary" type="button" disabled={copying || !review?.rows.length} onClick={() => { void copyReview(); }}>{copying ? "Đang tạo ảnh…" : "Copy ảnh"}</button>
           : onBulkRetry && submitted ? <button className="button button-primary" type="button" disabled={busy} onClick={async () => { if (await onBulkRetry()) dialog.current?.close(); }}>Thử lại thao tác</button>
-            : <button className="button button-primary" type="button" disabled={locked || !bulkData || !chosenTotal || !isInventoryDate(shipDate)}
+            : <button className="button button-primary" type="button" disabled={locked || !bulkData || !chosenTotal || shortSelectedCount > 0 || !isInventoryDate(shipDate)}
               onClick={() => { void confirmBulk(); }}>Xác nhận xuất hàng loạt</button>}
       </div>
     </dialog>

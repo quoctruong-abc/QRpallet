@@ -942,6 +942,9 @@ Migration `20261106140000_bulk_delivery_overship.sql` cho phép xuất vượt
 nhu cầu khi lô còn đủ tồn. Hệ thống đáp ứng các yêu cầu được chọn theo thứ
 tự giao trước, rồi ghi phần vượt vào yêu cầu cuối của item; số yêu cầu
 gốc giữ nguyên. Giao diện cảnh báo số vượt và chỉ ghi các item được tick.
+Migration `20261106160000_bulk_delivery_require_stock.sql` chặn xác nhận khi
+có item đang tick mà tổng tồn thực tế không đủ số còn phải giao. Người dùng
+có thể bỏ tick item thiếu tồn; vẫn được chọn xuất một phần cho item đủ tồn.
 
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
