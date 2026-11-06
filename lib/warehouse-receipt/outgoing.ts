@@ -25,6 +25,7 @@ export type DeliveryFifoReview = {
   request_count: number;
   rows: {
     itemcode: string; product_name: string; customer: string | null;
+    delivery_dates?: string[];
     quantity: number; shortage_qty: number;
     days: { production_date: string | null; quantity: number }[];
   }[];

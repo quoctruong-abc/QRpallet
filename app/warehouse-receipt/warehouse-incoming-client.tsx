@@ -311,8 +311,8 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory, profileId }: 
       setFormError("Số lượng phải là số nguyên từ 1 đến 2.147.483.647.");
       return;
     }
-    if (productionDate && !isInventoryDate(productionDate)) {
-      setFormError("Ngày sản xuất không hợp lệ.");
+    if (!isInventoryDate(productionDate)) {
+      setFormError("Vui lòng nhập ngày sản xuất hợp lệ.");
       return;
     }
     const cached = itemCache.current.get(code);
@@ -364,8 +364,9 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory, profileId }: 
 
   const loadingCount = drafts.filter((row) => row.lookupStatus === "loading").length;
   const errorCount = drafts.filter((row) => row.lookupStatus === "error").length;
+  const missingProductionDates = drafts.filter((row) => !isInventoryDate(row.production_date)).length;
   const canProceed = storageReady && !storageConflict && !recoveryBlocked && drafts.length > 0
-    && loadingCount === 0 && errorCount === 0 && editingId === null;
+    && loadingCount === 0 && errorCount === 0 && editingId === null && (missingProductionDates === 0 || Boolean(submission));
 
   function clearLegacySubmission() {
     if (!legacyRaw.current) return;
@@ -446,7 +447,7 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory, profileId }: 
       {!reviewing ? <div className="warehouse-incoming-form">
         <div className="warehouse-incoming-heading">
           <div><h2>{editingId === null ? "Nhập kho thủ công" : `Sửa dòng ${editingId}`}</h2>
-          <p className="muted small">Nhập mã sản phẩm, nhấn Tab để nhập số lượng, rồi nhấn Enter để thêm dòng.</p></div>
+          <p className="muted small">Nhập mã sản phẩm, số lượng và ngày sản xuất, rồi nhấn Enter để thêm dòng.</p></div>
           {canLoadOpeningInventory ? <WarehouseOpeningInventory /> : null}
         </div>
         <form onSubmit={saveDraft}>
@@ -481,7 +482,7 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory, profileId }: 
             <p aria-live="polite" className="muted small warehouse-incoming-lookup-note" id={`${id}-lookup-note`}>
               {lookingUp ? "Đang tra cứu sản phẩm, bạn có thể nhập tiếp và thêm vào danh sách." : "Dấu * được thay bằng số 0 để đủ 13 ký tự. Tên sản phẩm và khách hàng tự điền theo mã."}
             </p>
-            <label><span>Ngày sản xuất <small className="warehouse-field-hint">Không bắt buộc</small></span><input onChange={(event) => setProductionDate(event.target.value)} type="date" value={productionDate} /></label>
+            <label><span>Ngày sản xuất <span className="warehouse-required">*</span></span><input onChange={(event) => setProductionDate(event.target.value)} required type="date" value={productionDate} /></label>
             <label><span>WO <small className="warehouse-field-hint">Không bắt buộc</small></span><input maxLength={200} onChange={(event) => setWO(event.target.value)} placeholder="Nhập WO nếu có" value={wo} /></label>
             <label className="warehouse-incoming-note"><span>Ghi chú <small className="warehouse-field-hint">Không bắt buộc</small></span><textarea maxLength={2000} onChange={(event) => setNote(event.target.value)} placeholder="Nhập lý do hoặc nội dung nhập kho nếu có" rows={3} value={note} /></label>
           </div>
@@ -498,6 +499,7 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory, profileId }: 
         <div className="warehouse-incoming-draft-heading">
           <h2>{reviewing ? "Kiểm tra danh sách nhập kho" : "Danh sách chờ nhập"} <span className="muted">({drafts.length})</span></h2>
           <p className="muted small">Danh sách được lưu trên trình duyệt này trong 7 ngày kể từ lần lưu gần nhất và tự xóa khi xác nhận nhập kho thành công.</p>
+          {!reviewing && missingProductionDates ? <p className="warehouse-incoming-row-message" role="status">{missingProductionDates} dòng chưa có ngày sản xuất. Hãy sửa các dòng này trước khi tiếp tục.</p> : null}
           {!reviewing ? <p aria-live="polite" className={errorCount ? "warehouse-incoming-row-message" : "muted small"}>
             {errorCount ? `${errorCount} dòng chưa tra cứu thành công. Sửa mã hoặc thử lại trước khi tiếp tục.` : loadingCount ? `Đang cập nhật thông tin cho ${loadingCount} dòng...` : editingId !== null ? "Lưu thay đổi hoặc hủy sửa trước khi tiếp tục." : drafts.length ? "Tất cả dòng đã có thông tin sản phẩm." : ""}
           </p> : null}
@@ -508,7 +510,7 @@ export function WarehouseIncomingClient({ canLoadOpeningInventory, profileId }: 
             <td>{draft.received_date.split("-").reverse().join("/")}</td>
             <td><strong>{draft.itemcode}</strong>{draft.lookupStatus !== "ready" ? <span className="warehouse-incoming-row-message" role="status">{draft.lookupStatus === "loading" ? "Đang tra cứu..." : draft.lookupError}</span> : null}</td>
             <td>{draft.product_name || "—"}</td><td>{draft.customer || "—"}</td>
-            <td>{draft.production_date ? draft.production_date.split("-").reverse().join("/") : "—"}</td><td>{draft.wo || "—"}</td>
+            <td>{draft.production_date ? draft.production_date.split("-").reverse().join("/") : <span className="warehouse-required">Thiếu ngày sản xuất</span>}</td><td>{draft.wo || "—"}</td>
             <td>{draft.quantity.toLocaleString("vi-VN")}</td><td className="warehouse-incoming-draft-note">{draft.note || "—"}</td>
             {!reviewing ? <td><div className="warehouse-incoming-row-actions">
               <button aria-label={`Sửa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" disabled={storageConflict} onClick={() => editDraft(draft)} type="button">Sửa</button>

@@ -142,6 +142,10 @@
 .warehouse-bulk-unselected { color: var(--muted); background: var(--surface-soft); }
 .warehouse-bulk-overage { display: block; margin-top: 4px; font-weight: 750; color: #93370d; white-space: nowrap; }
 .warehouse-bulk-warning { color: #93370d; background: #fffaeb; border-color: #fedf89; }
+.warehouse-receipt-tabs { display: grid; gap: 16px; min-width: 0; }
+.warehouse-receipt-tablist { grid-template-columns: repeat(2, minmax(0, 1fr)); width: min(100%, 360px); }
+.warehouse-receipt-outgoing-table { min-width: 720px; }
+.warehouse-receipt-date { white-space: nowrap; }
 .warehouse-outgoing-error { white-space: pre-wrap; }
 .warehouse-outgoing .warehouse-opening-dialog h3 { margin: 20px 0 10px; }
 

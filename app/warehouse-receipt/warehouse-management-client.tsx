@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { WarehouseHistoryClient } from "./warehouse-history-client";
+import { WarehouseOutgoingHistoryClient } from "./warehouse-outgoing-history-client";
 import { WarehouseOutgoingClient } from "./warehouse-outgoing-client";
 import { WarehouseIncomingClient } from "./warehouse-incoming-client";
 import "./warehouse-management.css";
@@ -10,7 +11,7 @@ const tabs = [
   { id: "outgoing", label: "Xuất kho", description: "Lập phiếu xuất thủ công và nhập phiếu xuất từ Excel." },
   { id: "incoming", label: "Nhập kho", description: "Nhập hàng thủ công và quản lý các điều chỉnh tồn kho." },
   { id: "reconciliation", label: "Đối soát", description: "Đối chiếu tồn kho hệ thống với dữ liệu từ ERP." },
-  { id: "receipt", label: "Receipt", description: "Tra cứu phiếu nhập kho." },
+  { id: "receipt", label: "Receipt", description: "Tra cứu nhập kho và xuất kho." },
 ] as const;
 
 type WarehouseTab = typeof tabs[number]["id"];
@@ -78,7 +79,7 @@ export function WarehouseManagementClient({ canLoadOpeningInventory, profileId }
           tabIndex={0}
         >
           {tab.id === "outgoing" ? <WarehouseOutgoingClient profileId={profileId} /> : tab.id === "incoming" ? <WarehouseIncomingClient canLoadOpeningInventory={canLoadOpeningInventory} profileId={profileId} /> : tab.id === "receipt" ? (
-            receiptOpened ? <WarehouseHistoryClient /> : null
+            receiptOpened ? <WarehouseReceiptTabs active={activeTab === "receipt"} /> : null
           ) : (
             <section className="warehouse-management-placeholder">
               <span className="warehouse-management-status">Sắp triển khai</span>
@@ -90,4 +91,39 @@ export function WarehouseManagementClient({ canLoadOpeningInventory, profileId }
       ))}
     </section>
   );
+}
+
+const receiptTabs = [{ id: "incoming", label: "Nhập kho" }, { id: "outgoing", label: "Xuất kho" }] as const;
+
+function WarehouseReceiptTabs({ active }: { active: boolean }) {
+  const id = useId();
+  const [selected, setSelected] = useState<"incoming" | "outgoing">("incoming");
+  const [outgoingOpened, setOutgoingOpened] = useState(false);
+  const buttons = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function select(tab: typeof selected) {
+    setSelected(tab);
+    if (tab === "outgoing") setOutgoingOpened(true);
+  }
+
+  return <div className="warehouse-receipt-tabs">
+    <div className="warehouse-management-tabs warehouse-receipt-tablist" role="tablist" aria-label="Lịch sử kho">
+      {receiptTabs.map((tab, index) => <button type="button" role="tab" key={tab.id}
+        id={`${id}-${tab.id}`} aria-controls={`${id}-panel-${tab.id}`} aria-selected={selected === tab.id}
+        className="warehouse-management-tab" tabIndex={selected === tab.id ? 0 : -1}
+        ref={(el) => { buttons.current[index] = el; }} onClick={() => select(tab.id)}
+        onKeyDown={(event) => {
+          const next = event.key === "Home" ? 0 : event.key === "End" ? 1
+            : event.key === "ArrowLeft" || event.key === "ArrowRight" ? 1 - index : null;
+          if (next === null) return;
+          event.preventDefault();
+          select(receiptTabs[next].id);
+          buttons.current[next]?.focus();
+        }}>{tab.label}</button>)}
+    </div>
+    {receiptTabs.map((tab) => <div role="tabpanel" tabIndex={0} hidden={selected !== tab.id} key={tab.id}
+      className="warehouse-management-panel" id={`${id}-panel-${tab.id}`} aria-labelledby={`${id}-${tab.id}`}>
+      {tab.id === "incoming" ? <WarehouseHistoryClient /> : outgoingOpened ? <WarehouseOutgoingHistoryClient active={active && selected === "outgoing"} /> : null}
+    </div>)}
+  </div>;
 }

@@ -28,6 +28,7 @@ export async function POST(request: Request) {
       }
       if (message.includes("NOT_AUTHORIZED")) return Response.json({ success: false, error: "Bạn không có quyền nhập kho." }, { status: 403 });
       if (message.includes("INV_REQUEST_CONFLICT")) return Response.json({ success: false, error: "Mã yêu cầu đã được dùng cho danh sách khác. Vui lòng tải lại trang và kiểm tra lần nhập trước." }, { status: 409 });
+      if (message.includes("INV_PRODUCTION_DATE_REQUIRED")) return Response.json({ success: false, error: "Vui lòng nhập ngày sản xuất cho tất cả các dòng nhập kho thủ công." }, { status: 400 });
       if (message.includes("INV_INVALID_")) return Response.json({ success: false, error: "Danh sách có ngày nhập, số lượng hoặc thông tin không hợp lệ. Vui lòng kiểm tra lại." }, { status: 400 });
       throw error;
     }

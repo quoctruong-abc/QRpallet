@@ -106,7 +106,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
 
   async function copyReview() {
     if (!review?.rows.length || copying) return;
-    const columns = ["Ngày xuất", "Itemcode", "Tên sản phẩm", "Khách hàng", "Số lượng cần xuất", "Ngày sản xuất / Số lượng FIFO", "Còn thiếu"];
+    const columns = ["Ngày giao", "Itemcode", "Tên sản phẩm", "Khách hàng", "Số lượng cần xuất", "Ngày sản xuất / Số lượng FIFO", "Còn thiếu"];
     setCopying(true);
     setCopied("");
     try {
@@ -114,7 +114,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
         throw new Error("Trình duyệt chưa hỗ trợ sao chép ảnh vào clipboard.");
       }
       const rows = review.rows.map((row) => ({ shortage: row.shortage_qty > 0, cells: [
-        formatDate(shipDate), row.itemcode, row.product_name || "—", row.customer || "—", num(row.quantity),
+        row.delivery_dates?.map(formatDate).join("\n") || "—", row.itemcode, row.product_name || "—", row.customer || "—", num(row.quantity),
         row.days.map((day) => `${productionDate(day.production_date)}: ${num(day.quantity)}`).join("\n") || "Không có tồn", num(row.shortage_qty),
       ] }));
       const png = renderReviewImage(columns, rows, "Review xuất kho theo FIFO", `${num(rows.length)} item · ${num(review.request_count)} yêu cầu chờ xuất`);
@@ -203,7 +203,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
           <thead><tr>{bulk ? <th><input type="checkbox" ref={selectAll} aria-label="Chọn tất cả item xuất"
             checked={allSelected} disabled={locked || !bulkData}
             onChange={(event) => { setIncluded(new Set(event.target.checked ? bulkData?.rows.map((row) => row.itemcode) : [])); }} /></th> : null}
-          <th>Ngày xuất</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng cần xuất</th>{bulk ? <th>Chọn xuất</th> : null}<th>Ngày sản xuất / Số lượng {bulk ? "chọn xuất" : "FIFO"}</th><th>{bulk ? "Còn lại sau xuất" : "Còn thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
+          <th>{bulk ? "Ngày xuất" : "Ngày giao"}</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng cần xuất</th>{bulk ? <th>Chọn xuất</th> : null}<th>Ngày sản xuất / Số lượng {bulk ? "chọn xuất" : "FIFO"}</th><th>{bulk ? "Còn lại sau xuất" : "Còn thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
           <tbody>{review.rows.map((row) => {
             const selection = selectionByItem.get(row.itemcode);
             const checked = included.has(row.itemcode);
@@ -222,7 +222,9 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
                     return next;
                   });
                 }} /></td> : null}
-              <td>{shipDate ? formatDate(shipDate) : "—"}</td><td>{row.itemcode}</td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td className="warehouse-review-number">{num(row.quantity)}</td>
+              <td>{bulk ? (shipDate ? formatDate(shipDate) : "—") : row.delivery_dates?.length ? row.delivery_dates.map((value) =>
+                <div className="warehouse-receipt-date" key={value}>{formatDate(value)}</div>) : "—"}</td>
+              <td>{row.itemcode}</td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td className="warehouse-review-number">{num(row.quantity)}</td>
               {bulk ? <td className="warehouse-review-number"><strong>{num(selection?.quantity ?? 0)}</strong>
                 {excess > 0 && checked ? <small className="warehouse-bulk-overage">Vượt {num(excess)}</small> : null}
               </td> : null}

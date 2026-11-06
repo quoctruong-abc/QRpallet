@@ -943,6 +943,12 @@ nhu cầu khi lô còn đủ tồn. Hệ thống đáp ứng các yêu cầu đ�
 tự giao trước, rồi ghi phần vượt vào yêu cầu cuối của item; số yêu cầu
 gốc giữ nguyên. Giao diện cảnh báo số vượt và chỉ ghi các item được tick.
 
+Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
+trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
+ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị
+các ngày giao của yêu cầu được chọn. Nhập kho thủ công mới bắt buộc có ngày
+sản xuất; dữ liệu đã ghi và retry hợp lệ không đổi.
+
 API/RPC yêu cầu tài khoản hoạt động có `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.
 Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đầy đủ vẫn lưu trong DB.

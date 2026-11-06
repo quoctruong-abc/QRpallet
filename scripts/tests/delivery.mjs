@@ -496,5 +496,40 @@ assert.equal(Number((await summary(bulkItem)).balance_qty),14);
 assert.equal(Number((await summary(bulkItem)).on_order_qty),100,"Excess is not deducted from other open orders");
 console.log("PASS: bulk overshipment is allocated to the last selected request, preserves plans and unselected demand, and remains idempotent.");
 
+const legacyManualId=randomUUID();
+const undatedManual=[{itemcode:bulkItem,received_date:"2026-11-11",production_date:null,quantity:1,note:""}];
+const postIncoming=async (id, rows)=>(await db.query("select * from public.post_manual_inventory($1,$2::jsonb)",[id,JSON.stringify(rows)])).rows;
+const legacyPosted=await postIncoming(legacyManualId,undatedManual);
+await db.exec("reset role");
+await migrate("20261106150000_outgoing_receipt_history.sql");
+await db.exec("set role authenticated");
+assert.deepEqual(await postIncoming(legacyManualId,undatedManual),legacyPosted,"Already posted manual batches are safe to retry");
+await assert.rejects(postIncoming(randomUUID(),undatedManual),/INV_PRODUCTION_DATE_REQUIRED/);
+assert.equal((await postIncoming(randomUUID(),[{...undatedManual[0],production_date:"2026-11-01"}]))[0].row_count,1);
+
+await rpc("import",{rows:[line("REVIEW-LATER",reviewItem,3,"2026-11-20")]});
+const reviewLater=(await get("REVIEW-LATER"))[0];
+const reviewDates=await reviewFifo([reviewLater.id,reviewManual.request_id,reviewErp.id]);
+assert.deepEqual(reviewDates.rows[0].delivery_dates,[input.delivery_date,"2026-11-20"]);
+const receipts=async (from,to)=>(await db.query("select public.list_outgoing_receipts($1,$2,0) as data",[from,to])).rows[0].data;
+const receiptDetails=async (day,code)=>(await db.query("select public.outgoing_receipt_details($1,$2,0) as data",[day,code])).rows[0].data;
+await db.exec("select set_config('test.permission','no',false)");
+await assert.rejects(receipts(null,null),/DELIVERY_NOT_AUTHORIZED/);
+await assert.rejects(receiptDetails("2026-11-12",bulkItem),/DELIVERY_NOT_AUTHORIZED/);
+await db.exec("select set_config('test.permission','yes',false)");
+const dayReceipt=await receipts("2026-11-12","2026-11-12");
+assert.equal(dayReceipt.total,1);
+assert.deepEqual(dayReceipt.rows[0],{shipped_date:"2026-11-12",itemcode:bulkItem,product_name:"Product",customer:"Customer",quantity:14,creator_name:"Test Operator"});
+const twoDays=await receipts("2026-11-11","2026-11-12");
+assert.deepEqual(twoDays.rows.filter(row=>row.itemcode===bulkItem).map(row=>[row.shipped_date,row.quantity]),[["2026-11-12",14],["2026-11-11",10]]);
+assert.ok((await receipts(null,null)).rows.length<=10);
+const receiptDetail=await receiptDetails("2026-11-12",bulkItem);
+assert.equal(receiptDetail.total,2);
+assert.deepEqual(receiptDetail.rows.map(row=>[row.purorder,row.sales_id,row.delivery_date,row.quantity]).sort(),[
+  ["BULK-EXTRA-LATE","SO-BULK-EXTRA-LATE","2026-11-12",6],["BULK-LATE","SO-BULK-LATE","2026-11-10",8],
+]);
+assert.deepEqual(receiptDetail.rows.find(row=>row.request_id===late.id).lots.map(lot=>[lot.incoming_id,lot.quantity]),[[oldId,4],[newId,4]]);
+console.log("PASS: required production date for new manual intake, valid retries, review delivery dates, and item/day shipment history with exact request and lot detail.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");
