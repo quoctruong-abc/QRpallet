@@ -267,5 +267,64 @@ assert.equal(Number((await summary("SUMMARY")).on_order_qty),4);
 assert.equal(Number((await summary("SUMMARY")).balance_qty),30);
 console.log("PASS: system customer backfill and synchronization, preserved ERP name, incoming fallback, no changes to shipping versions or quantities.");
 
+await migrate("20261106100000_stock_fifo_overship.sql");
+const item="FIFO-UNDATED";
+const oldLot=Number((await seed(item,9,"2026-01-01")).rows[0].id);
+await seed(item,5,"2026-01-01");
+await seed(item,10,"2026-02-01");
+const unknownFirst=Number((await seed(item,4,null)).rows[0].id);
+const unknownSecond=Number((await seed(item,3,null)).rows[0].id);
+const usedLot=Number((await seed(item,1,"2026-03-01")).rows[0].id);
+await db.query("update public.inv_incoming set issued_qty=received_qty where id=$1",[usedLot]);
+const breakdown=async code=>(await db.query("select public.list_stock_production_dates($1) as data",[code])).rows[0].data;
+await db.exec("set role anon");
+await assert.rejects(breakdown(item),/permission denied/);
+await db.exec("set role authenticated; select set_config('test.permission','no',false)");
+await assert.rejects(breakdown(item),/DELIVERY_NOT_AUTHORIZED/);
+await db.exec("select set_config('test.permission','yes',false)");
+assert.deepEqual(await breakdown(item),{balance_qty:31,rows:[
+  {production_date:null,lot_count:2,balance_qty:7},
+  {production_date:"2026-01-01",lot_count:2,balance_qty:14},
+  {production_date:"2026-02-01",lot_count:1,balance_qty:10},
+]});
+assert.deepEqual(await breakdown("UNKNOWN-ITEM"),{balance_qty:0,rows:[]});
+const overLine=line("OVERSHIP",item,8);
+await rpc("import",{rows:[overLine,line("OTHER-ORDER",item,24,"2026-10-28")]});
+const toShip=await request((await get("OVERSHIP"))[0].id);
+const shipment={id:toShip.id,version:toShip.version,quantity:2,shipped_date:"2026-11-06"};
+await rpc("ship",shipment);
+shipment.version=(await request(toShip.id)).version;
+shipment.quantity=30;
+assert.equal((await fifo(toShip.id,30)).can_ship,false);
+await assert.rejects(rpc("ship",shipment),/DELIVERY_INSUFFICIENT_STOCK/);
+assert.equal((await request(toShip.id)).shipped_qty,2,"An insufficient-stock overage does not post");
+shipment.quantity=10;
+const suggested=await fifo(toShip.id,10);
+assert.equal(suggested.can_ship,true);
+assert.equal(suggested.remaining_qty,6);
+const expectedLots=[[unknownFirst,2],[unknownSecond,3],[oldLot,5]];
+assert.deepEqual(suggested.fifo.map(l=>[l.incoming_id,l.quantity]),expectedLots);
+const overCommand=randomUUID();
+assert.equal((await rpc("ship",shipment,overCommand)).shipped,10);
+assert.equal((await rpc("ship",shipment,overCommand)).shipped,10,"Retry must not ship again");
+const actualLots=await db.query("select incoming_id::int,quantity from public.inv_delivery_issue_lines where issue_id=$1",[overCommand]);
+assert.deepEqual(actualLots.rows.map(l=>[l.incoming_id,l.quantity]).sort((a,b)=>a[0]-b[0]),[...expectedLots].sort((a,b)=>a[0]-b[0]));
+const closedOver=(await db.query("select public.list_delivery(0,'OVERSHIP',true) as data")).rows[0].data.rows[0];
+assert.deepEqual([closedOver.ordered_qty,closedOver.shipped_qty,closedOver.remaining_qty,closedOver.status],[8,12,0,"done"]);
+assert.equal((await db.query("select public.list_delivery(0,'OVERSHIP',false) as data")).rows[0].data.total,0);
+assert.deepEqual([...(await breakdown(item)).rows].map(l=>[l.production_date,l.balance_qty]),[["2026-01-01",9],["2026-02-01",10]]);
+const afterOver=await summary(item);
+assert.deepEqual([afterOver.balance_qty,afterOver.on_order_qty,afterOver.shortage_qty].map(Number),[19,24,5],"The extra quantity reduces physical stock without reducing another order's demand");
+assert.equal((await fifo(toShip.id,1)).can_ship,false);
+await assert.rejects(rpc("ship",{...shipment,version:closedOver.version,quantity:1}),/DELIVERY_DONE/);
+await assert.rejects(rpc("cancel",{id:toShip.id,version:closedOver.version}),/DELIVERY_DONE/);
+const overPreview=await rpc("preview",{rows:[overLine]});
+assert.equal(overPreview.rows[0].item_on_order_after,24);
+assert.equal(previewDeliveryDemand(overPreview.rows,{})[0].item_on_order_after,24);
+assert.equal((await rpc("import",{rows:[overLine]})).skipped,1,"Reimporting an unchanged plan remains idempotent");
+await rpc("edit",{id:toShip.id,version:closedOver.version,ordered_qty:8,delivery_date:"2026-11-07"});
+assert.equal(Number((await summary(item)).on_order_qty),24);
+console.log("PASS: undated-first stock groups and FIFO, overshipment with ledger and stock reconciliation, insufficient-stock rollback, and idempotent reimport.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

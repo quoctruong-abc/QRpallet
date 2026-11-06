@@ -878,9 +878,11 @@ Không cho browser sửa trực tiếp bảng tổng hợp.
   tất cả lịch giao của item, không phải lượng được cấp riêng cho SO đó.
 - **Xuất** nhận số thực xuất và ngày thực xuất. Gợi ý FIFO chỉ đọc tồn hiện tại,
   không giữ lô. Khi xác nhận, hệ thống kiểm tra lại tồn và chọn FIFO theo
-  `coalesce(production_date, received_date), received_date, id`.
-  Đơn xác nhận trước sử dụng lô cũ trước; không gắn ngày sản xuất khi nạp lịch.
-- Chỉ xuất tối đa phần còn phải giao và tồn thực tế; không xuất âm.
+  `production_date nulls first, received_date, id`: lô không có ngày sản xuất
+  đi trước, rồi tới lô có ngày sản xuất cũ nhất. Không gắn lô khi nạp lịch.
+- Khi yêu cầu còn chờ, số thực xuất có thể vượt số còn phải giao nếu tồn
+  thực tế đủ. Giữ nguyên số yêu cầu, ghi đủ số thực xuất, chặn số còn phải
+  giao ở 0 và đánh dấu Done. Phần xuất vượt không trừ On order của lịch khác.
   Số đã xuất của lô, tiến độ yêu cầu và phiếu xuất được ghi cùng transaction.
   Gửi lại UUID/payload cũ trả kết quả cũ, không trừ thêm.
 - Chờ xuất → Xuất một phần → Done theo số đã xuất. Giảm yêu cầu/hủy phần chờ
@@ -910,6 +912,11 @@ tên sẽ đồng bộ cho item liên quan. Danh sách chờ xuất có cột Kh
 và bộ lọc ngày giao/khách hệ thống; các lựa chọn lấy từ dữ liệu đã tải.
 Bảng tổng hợp và danh sách chờ tải các trang một lần mỗi lần làm mới,
 sau đó tìm kiếm/lọc tại trình duyệt.
+
+Migration `20261106100000_stock_fifo_overship.sql` áp dụng thứ tự FIFO mới,
+cho phép xuất vượt yêu cầu và thêm `list_stock_production_dates`. Nút con mắt
+trong bảng tổng hợp tải tồn thực tế theo ngày sản xuất: chỉ đếm lô còn hàng
+và xếp nhóm không có ngày sản xuất lên đầu.
 
 API/RPC yêu cầu tài khoản hoạt động có `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.

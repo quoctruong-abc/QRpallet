@@ -11,6 +11,7 @@ import { WarehouseStockSummary } from "./warehouse-stock-summary";
 const num = (n: number) => Number(n).toLocaleString("vi-VN");
 const date = (v: string | null) => v ? v.split("-").reverse().join("/") : "—";
 const statusLabel = { pending: "Chờ xuất", partial: "Xuất một phần", done: "Done", cancelled: "Đã hủy" };
+const maxDeliveryQty = 2147483647;
 
 export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const id = useId();
@@ -200,18 +201,25 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   }
 
   const invalidateDetails = useCallback(() => { detailVersion.current++; }, []);
+  const amount = Number(quantity);
+  const validShipInput = Number.isInteger(amount) && amount > 0 && amount <= maxDeliveryQty - (selected?.shipped_qty ?? 0);
   useEffect(() => {
-    if (!selected || mode !== "ship") return;
-    const amount = Number(quantity);
-    if (!Number.isInteger(amount) || amount < 0 || amount > selected.remaining_qty) return;
+    if (!selected || mode !== "ship" || !validShipInput) return;
     const timer = window.setTimeout(() => { void loadDetails(selected.id, amount); }, 200);
     return () => { window.clearTimeout(timer); invalidateDetails(); };
-  }, [selected, mode, quantity, loadDetails, invalidateDetails]);
+  }, [selected, mode, amount, validShipInput, loadDetails, invalidateDetails]);
+
+  const maxShipQty = Math.min(maxDeliveryQty - (selected?.shipped_qty ?? 0), fifo?.item_stock_qty ?? selected?.item_stock_qty ?? 0);
+  const minOrderQty = selected ? Math.max(1, Math.min(selected.ordered_qty, selected.shipped_qty)) : 1;
+  const shipExcess = validShipInput && selected ? Math.max(0, amount - selected.remaining_qty) : 0;
+  const canSubmit = !locked && (mode === "cancel"
+    || (mode === "ship" && actionDate && validShipInput && fifo?.can_ship && fifo.quantity === amount && amount <= maxShipQty)
+    || (mode === "edit" && actionDate && Number.isInteger(amount) && amount >= minOrderQty && amount <= maxDeliveryQty));
 
   const selectedTargets = preview?.map((row) => row.existing?.id || (choices[row.excel_row] === "new" ? null : choices[row.excel_row])).filter(Boolean) || [];
   const invalidChoice = new Set(selectedTargets).size !== selectedTargets.length || (preview?.some((row) => {
     const chosen = row.existing?.id === choices[row.excel_row] ? row.existing : row.candidates.find((c) => c.id === choices[row.excel_row]);
-    return !choices[row.excel_row] || (chosen && !chosen.cancelled && row.ordered_qty < chosen.shipped_qty);
+    return !choices[row.excel_row] || (chosen && !chosen.cancelled && row.ordered_qty < Math.min(chosen.ordered_qty, chosen.shipped_qty));
   }) ?? true);
 
   const loaded = useMemo(() => closed ? rows : rows.filter((row) => !row.cancelled && row.remaining_qty > 0), [rows, closed]);
@@ -325,18 +333,22 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         {notice ? <p role="status" className="alert">{notice}</p> : null}
         {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">Thử lại thao tác chưa rõ kết quả</button> : null}
         {mode === "ship" || mode === "edit" ? <div className="warehouse-outgoing-toolbar">
-          <label>{mode === "ship" ? "Số thực xuất" : "Số yêu cầu"}<input disabled={locked} max={mode === "ship" ? Math.min(selected.remaining_qty, fifo?.item_stock_qty ?? selected.item_stock_qty) : 2147483647} min={mode === "ship" ? 1 : Math.max(1, selected.shipped_qty)} onChange={(event) => { setQuantity(event.target.value); setFifo(null); detailVersion.current++; }} step={1} type="number" value={quantity} /></label>
+          <label>{mode === "ship" ? "Số thực xuất" : "Số yêu cầu"}<input disabled={locked} max={mode === "ship" ? maxShipQty : maxDeliveryQty} min={mode === "ship" ? 1 : minOrderQty} onChange={(event) => {
+            setQuantity(event.target.value);
+            if (Number(event.target.value) !== amount) { setFifo(null); detailVersion.current++; }
+          }} step={1} type="number" value={quantity} /></label>
           <label>{mode === "ship" ? "Ngày xuất thực tế" : "Ngày giao dự kiến"}<input disabled={locked} onChange={(event) => setActionDate(event.target.value)} type="date" value={actionDate} /></label>
         </div> : null}
         {mode === "cancel" ? <p>Chỉ hủy phần chưa xuất và giảm On order của item. Lịch sử đã xuất được giữ lại.</p> : null}
         {detailError ? <p className="alert alert-error">{detailError}</p> : null}
         {mode === "ship" ? <>
+          {shipExcess > 0 ? <p role="status" className="alert">Xuất vượt {num(shipExcess)} so với số còn phải giao. Kho sẽ trừ đủ số thực xuất; số yêu cầu giữ nguyên.</p> : null}
           <h3>Gợi ý FIFO cho số thực xuất</h3>
-          <p className="muted small">Đây là gợi ý hiện tại, chưa giữ lô. Khi xác nhận, hệ thống chọn lại FIFO theo tồn thực tế tại thời điểm ghi nhận.</p>
-          {!fifo && !detailError ? <p className="muted">Đang cập nhật gợi ý…</p> : null}
+          <p className="muted small">Ưu tiên lô không có ngày sản xuất, sau đó lấy theo ngày sản xuất cũ nhất. Khi xác nhận, hệ thống chọn lại lô theo tồn thực tế.</p>
+          {validShipInput && !fifo && !detailError ? <p className="muted">Đang cập nhật gợi ý…</p> : null}
           {fifo && !fifo.can_ship ? <p className="alert alert-error">Số lượng xuất vượt tồn thực tế hoặc không còn phần phải giao.</p> : null}
           <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>ID lô nhập</th><th>Ngày SX</th><th>Ngày nhập</th><th>Số lượng đề xuất</th></tr></thead>
-            <tbody>{fifo?.fifo.map((lot) => <tr key={lot.incoming_id}><td>{lot.incoming_id}</td><td>{date(lot.production_date)}</td><td>{date(lot.received_date)}</td><td>{num(lot.quantity)}</td></tr>)}</tbody></table></div>
+            <tbody>{fifo?.fifo.map((lot) => <tr key={lot.incoming_id}><td>{lot.incoming_id}</td><td>{lot.production_date ? date(lot.production_date) : "Không có ngày sản xuất"}</td><td>{date(lot.received_date)}</td><td>{num(lot.quantity)}</td></tr>)}</tbody></table></div>
         </> : null}
         <h3>Lịch sử xuất thực tế</h3>
         {history.length ? <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Ngày xuất</th><th>Số lượng</th><th>Người xuất</th><th>Lô nhập đã lấy</th></tr></thead>
@@ -344,8 +356,8 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
             <td>{issue.inv_delivery_issue_lines.map((line) => `#${line.incoming_id}: ${num(line.quantity)}`).join("; ")}</td></tr>)}</tbody></table></div> : <p className="muted">Chưa có lần xuất.</p>}
         <div className="modal-actions">
           <button className="button button-secondary" disabled={busy} onClick={() => actionDialog.current?.close()} type="button">Đóng</button>
-          {mode !== "history" ? <button className="button button-primary" disabled={locked || (mode === "ship" && (!fifo?.can_ship || fifo.quantity !== Number(quantity))) || ((mode === "ship" || mode === "edit") && (!Number.isInteger(Number(quantity)) || Number(quantity) < (mode === "ship" ? 1 : Math.max(1, selected.shipped_qty)) || Number(quantity) > (mode === "ship" ? Math.min(selected.remaining_qty, fifo?.item_stock_qty ?? selected.item_stock_qty) : 2147483647) || !actionDate))} onClick={() => {
-            void execute(mode, { id: selected.id, version: selected.version, ...(mode === "ship" ? { quantity: Number(quantity), shipped_date: actionDate } : mode === "edit" ? { ordered_qty: Number(quantity), delivery_date: actionDate } : {}) });
+          {mode !== "history" ? <button className="button button-primary" disabled={!canSubmit} onClick={() => {
+            void execute(mode, { id: selected.id, version: selected.version, ...(mode === "ship" ? { quantity: amount, shipped_date: actionDate } : mode === "edit" ? { ordered_qty: amount, delivery_date: actionDate } : {}) });
           }} type="button">{mode === "ship" ? "Ghi nhận xuất kho" : mode === "edit" ? "Lưu thay đổi" : "Xác nhận hủy phần chờ"}</button> : null}
         </div>
       </> : null}

@@ -105,6 +105,10 @@ export type StockSummary = {
   received_qty: number; issued_qty: number; balance_qty: number; on_order_qty: number;
   available_qty: number; shortage_qty: number; updated_at: string;
 };
+export type StockProductionDates = {
+  balance_qty: number;
+  rows: { production_date: string | null; lot_count: number; balance_qty: number }[];
+};
 export type FifoPreview = {
   model_version: number; request_version: number; item_stock_qty: number;
   remaining_qty: number; quantity: number; can_ship: boolean;
@@ -118,7 +122,7 @@ export function previewDeliveryDemand(rows: DeliveryPreviewLine[], choices: Reco
   for (const row of rows) {
     const target = row.existing || row.candidates.find((candidate) => candidate.id === choices[row.excel_row]);
     const adjustment = target?.cancelled ? 0 : Math.max(0, row.ordered_qty - (target?.shipped_qty ?? 0))
-      - (target ? target.ordered_qty - target.shipped_qty : 0);
+      - (target ? Math.max(0, target.ordered_qty - target.shipped_qty) : 0);
     delta.set(row.itemcode, (delta.get(row.itemcode) ?? 0) + adjustment);
   }
   return rows.map((row) => {

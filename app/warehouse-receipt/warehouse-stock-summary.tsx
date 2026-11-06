@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
-import type { StockSummary } from "@/lib/warehouse-receipt/outgoing";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import type { StockProductionDates, StockSummary } from "@/lib/warehouse-receipt/outgoing";
 import { loadWarehouseRows, matchesWarehouseSearch, warehouseSearchTokens, WAREHOUSE_PAGE_SIZE } from "@/lib/warehouse-receipt/outgoing-list";
 
 export function WarehouseStockSummary({ revision }: { revision: number }) {
   const panelId = useId();
+  const detailsDialog = useRef<HTMLDialogElement>(null);
+  const detailsRequest = useRef<AbortController | null>(null);
+  const [selected, setSelected] = useState<StockSummary | null>(null);
+  const [details, setDetails] = useState<StockProductionDates | null>(null);
+  const [detailsError, setDetailsError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [rows, setRows] = useState<StockSummary[]>([]);
   const [search, setSearch] = useState("");
@@ -31,6 +36,26 @@ export function WarehouseStockSummary({ revision }: { revision: number }) {
     });
     return () => controller.abort();
   }, [revision]);
+  useEffect(() => () => detailsRequest.current?.abort(), []);
+
+  async function openDetails(row: StockSummary) {
+    detailsRequest.current?.abort();
+    const controller = new AbortController();
+    detailsRequest.current = controller;
+    setSelected(row);
+    setDetails(null);
+    setDetailsError("");
+    detailsDialog.current?.showModal();
+    try {
+      const params = new URLSearchParams({ view: "production-dates", itemcode: row.itemcode });
+      const response = await fetch(`/api/warehouse-receipt/outgoing?${params}`, { cache: "no-store", signal: controller.signal });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || "Không tải được tồn theo ngày sản xuất.");
+      if (!controller.signal.aborted) setDetails(data);
+    } catch (error) {
+      if (!controller.signal.aborted) setDetailsError(error instanceof Error ? error.message : "Không tải được tồn theo ngày sản xuất.");
+    }
+  }
 
   const filtered = useMemo(() => {
     const tokens = warehouseSearchTokens(search);
@@ -63,10 +88,16 @@ export function WarehouseStockSummary({ revision }: { revision: number }) {
       </div>
       {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
       <div className="scan-table-wrap"><table className="warehouse-table">
-        <thead><tr><th>Item</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Tổng nhận</th><th>Đã xuất</th><th>Tồn thực tế</th><th>On order</th><th>Tồn sau lịch giao</th><th>Thiếu</th></tr></thead>
+        <thead><tr><th>Item</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Tồn thực tế</th><th>On order</th><th>Tồn sau lịch giao</th><th>Thiếu</th><th>Chi tiết</th></tr></thead>
         <tbody>{visible.map((row) => <tr key={row.itemcode} className={row.shortage_qty > 0 ? "warehouse-outgoing-shortage" : undefined}>
           <td>{row.itemcode}</td><td className="warehouse-outgoing-name">{row.product_name}</td><td>{row.customer || "—"}</td>
-          <td>{num(row.received_qty)}</td><td>{num(row.issued_qty)}</td><td>{num(row.balance_qty)}</td><td>{num(row.on_order_qty)}</td><td>{num(row.available_qty)}</td><td>{num(row.shortage_qty)}</td>
+          <td>{num(row.balance_qty)}</td><td>{num(row.on_order_qty)}</td><td>{num(row.available_qty)}</td><td>{num(row.shortage_qty)}</td>
+          <td><button aria-label={`Xem tồn theo ngày sản xuất của ${row.itemcode}`} title="Xem tồn theo ngày sản xuất"
+            className="button button-secondary button-small warehouse-stock-eye" onClick={() => { void openDetails(row); }} type="button">
+            <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" /><circle cx="12" cy="12" r="2.5" />
+            </svg>
+          </button></td>
         </tr>)}</tbody>
       </table></div>
       {!visible.length && !error ? <p className="scan-empty">{loading ? "Đang tải…" : "Không có item phù hợp."}</p> : null}
@@ -76,5 +107,25 @@ export function WarehouseStockSummary({ revision }: { revision: number }) {
         <button className="button button-secondary" disabled={pageStart + WAREHOUSE_PAGE_SIZE >= total} onClick={() => setOffset(pageStart + WAREHOUSE_PAGE_SIZE)} type="button">Sau</button>
       </div>
     </div>
+    <dialog aria-labelledby={`${panelId}-details-title`} className="modal-card warehouse-opening-dialog warehouse-stock-details"
+      ref={detailsDialog} onClose={() => { detailsRequest.current?.abort(); setSelected(null); }}>
+      <div className="modal-heading">
+        <h2 id={`${panelId}-details-title`}>Tồn theo ngày sản xuất</h2>
+        <button aria-label="Đóng tồn theo ngày sản xuất" className="modal-close" onClick={() => detailsDialog.current?.close()} type="button">×</button>
+      </div>
+      {selected ? <p><strong>{selected.itemcode}</strong>{selected.product_name ? ` · ${selected.product_name}` : ""}</p> : null}
+      {detailsError ? <p role="alert" className="alert alert-error">{detailsError}</p> : null}
+      {selected && !details && !detailsError ? <p role="status" className="muted">Đang tải tồn kho…</p> : null}
+      {details ? <>
+        <p>Tồn thực tế: <strong>{num(details.balance_qty)}</strong></p>
+        {details.rows.length ? <div className="scan-table-wrap"><table className="warehouse-table">
+          <thead><tr><th>Ngày sản xuất</th><th>Số lô còn tồn</th><th>Số lượng tồn</th></tr></thead>
+          <tbody>{details.rows.map((row) => <tr key={row.production_date ?? "undated"}>
+            <td>{row.production_date ? row.production_date.split("-").reverse().join("/") : "Không có ngày sản xuất"}</td>
+            <td>{num(row.lot_count)}</td><td>{num(row.balance_qty)}</td>
+          </tr>)}</tbody>
+        </table></div> : <p className="scan-empty">Item này không còn hàng tồn.</p>}
+      </> : null}
+    </dialog>
   </section>;
 }

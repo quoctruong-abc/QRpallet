@@ -12,6 +12,9 @@ const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}
 
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
+  if (error.code === "PGRST202" && message.includes("list_stock_production_dates")) {
+    return fail("Cần chạy migration 20261106100000_stock_fifo_overship.sql để xem tồn theo ngày sản xuất.", 503);
+  }
   if (["PGRST202", "42883", "42P01", "42703"].includes(error.code ?? "")) {
     return fail("Supabase chưa có cấu trúc Xuất kho. Cần chạy migration 20261105140000_item_stock_summary.sql.", 503);
   }
@@ -20,12 +23,12 @@ function dbError(error: { code?: string; message?: string }) {
     ["DELIVERY_STALE", "Dữ liệu đã thay đổi. Tải lại danh sách và kiểm tra trước khi xác nhận."],
     ["DELIVERY_COMMAND_CONFLICT", "Mã thao tác đã dùng cho nội dung khác. Tải lại trang để kiểm tra kết quả."],
     ["DELIVERY_INSUFFICIENT_STOCK", "Tồn thực tế không đủ số thực xuất. Tải lại gợi ý FIFO và kiểm tra số lượng."],
-    ["DELIVERY_BELOW_SHIPPED", "Số yêu cầu không được nhỏ hơn số đã xuất."],
+    ["DELIVERY_BELOW_SHIPPED", "Không thể giảm số yêu cầu thấp hơn số đã xuất hoặc số yêu cầu hiện tại nếu đã xuất vượt."],
     ["DELIVERY_CHOOSE_SCHEDULE", "Chọn tạo lịch mới hoặc dời lịch cũ cho dòng có ngày giao khác."],
     ["DELIVERY_DUPLICATE_TARGET", "Hai dòng đang cùng cập nhật một lịch giao. Kiểm tra lại lựa chọn dời lịch."],
     ["DELIVERY_DATE_CONFLICT", "Ngày mới trùng với một lịch đã có. Không thể dời lịch vào ngày đó."],
     ["DELIVERY_CANCELLED", "Yêu cầu đã hủy, không thể tiếp tục xuất hoặc chỉnh sửa."],
-    ["DELIVERY_DONE", "Yêu cầu đã xuất đủ, không còn phần chờ để hủy."],
+    ["DELIVERY_DONE", "Yêu cầu đã hoàn tất và không còn phần chờ xuất."],
     ["DELIVERY_DUPLICATE_KEY", "File có dòng trùng PO, Sales ID, Itemcode và ngày giao."],
   ];
   const known = messages.find(([key]) => message.includes(key));
@@ -41,6 +44,13 @@ export async function GET(request: Request) {
   if (!auth.ok) return fail(auth.error, auth.status);
   const db = await createClient();
   const url = new URL(request.url);
+  if (url.searchParams.get("view") === "production-dates") {
+    const itemcode = (url.searchParams.get("itemcode") || "").trim();
+    if (!itemcode || itemcode.length > 200) return fail("Mã sản phẩm không hợp lệ.");
+    const { data, error } = await db.rpc("list_stock_production_dates", { p_itemcode: itemcode });
+    if (error) return dbError(error);
+    return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
+  }
   const id = url.searchParams.get("id");
   if (id) {
     if (!uuid(id)) return fail("Mã yêu cầu không hợp lệ.");

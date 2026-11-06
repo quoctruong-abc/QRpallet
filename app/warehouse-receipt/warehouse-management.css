@@ -122,3 +122,6 @@
 
 .warehouse-outgoing-summary-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .warehouse-outgoing-toolbar > label:not(.warehouse-outgoing-checkbox) { min-width: min(100%, 170px); }
+.warehouse-stock-eye { display: inline-grid; place-items: center; }
+.warehouse-opening-dialog.warehouse-stock-details { width: min(640px, calc(100% - 24px)); }
+.warehouse-stock-details .scan-table-wrap { max-height: 55vh; }
