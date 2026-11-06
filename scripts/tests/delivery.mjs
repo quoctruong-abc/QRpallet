@@ -393,5 +393,38 @@ await rpc("import",{rows:[{...splitLines[0],target_id:oldSchedule.id,expected_ve
 assert.deepEqual([(await summary("SPLIT-PO")).on_order_qty,(await summary("SPLIT-PO")).shortage_qty].map(Number),[95,0]);
 console.log("PASS: same-day split PO/SO demand is aggregated by item, with existing demand counted once when rescheduling.");
 
+await db.exec("reset role");
+await migrate("20261106120000_review_delivery_fifo.sql");
+const reviewItem="REVIEW-MIXED";
+await seed(reviewItem,10,"2026-01-01");
+await seed(reviewItem,8,"2026-01-01");
+await seed(reviewItem,50,"2026-02-01");
+await seed(reviewItem,3,null);
+await seed(reviewItem,4,null);
+await db.query("insert into public.item_pallet_config(itemcode,product_name,customer) values ($1,'Review product','Review customer')",[reviewItem]);
+const reviewFifo=async ids=>(await db.query("select public.review_delivery_fifo($1::uuid[]) as data",[ids])).rows[0].data;
+await db.exec("set role anon");
+await assert.rejects(reviewFifo([randomUUID()]),/permission denied/);
+await db.exec("set role authenticated; select set_config('test.permission','no',false)");
+await assert.rejects(reviewFifo([randomUUID()]),/DELIVERY_NOT_AUTHORIZED/);
+await db.exec("select set_config('test.permission','yes',false)");
+await assert.rejects(reviewFifo([]),/DELIVERY_INVALID_REVIEW/);
+const reviewManual=await postManual({...input,itemcode:reviewItem,ordered_qty:15});
+await rpc("import",{rows:[line("REVIEW-ERP",reviewItem,20,input.delivery_date),line("NOT-IN-REVIEW",reviewItem,1000,input.delivery_date),line("REVIEW-CANCEL",reviewItem,10,input.delivery_date)]});
+const reviewErp=(await get("REVIEW-ERP"))[0], reviewCancel=(await get("REVIEW-CANCEL"))[0];
+await rpc("ship",{id:reviewErp.id,version:reviewErp.version,quantity:5,shipped_date:input.delivery_date});
+await rpc("cancel",{id:reviewCancel.id,version:reviewCancel.version});
+const stockBeforeReview=await summary(reviewItem);
+const reviewData=await reviewFifo([reviewManual.request_id,reviewErp.id,reviewErp.id,reviewCancel.id,manual.id,fallbackOrder.request_id]);
+assert.equal(reviewData.request_count,3,"Ignore duplicated, canceled and completed requests");
+assert.deepEqual(reviewData.rows,[
+  {itemcode:"PALLET-MANUAL",product_name:"Pallet name",customer:"Pallet customer",quantity:8,shortage_qty:8,days:[]},
+  {itemcode:reviewItem,product_name:"Review product",customer:"Review customer",quantity:30,shortage_qty:0,days:[
+    {production_date:null,quantity:2},{production_date:"2026-01-01",quantity:18},{production_date:"2026-02-01",quantity:10},
+  ]},
+],"Use only selected requests, remaining quantities, and one FIFO allocation per item grouped by production date");
+assert.deepEqual(await summary(reviewItem),stockBeforeReview,"Review neither allocates inventory nor changes demand");
+console.log("PASS: selected-request FIFO review groups items/dates, subtracts prior shipments and excludes closed orders without writing stock.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

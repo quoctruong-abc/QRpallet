@@ -20,6 +20,15 @@ export type DeliveryRequest = DeliveryInput & {
   cancelled: boolean; version: number; status: "pending" | "partial" | "done" | "cancelled";
 };
 export const MAX_DELIVERY_QUANTITY = 2147483647;
+export const MAX_DELIVERY_REVIEW_REQUESTS = 50_000;
+export type DeliveryFifoReview = {
+  request_count: number;
+  rows: {
+    itemcode: string; product_name: string; customer: string | null;
+    quantity: number; shortage_qty: number;
+    days: { production_date: string | null; quantity: number }[];
+  }[];
+};
 export type ManualDeliveryInput = Pick<DeliveryInput, "itemcode" | "delivery_date" | "ordered_qty">;
 export type ManualDeliveryItem = { product_name: string; customer: string | null };
 

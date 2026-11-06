@@ -5,6 +5,7 @@ import { todayInVietnam } from "@/lib/warehouse-receipt/incoming";
 import { loadWarehouseRows, matchesWarehouseSearch, warehouseSearchTokens, WAREHOUSE_PAGE_SIZE } from "@/lib/warehouse-receipt/outgoing-list";
 import { MAX_DELIVERY_QUANTITY, previewDeliveryDemand, type DeliveryPreviewLine, type DeliveryRequest, type FifoPreview } from "@/lib/warehouse-receipt/outgoing";
 import { WarehouseManualDelivery } from "./warehouse-manual-delivery";
+import { WarehouseDeliveryReview } from "./warehouse-delivery-review";
 
 type Command = { action: string; command_id: string; profile_id: string; payload: Record<string, unknown> };
 type History = { id: string; quantity: number; shipped_date: string; entered_by_name: string; inv_delivery_issue_lines: { incoming_id: number; quantity: number; inv_incoming: { received_date: string; production_date: string | null } }[] };
@@ -30,7 +31,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const [search, setSearch] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [systemCustomer, setSystemCustomer] = useState("");
-  const [closed, setClosed] = useState(false);
+  const [manualOnly, setManualOnly] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [listError, setListError] = useState("");
@@ -57,7 +58,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       if (controller.signal.aborted) return;
       setLoading(true);
       try {
-        const data = await loadWarehouseRows<DeliveryRequest>({ closed: String(closed) }, (row) => row.id, controller.signal);
+        const data = await loadWarehouseRows<DeliveryRequest>({ closed: "false" }, (row) => row.id, controller.signal);
         if (controller.signal.aborted) return;
         setRows(data);
         setListError("");
@@ -66,7 +67,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       } finally { if (!controller.signal.aborted) setLoading(false); }
     });
     return () => controller.abort();
-  }, [closed, revision]);
+  }, [revision]);
   useEffect(() => {
     let cancelled = false;
     void Promise.resolve().then(() => {
@@ -227,7 +228,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
     return !choices[row.excel_row] || (chosen && !chosen.cancelled && row.ordered_qty < Math.min(chosen.ordered_qty, chosen.shipped_qty));
   }) ?? true);
 
-  const loaded = useMemo(() => closed ? rows : rows.filter((row) => !row.cancelled && row.remaining_qty > 0), [rows, closed]);
+  const loaded = useMemo(() => rows.filter((row) => !row.cancelled && row.remaining_qty > 0), [rows]);
   const dateOptions = useMemo(() => [...new Set(loaded.map((row) => row.delivery_date))].sort(), [loaded]);
   const customerOptions = useMemo(() => [...new Set(loaded.map((row) => row.system_customer_name).filter((name): name is string => Boolean(name)))]
     .sort((a, b) => a.localeCompare(b, "vi")), [loaded]);
@@ -237,11 +238,11 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
     ? systemCustomer : "";
   const filtered = useMemo(() => {
     const tokens = warehouseSearchTokens(search);
-    return loaded.filter((row) => (!activeDate || row.delivery_date === activeDate)
+    return loaded.filter((row) => (!manualOnly || row.delivery_source === "manual") && (!activeDate || row.delivery_date === activeDate)
       && (!activeCustomer || (activeCustomer === "missing" ? !row.system_customer_name : `name:${row.system_customer_name}` === activeCustomer))
       && matchesWarehouseSearch(tokens, [row.purorder, row.sales_id, row.itemcode, row.product_name, row.customer, row.system_customer_name,
         row.delivery_source === "manual" ? `Nhập tay ${manualReference(row)}` : null]));
-  }, [loaded, activeDate, activeCustomer, search]);
+  }, [loaded, manualOnly, activeDate, activeCustomer, search]);
   const total = filtered.length;
   const pageStart = Math.min(offset, Math.max(0, Math.floor((total - 1) / WAREHOUSE_PAGE_SIZE) * WAREHOUSE_PAGE_SIZE));
   const visible = filtered.slice(pageStart, pageStart + WAREHOUSE_PAGE_SIZE);
@@ -273,7 +274,8 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
           {hasUnnamedCustomer ? <option value="missing">Chưa có tên hệ thống</option> : null}
         </select>
       </label>
-      <label className="warehouse-outgoing-checkbox"><input checked={closed} onChange={(event) => { setClosed(event.target.checked); setOffset(0); }} type="checkbox" />Hiện cả Done / Đã hủy</label>
+      <label className="warehouse-outgoing-checkbox"><input checked={manualOnly} onChange={(event) => { setManualOnly(event.target.checked); setOffset(0); }} type="checkbox" />Nhập tay</label>
+      <WarehouseDeliveryReview requests={filtered} disabled={busy || loading || Boolean(listError)} />
     </div>
     <section className="scan-table-card">
       <div className="warehouse-incoming-draft-heading"><h2>Danh sách chờ xuất hàng ({total})</h2></div>

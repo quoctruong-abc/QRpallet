@@ -4,7 +4,7 @@ import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { readMergeRanges, expandMergedCells } from "@/lib/excel-merged";
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
-import { parseDeliverySheet, parseManualDeliveryInput, type ManualDeliveryInput } from "@/lib/warehouse-receipt/outgoing";
+import { MAX_DELIVERY_REVIEW_REQUESTS, parseDeliverySheet, parseManualDeliveryInput, type ManualDeliveryInput } from "@/lib/warehouse-receipt/outgoing";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -13,6 +13,9 @@ const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}
 
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
+  if (error.code === "PGRST202" && message.includes("review_delivery_fifo")) {
+    return fail("Cần chạy migration 20261106120000_review_delivery_fifo.sql để xem Review FIFO.", 503);
+  }
   if (error.code === "PGRST202" && /lookup_manual_delivery_item|post_manual_delivery/.test(message)) {
     return fail("Cần chạy migration 20261106110000_manual_delivery.sql để nhập lịch giao thủ công.", 503);
   }
@@ -119,6 +122,15 @@ export async function POST(request: Request) {
     }
   }
   const body = await request.json().catch(() => null);
+  if (body?.action === "review") {
+    const ids: unknown = body.request_ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > MAX_DELIVERY_REVIEW_REQUESTS || !ids.every(uuid)) {
+      return fail("Danh sách Review không hợp lệ hoặc quá lớn. Hãy lọc theo ngày giao hoặc khách hàng rồi thử lại.");
+    }
+    const { data, error } = await db.rpc("review_delivery_fifo", { p_request_ids: ids });
+    if (error) return dbError(error);
+    return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
+  }
   if (!body || !["manual", "import", "edit", "cancel", "reserve", "ship"].includes(body.action) || !uuid(body.command_id) || !body.payload || typeof body.payload !== "object") return fail("Yêu cầu không hợp lệ.");
   if (body.profile_id !== auth.profile.id) return fail("Tài khoản đã thay đổi. Tải lại trang trước khi tiếp tục.", 403);
   try {

@@ -924,6 +924,12 @@ Tên sản phẩm và khách được tra từ dữ liệu nội bộ. Lịch đ
 với mã tham chiếu riêng, không cần PO/Sales ID, và cập nhật On order như lịch ERP.
 Gửi lại cùng mã thao tác không tạo thêm lịch.
 
+Migration `20261106120000_review_delivery_fifo.sql` thêm **Review** trên danh
+sách chờ xuất. Review dùng toàn bộ kết quả lọc, gồm các trang chưa hiển thị,
+gộp số còn phải giao theo item và gợi ý lượng lấy theo từng ngày sản xuất.
+Ô **Nhập tay** chỉ hiện các yêu cầu chờ được nhập thủ công. Review chỉ đọc
+tồn thực tế, ưu tiên lô không có ngày sản xuất và báo số còn thiếu.
+
 API/RPC yêu cầu tài khoản hoạt động có `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.
 Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đầy đủ vẫn lưu trong DB.
