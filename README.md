@@ -954,6 +954,13 @@ cập nhật `"ERP_name"` và `netweight`; mã mới dùng tên ERP cho `product
 và để trống khách hàng, định mức pallet. Cột F trống không ghi đè khối
 lượng đã có. Dòng trùng hoàn toàn được gộp; mã trùng khác nội dung chặn cả file.
 
+**Nhập kho → Nạp data ghép cặp** dành cho Super Admin sau migration
+`20261112110000_warehouse_item_build_up.sql`. File .xlsx có sheet
+`Master Data`, đọc mã mẹ ở cột A và mã con 1/2/3 ở cột C/E/G. Một dòng
+cần có mã mẹ và ít nhất một mã con; các vị trí con còn trống lưu là NULL.
+Bảng `item_build_up` giữ từng tổ hợp theo đúng vị trí cột, cho phép một mã
+mẹ có nhiều bộ mã con và không ghi trùng tổ hợp khi nạp lại.
+
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
 ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị

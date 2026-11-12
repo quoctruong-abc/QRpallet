@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 import { isInventoryDate, MAX_MANUAL_INCOMING_ROWS, parseManualIncomingRequest, todayInVietnam, type ManualIncomingLine } from "@/lib/warehouse-receipt/incoming";
 import { incomingStorageKey, INCOMING_DRAFT_TTL, parseStoredIncoming, type StoredIncoming } from "@/lib/warehouse-receipt/incoming-storage";
-import { WarehouseMasterData } from "./warehouse-master-data";
+import { WarehouseItemBuildUp, WarehouseMasterData } from "./warehouse-master-data";
 import { WarehouseOpeningInventory } from "./warehouse-opening-inventory";
 
 type ItemDetails = { itemcode: string; product_name: string; customer: string };
@@ -449,7 +449,9 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
         <div className="warehouse-incoming-heading">
           <div><h2>{editingId === null ? "Nhập kho thủ công" : `Sửa dòng ${editingId}`}</h2>
           <p className="muted small">Nhập mã sản phẩm, số lượng và ngày sản xuất, rồi nhấn Enter để thêm dòng.</p></div>
-          {isSuperAdmin ? <div className="warehouse-incoming-admin-actions"><WarehouseOpeningInventory /><WarehouseMasterData /></div> : null}
+          {isSuperAdmin ? <div className="warehouse-incoming-admin-actions">
+            <WarehouseOpeningInventory /><WarehouseMasterData /><WarehouseItemBuildUp />
+          </div> : null}
         </div>
         <form onSubmit={saveDraft}>
           <div className="warehouse-incoming-fields">

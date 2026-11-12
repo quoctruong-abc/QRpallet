@@ -12,6 +12,7 @@ require.extensions[".ts"] = (module, file) => module._compile(ts.transpileModule
 const { parseDeliverySheet, parseManualDeliveryInput, previewDeliveryDemand } = require("../../lib/warehouse-receipt/outgoing.ts");
 const { expandMergedCells } = require("../../lib/excel-merged.ts");
 const { parseWarehouseMasterData } = require("../../lib/warehouse-receipt/master-data.ts");
+const { parseWarehouseItemBuildUp } = require("../../lib/warehouse-receipt/item-build-up.ts");
 
 const header = Array(33).fill(null);
 for (const [i, v] of [[1,"Delivery Date\n"],[8,"Purchorder "],[13,"Sales Id"],[16,"No"],[18,"Item"],[28,"Sales Qty"]]) header[i]=v;
@@ -593,6 +594,44 @@ assert.deepEqual(await catalog("00011"),{product_name:"Tên hệ thống",custom
 assert.deepEqual(await catalog("123"),{product_name:"Tên ERP 2",customer:null,quantity_per_pallet:null,erp_name:"Tên ERP 2",netweight:null});
 assert.equal(await summary("123"),undefined,"Catalog-only imports do not create zero stock rows");
 console.log("PASS: master data validates Excel columns and duplicates, restricts access, previews without writes and syncs catalog fields idempotently.");
+
+const buildUpExcelRow=(a,c,e,g)=>[a,"Tên mẹ",c,"Tên con 1",e,"Tên con 2",g,"Tên con 3"];
+const buildUp=parseWarehouseItemBuildUp([
+  [],buildUpExcelRow("Code mẹ","Code con 1","Code con 2","Code con 3"),
+  buildUpExcelRow("0001",210001,"0002",null),
+  buildUpExcelRow("0001","210001","0002",null),
+  buildUpExcelRow("0001","210005",null,"0003"),
+]);
+assert.deepEqual(buildUp.rows,[
+  {excel_row:3,parent_itemcode:"0001",child_itemcode_1:"210001",child_itemcode_2:"0002",child_itemcode_3:null},
+  {excel_row:5,parent_itemcode:"0001",child_itemcode_1:"210005",child_itemcode_2:null,child_itemcode_3:"0003"},
+]);
+assert.equal(buildUp.duplicateCount,1);
+assert.deepEqual(parseWarehouseItemBuildUp([buildUpExcelRow("A",null,null,null),buildUpExcelRow(null,"C",null,null),buildUpExcelRow("A","C",4.5,null)]).errors.map(x=>x.row),[1,2,3]);
+
+await migrate("20261112110000_warehouse_item_build_up.sql");
+const recipes=buildUp.rows.map(({ parent_itemcode,child_itemcode_1,child_itemcode_2,child_itemcode_3 })=>
+  ({ parent_itemcode,child_itemcode_1,child_itemcode_2,child_itemcode_3 }));
+const syncBuildUp=async (rows,preview)=>(await db.query("select public.sync_warehouse_item_build_up($1::jsonb,$2) as data",[JSON.stringify(rows),preview])).rows[0].data;
+await db.exec("set role authenticated");
+await db.query("select set_config('test.actor',$1,false)",[masterOperator]);
+await assert.rejects(syncBuildUp(recipes,true),/ITEM_BUILD_UP_NOT_AUTHORIZED/);
+await assert.rejects(syncBuildUp(recipes,false),/ITEM_BUILD_UP_NOT_AUTHORIZED/);
+await assert.rejects(db.exec("select * from public.item_build_up"),/permission denied/);
+await db.query("select set_config('test.actor',$1,false)",[actor]);
+assert.deepEqual(await syncBuildUp(recipes,true),{inserted:2,unchanged:0});
+await db.exec("reset role");
+assert.equal((await db.query("select count(*)::int as count from public.item_build_up")).rows[0].count,0);
+await db.exec("set role authenticated");
+await assert.rejects(syncBuildUp([recipes[0],{parent_itemcode:"0003",child_itemcode_1:12}],false),/ITEM_BUILD_UP_INVALID_ROW/);
+await assert.rejects(syncBuildUp([recipes[0],recipes[0]],false),/ITEM_BUILD_UP_DUPLICATE_ROW/);
+assert.deepEqual(await syncBuildUp(recipes,false),{inserted:2,unchanged:0});
+assert.deepEqual(await syncBuildUp(recipes,false),{inserted:0,unchanged:2});
+assert.deepEqual(await syncBuildUp([recipes[0],{...recipes[1],child_itemcode_3:"0004"}],false),{inserted:1,unchanged:1});
+await db.exec("reset role");
+assert.deepEqual((await db.query("select parent_itemcode,child_itemcode_1,child_itemcode_2,child_itemcode_3,created_by from public.item_build_up order by id")).rows,
+  [...recipes,{...recipes[1],child_itemcode_3:"0004"}].map(recipe=>({...recipe,created_by:actor})));
+console.log("PASS: build-up reads A/C/E/G, preserves child positions and alternative recipes, and restricts idempotent writes to Super Admin.");
 
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");
