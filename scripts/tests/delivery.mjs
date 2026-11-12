@@ -11,6 +11,7 @@ require.extensions[".ts"] = (module, file) => module._compile(ts.transpileModule
 }).outputText, file);
 const { parseDeliverySheet, parseManualDeliveryInput, previewDeliveryDemand } = require("../../lib/warehouse-receipt/outgoing.ts");
 const { expandMergedCells } = require("../../lib/excel-merged.ts");
+const { parseWarehouseMasterData } = require("../../lib/warehouse-receipt/master-data.ts");
 
 const header = Array(33).fill(null);
 for (const [i, v] of [[1,"Delivery Date\n"],[8,"Purchorder "],[13,"Sales Id"],[16,"No"],[18,"Item"],[28,"Sales Qty"]]) header[i]=v;
@@ -549,6 +550,49 @@ assert.deepEqual(await postBulk({...blockedBatch,requests:[blockedBatch.requests
 assert.equal(Number((await summary("BULK-SHORT")).balance_qty),10);
 assert.equal((await request(shortRequest.id)).shipped_qty,0);
 console.log("PASS: bulk shipping rejects selected items short of total stock without blocking deliberate partial picks on adequately stocked items.");
+
+const excelMasterRow=(code,name,weight)=>[code,name,null,null,null,weight];
+const parsedMaster=parseWarehouseMasterData([
+  [],excelMasterRow("Mã sản phẩm","Tên sản phẩm","Khối lượng (kg)"),
+  excelMasterRow("00011","Tên ERP 1","1.234,5"),excelMasterRow("00011","Tên ERP 1",1234.5),
+  excelMasterRow(123,"Tên ERP 2",null),
+]);
+assert.deepEqual(parsedMaster.rows,[
+  {excel_row:3,itemcode:"00011",erp_name:"Tên ERP 1",netweight:1234.5},
+  {excel_row:5,itemcode:"123",erp_name:"Tên ERP 2",netweight:null},
+]);
+assert.equal(parsedMaster.duplicateCount,1);
+assert.equal(parseWarehouseMasterData([excelMasterRow("ITEM","Vật tư",0)]).rows[0].itemcode,"ITEM","A legitimate first data row is not a header");
+assert.deepEqual(parseWarehouseMasterData([excelMasterRow("A1","Tên",1),excelMasterRow("A1","Tên khác",1),excelMasterRow("A2","Tên",-1)]).errors.map(x=>x.row),[2,3]);
+
+await db.exec("reset role");
+await migrate("20261112100000_warehouse_master_data.sql");
+await db.exec("insert into public.item_pallet_config(itemcode,product_name,customer,quantity_per_pallet,netweight) values ('00011','Tên hệ thống','Khách cũ',24,10)");
+const masterRows=parsedMaster.rows.map(({itemcode,erp_name,netweight})=>({itemcode,erp_name,netweight}));
+const syncMaster=async (rows,preview)=>(await db.query("select public.sync_warehouse_master_data($1::jsonb,$2) as data",[JSON.stringify(rows),preview])).rows[0].data;
+const catalog=async code=>(await db.query('select product_name,customer,quantity_per_pallet,"ERP_name" as erp_name,netweight::text from public.item_pallet_config where itemcode=$1',[code])).rows[0];
+const masterOperator=randomUUID();
+await db.query("insert into public.profiles(id,is_active,role,full_name,username) values ($1,true,'admin','Warehouse Admin','whadmin')",[masterOperator]);
+await db.exec("set role authenticated");
+await db.query("select set_config('test.actor',$1,false)",[masterOperator]);
+await assert.rejects(syncMaster(masterRows,true),/MASTER_DATA_NOT_AUTHORIZED/);
+await assert.rejects(syncMaster(masterRows,false),/MASTER_DATA_NOT_AUTHORIZED/);
+await db.query("select set_config('test.actor',$1,false)",[actor]);
+assert.deepEqual(await syncMaster(masterRows,true),{inserted:1,updated:1,unchanged:0});
+await db.exec("reset role");
+assert.equal(await catalog("123"),undefined,"Preview does not change the catalog");
+assert.equal((await catalog("00011")).erp_name,null);
+await db.exec("set role authenticated");
+await assert.rejects(syncMaster([...masterRows,{itemcode:"DUP",erp_name:"Tên",netweight:-1}],false),/MASTER_DATA_INVALID_ROW/);
+await assert.rejects(syncMaster([masterRows[0],masterRows[0]],false),/MASTER_DATA_DUPLICATE_ITEM/);
+assert.deepEqual(await syncMaster(masterRows,false),{inserted:1,updated:1,unchanged:0});
+assert.deepEqual(await syncMaster(masterRows,false),{inserted:0,updated:0,unchanged:2});
+assert.deepEqual(await syncMaster([{itemcode:"00011",erp_name:"Tên ERP sửa",netweight:null}],false),{inserted:0,updated:1,unchanged:0});
+await db.exec("reset role");
+assert.deepEqual(await catalog("00011"),{product_name:"Tên hệ thống",customer:"Khách cũ",quantity_per_pallet:24,erp_name:"Tên ERP sửa",netweight:"1234.5"});
+assert.deepEqual(await catalog("123"),{product_name:"Tên ERP 2",customer:null,quantity_per_pallet:null,erp_name:"Tên ERP 2",netweight:null});
+assert.equal(await summary("123"),undefined,"Catalog-only imports do not create zero stock rows");
+console.log("PASS: master data validates Excel columns and duplicates, restricts access, previews without writes and syncs catalog fields idempotently.");
 
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

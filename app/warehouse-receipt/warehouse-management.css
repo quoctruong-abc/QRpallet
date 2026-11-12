@@ -58,6 +58,7 @@
 .warehouse-incoming-form { padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
 .warehouse-incoming-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .warehouse-incoming-heading > .button { flex-shrink: 0; }
+.warehouse-incoming-admin-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .warehouse-incoming-heading p { margin: 8px 0 0; }
 .warehouse-incoming-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .warehouse-incoming-fields label { min-width: 0; }
@@ -106,6 +107,8 @@
 .warehouse-opening-preview .scan-table-wrap { max-height: 42vh; }
 .warehouse-opening-errors ul { max-height: 28vh; overflow: auto; padding-left: 22px; }
 .warehouse-opening-dialog .modal-actions { flex-wrap: wrap; }
+.warehouse-opening-dialog.warehouse-master-dialog { width: min(820px, calc(100% - 24px)); }
+.warehouse-master-dialog .warehouse-table { min-width: 480px; }
 
 .warehouse-outgoing { display: grid; gap: 16px; }
 .warehouse-outgoing-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }

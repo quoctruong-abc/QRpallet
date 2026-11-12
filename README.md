@@ -946,6 +946,14 @@ Migration `20261106160000_bulk_delivery_require_stock.sql` chặn xác nhận kh
 có item đang tick mà tổng tồn thực tế không đủ số còn phải giao. Người dùng
 có thể bỏ tick item thiếu tồn; vẫn được chọn xuất một phần cho item đủ tồn.
 
+Super Admin có thể chọn **Nhập kho → Nạp master data** sau khi áp dụng
+migration `20261112100000_warehouse_master_data.sql`. File .xlsx có sheet
+`data`, cột A là itemcode, B là tên ERP và F là khối lượng theo đơn vị trong
+file. Bước kiểm tra xem trước số mã thêm, cập nhật và không đổi. Mã cũ chỉ
+cập nhật `"ERP_name"` và `netweight`; mã mới dùng tên ERP cho `product_name`
+và để trống khách hàng, định mức pallet. Cột F trống không ghi đè khối
+lượng đã có. Dòng trùng hoàn toàn được gộp; mã trùng khác nội dung chặn cả file.
+
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
 ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị

@@ -16,7 +16,7 @@ const tabs = [
 
 type WarehouseTab = typeof tabs[number]["id"];
 
-export function WarehouseManagementClient({ canLoadOpeningInventory, profileId }: { canLoadOpeningInventory: boolean; profileId: string }) {
+export function WarehouseManagementClient({ isSuperAdmin, profileId }: { isSuperAdmin: boolean; profileId: string }) {
   const [activeTab, setActiveTab] = useState<WarehouseTab>("outgoing");
   const [receiptOpened, setReceiptOpened] = useState(false);
   const id = useId();
@@ -78,7 +78,7 @@ export function WarehouseManagementClient({ canLoadOpeningInventory, profileId }
           role="tabpanel"
           tabIndex={0}
         >
-          {tab.id === "outgoing" ? <WarehouseOutgoingClient profileId={profileId} /> : tab.id === "incoming" ? <WarehouseIncomingClient canLoadOpeningInventory={canLoadOpeningInventory} profileId={profileId} /> : tab.id === "receipt" ? (
+          {tab.id === "outgoing" ? <WarehouseOutgoingClient profileId={profileId} /> : tab.id === "incoming" ? <WarehouseIncomingClient isSuperAdmin={isSuperAdmin} profileId={profileId} /> : tab.id === "receipt" ? (
             receiptOpened ? <WarehouseReceiptTabs active={activeTab === "receipt"} /> : null
           ) : (
             <section className="warehouse-management-placeholder">
