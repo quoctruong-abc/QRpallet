@@ -961,6 +961,12 @@ cần có mã mẹ và ít nhất một mã con; các vị trí con còn trống
 Bảng `item_build_up` giữ từng tổ hợp theo đúng vị trí cột, cho phép một mã
 mẹ có nhiều bộ mã con và không ghi trùng tổ hợp khi nạp lại.
 
+Migration `20261112120000_warehouse_catalog_editors.sql` thêm hai form
+Super Admin trong **Nhập kho**. **Cập nhật itemcode** lưu tên sản phẩm và
+khách hàng tùy chọn từ danh sách khách hàng đã có. **Cập nhật ghép cặp**
+tra tên từ danh mục; nếu mã mẹ đã có tổ hợp, người dùng chọn tổ hợp cần
+thay và xác nhận. Mã mẹ chưa có tên có thể bổ sung tên khi lưu tổ hợp.
+
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
 ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị

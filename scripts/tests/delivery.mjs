@@ -633,5 +633,44 @@ assert.deepEqual((await db.query("select parent_itemcode,child_itemcode_1,child_
   [...recipes,{...recipes[1],child_itemcode_3:"0004"}].map(recipe=>({...recipe,created_by:actor})));
 console.log("PASS: build-up reads A/C/E/G, preserves child positions and alternative recipes, and restricts idempotent writes to Super Admin.");
 
+await migrate("20261112120000_warehouse_catalog_editors.sql");
+await db.exec("insert into public.item_pallet_config(itemcode,customer) values ('OTHER-CUSTOMER-CODE',' Khách cũ '),('EMPTY-CUSTOMER',' ')");
+const editCatalog=async (action,payload={})=>(await db.query("select public.warehouse_catalog_admin($1,$2::jsonb) as data",[action,JSON.stringify(payload)])).rows[0].data;
+await db.exec("set role authenticated");
+await db.query("select set_config('test.actor',$1,false)",[masterOperator]);
+await assert.rejects(editCatalog("customers"),/WAREHOUSE_CATALOG_FORBIDDEN/);
+await assert.rejects(editCatalog("save_item",{itemcode:"A",product_name:"Tên"}),/WAREHOUSE_CATALOG_FORBIDDEN/);
+await db.query("select set_config('test.actor',$1,false)",[actor]);
+const listedCustomers=(await editCatalog("customers")).customers;
+assert.equal(listedCustomers.filter(name=>name==="Khách cũ").length,1);
+assert.ok(listedCustomers.every(name=>name.trim()===name && name.length));
+await assert.rejects(editCatalog("save_item",{itemcode:"A",product_name:" "}),/WAREHOUSE_CATALOG_INVALID/);
+await assert.rejects(editCatalog("save_item",{itemcode:"A",product_name:"Tên",customer:"Chưa tồn tại"}),/WAREHOUSE_CATALOG_UNKNOWN_CUSTOMER/);
+await editCatalog("save_item",{itemcode:"00011",product_name:"Tên chỉnh tay",customer:"Khách cũ"});
+await editCatalog("save_item",{itemcode:"NEW-CATALOG",product_name:"Tên mới",customer:null});
+assert.equal((await editCatalog("lookup",{itemcode:"NEW-CATALOG"})).catalog.product_name,"Tên mới");
+
+const existingBuild=(await editCatalog("lookup",{itemcode:"0001",recipes:true}));
+assert.equal(existingBuild.catalog,null);
+assert.equal(existingBuild.recipes.length,3);
+const recipe=existingBuild.recipes[0];
+const changeBuild={itemcode:"0001",product_name:"Tên mã mẹ",children:["NEW-CATALOG",null,"0004"]};
+await assert.rejects(editCatalog("save_build_up",changeBuild),/WAREHOUSE_CATALOG_CONFIRM_REPLACEMENT/);
+await assert.rejects(editCatalog("save_build_up",{...changeBuild,replace_id:recipe.id,expected_children:[null,null,"MISMATCH"]}),/WAREHOUSE_CATALOG_STALE_RECIPE/);
+await assert.rejects(editCatalog("save_build_up",{...changeBuild,children:existingBuild.recipes[1].children,
+  replace_id:recipe.id,expected_children:recipe.children}),/WAREHOUSE_CATALOG_DUPLICATE_RECIPE/);
+assert.equal((await editCatalog("lookup",{itemcode:"0001"})).catalog,null,"Rejected replacement does not create a catalog item");
+const replacementResult=await editCatalog("save_build_up",{...changeBuild,replace_id:recipe.id,expected_children:recipe.children});
+assert.equal(replacementResult.replaced,true);
+const afterEdit=await editCatalog("lookup",{itemcode:"0001",recipes:true});
+assert.equal(afterEdit.catalog.product_name,"Tên mã mẹ");
+assert.deepEqual(afterEdit.recipes,[{id:recipe.id,children:changeBuild.children},...existingBuild.recipes.slice(1)]);
+await assert.rejects(editCatalog("save_build_up",{itemcode:"NEW-PARENT",children:["C1",null,null]}),/WAREHOUSE_CATALOG_NAME_REQUIRED/);
+assert.equal((await editCatalog("save_build_up",{itemcode:"NEW-PARENT",product_name:"Mã mẹ mới",children:["C1",null,null]})).replaced,false);
+assert.equal((await editCatalog("lookup",{itemcode:"NEW-PARENT"})).catalog.product_name,"Mã mẹ mới");
+await db.exec("reset role");
+assert.deepEqual(await catalog("00011"),{product_name:"Tên chỉnh tay",customer:"Khách cũ",quantity_per_pallet:24,erp_name:"Tên ERP sửa",netweight:"1234.5"});
+console.log("PASS: catalog editors validate required names and customer choices, preserve ERP metadata, and replace only the confirmed, current recipe.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

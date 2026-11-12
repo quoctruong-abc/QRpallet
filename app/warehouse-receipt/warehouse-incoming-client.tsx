@@ -5,6 +5,7 @@ import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 import { isInventoryDate, MAX_MANUAL_INCOMING_ROWS, parseManualIncomingRequest, todayInVietnam, type ManualIncomingLine } from "@/lib/warehouse-receipt/incoming";
 import { incomingStorageKey, INCOMING_DRAFT_TTL, parseStoredIncoming, type StoredIncoming } from "@/lib/warehouse-receipt/incoming-storage";
 import { WarehouseItemBuildUp, WarehouseMasterData } from "./warehouse-master-data";
+import { WarehouseCatalogEditors } from "./warehouse-catalog-editors";
 import { WarehouseOpeningInventory } from "./warehouse-opening-inventory";
 
 type ItemDetails = { itemcode: string; product_name: string; customer: string };
@@ -137,6 +138,18 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
     setLookingUp(false);
     setItem(result.ok ? result.item : null);
     setLookupError(result.ok ? "" : result.error);
+  }
+
+  function invalidateCatalogItem(code: string) {
+    itemCache.current.delete(code);
+    const version = formVersion.current;
+    const pending = requests.current.get(code);
+    const refresh = () => {
+      itemCache.current.delete(code);
+      if (mounted.current && itemcode.trim() === code && version === formVersion.current) void lookupForm(code);
+    };
+    if (pending) void pending.promise.then(refresh);
+    else refresh();
   }
 
   const resolveDraft = useCallback(async (draft: IncomingDraft) => {
@@ -450,6 +463,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
           <div><h2>{editingId === null ? "Nhập kho thủ công" : `Sửa dòng ${editingId}`}</h2>
           <p className="muted small">Nhập mã sản phẩm, số lượng và ngày sản xuất, rồi nhấn Enter để thêm dòng.</p></div>
           {isSuperAdmin ? <div className="warehouse-incoming-admin-actions">
+            <WarehouseCatalogEditors onSaved={invalidateCatalogItem} />
             <WarehouseOpeningInventory /><WarehouseMasterData /><WarehouseItemBuildUp />
           </div> : null}
         </div>

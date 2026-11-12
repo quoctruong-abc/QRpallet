@@ -108,6 +108,14 @@
 .warehouse-opening-errors ul { max-height: 28vh; overflow: auto; padding-left: 22px; }
 .warehouse-opening-dialog .modal-actions { flex-wrap: wrap; }
 .warehouse-opening-dialog.warehouse-master-dialog { width: min(820px, calc(100% - 24px)); }
+.warehouse-opening-dialog.warehouse-catalog-dialog { width: min(760px, calc(100% - 24px)); }
+.warehouse-catalog-fields { display: grid; gap: 12px; }
+.warehouse-catalog-code-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 12px; }
+.warehouse-catalog-fields p { margin: 0; }
+.warehouse-catalog-fields input[readonly] { background: var(--surface-soft); }
+@media (max-width: 480px) {
+  .warehouse-catalog-code-row { grid-template-columns: 1fr; gap: 6px; }
+}
 .warehouse-master-dialog .warehouse-table { min-width: 480px; }
 
 .warehouse-outgoing { display: grid; gap: 16px; }
