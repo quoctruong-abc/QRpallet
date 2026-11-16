@@ -672,5 +672,31 @@ await db.exec("reset role");
 assert.deepEqual(await catalog("00011"),{product_name:"Tên chỉnh tay",customer:"Khách cũ",quantity_per_pallet:24,erp_name:"Tên ERP sửa",netweight:"1234.5"});
 console.log("PASS: catalog editors validate required names and customer choices, preserve ERP metadata, and replace only the confirmed, current recipe.");
 
+await migrate("20261116100000_warehouse_catalog_link_existing_items.sql");
+await db.exec(`insert into public.item_pallet_config(itemcode,product_name,"ERP_name") values
+  ('ERP-ONLY-PARENT',' ','ERP mẹ'),('ERP-ONLY-CHILD',null,'ERP con'),('NO-CATALOG-NAME',' ',null)`);
+const manageCatalog=async (action,payload)=>(await db.query("select public.warehouse_catalog_manage($1,$2::jsonb) as data",[action,JSON.stringify(payload)])).rows[0].data;
+await db.exec("set role authenticated");
+await assert.rejects(editCatalog("save_build_up",{itemcode:"OLD-RPC",product_name:"Tên",children:["NEW-CATALOG",null,null]}),/permission denied/);
+await assert.rejects(manageCatalog("save_build_up",{itemcode:"MISSING-PARENT",product_name:"Tên không được tạo",children:["NEW-CATALOG",null,null]}),/WAREHOUSE_CATALOG_UNKNOWN_ITEM:MISSING-PARENT/);
+await assert.rejects(manageCatalog("save_build_up",{itemcode:"ERP-ONLY-PARENT",children:[null,"MISSING-CHILD",null]}),/WAREHOUSE_CATALOG_UNKNOWN_ITEM:MISSING-CHILD/);
+await assert.rejects(manageCatalog("save_build_up",{itemcode:"ERP-ONLY-PARENT",children:[null,"NO-CATALOG-NAME",null]}),/WAREHOUSE_CATALOG_ITEM_WITHOUT_NAME:NO-CATALOG-NAME/);
+await assert.rejects(manageCatalog("save_build_up",{itemcode:"NO-CATALOG-NAME",children:["ERP-ONLY-CHILD",null,null]}),/WAREHOUSE_CATALOG_ITEM_WITHOUT_NAME:NO-CATALOG-NAME/);
+assert.equal((await manageCatalog("save_build_up",{itemcode:"ERP-ONLY-PARENT",children:[null,"ERP-ONLY-CHILD","NEW-CATALOG"]})).replaced,false);
+assert.equal((await manageCatalog("lookup",{itemcode:"MISSING-PARENT"})).catalog,null);
+const linked=await manageCatalog("lookup",{itemcode:"ERP-ONLY-PARENT",recipes:true});
+assert.deepEqual(linked.catalog,{product_name:null,erp_name:"ERP mẹ",customer:null,netweight:null});
+assert.deepEqual(linked.recipes[0].children,[null,"ERP-ONLY-CHILD","NEW-CATALOG"]);
+await assert.rejects(manageCatalog("save_item",{itemcode:"00011",product_name:"Tên",netweight:-1}),/WAREHOUSE_CATALOG_INVALID/);
+await manageCatalog("save_item",{itemcode:"00011",product_name:"Tên sản xuất",customer:"Khách cũ",erp_name:"ERP cập nhật",netweight:2.75});
+assert.deepEqual((await manageCatalog("lookup",{itemcode:"00011"})).catalog,{product_name:"Tên sản xuất",erp_name:"ERP cập nhật",customer:"Khách cũ",netweight:2.75});
+await manageCatalog("save_item",{itemcode:"00011",product_name:"Tên sản xuất đổi",customer:"Khách cũ"});
+assert.equal((await manageCatalog("lookup",{itemcode:"00011"})).catalog.netweight,2.75);
+await manageCatalog("save_item",{itemcode:"00011",product_name:"Tên sản xuất đổi",customer:"Khách cũ",erp_name:null,netweight:null});
+await db.exec("reset role");
+assert.deepEqual(await catalog("00011"),{product_name:"Tên sản xuất đổi",customer:"Khách cũ",quantity_per_pallet:24,erp_name:null,netweight:null});
+assert.equal((await catalog("ERP-ONLY-PARENT")).product_name," ","Build-up linking does not fill production names");
+console.log("PASS: build-up links only existing named items; ERP-only names qualify and optional ERP metadata can be edited or cleared.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

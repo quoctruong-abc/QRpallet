@@ -965,7 +965,13 @@ Migration `20261112120000_warehouse_catalog_editors.sql` thêm hai form
 Super Admin trong **Nhập kho**. **Cập nhật itemcode** lưu tên sản phẩm và
 khách hàng tùy chọn từ danh sách khách hàng đã có. **Cập nhật ghép cặp**
 tra tên từ danh mục; nếu mã mẹ đã có tổ hợp, người dùng chọn tổ hợp cần
-thay và xác nhận. Mã mẹ chưa có tên có thể bổ sung tên khi lưu tổ hợp.
+thay và xác nhận.
+
+Migration `20261116100000_warehouse_catalog_link_existing_items.sql`
+bắt buộc mã mẹ và các mã con đã điền phải có trong `item_pallet_config`.
+Tên hiển thị ưu tiên `product_name` rồi `"ERP_name"`; thiếu cả hai sẽ
+chặn lưu. Đổi mã mẹ giữ nguyên các mã con đang nhập. Form ghép cặp chỉ
+ghi `item_build_up`. Form itemcode có thêm tên ERP và khối lượng tùy chọn.
 
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo

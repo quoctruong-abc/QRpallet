@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type ComponentType } from "react";
+import { MAX_MASTER_WEIGHT } from "@/lib/warehouse-receipt/master-data";
 
-type CatalogItem = { product_name: string | null; customer: string | null; erp_name: string | null };
+type CatalogItem = { product_name: string | null; customer: string | null; erp_name: string | null; netweight: number | null };
 type Children = [string | null, string | null, string | null];
 type Recipe = { id: string; children: Children };
 type Lookup = { catalog: CatalogItem | null; recipes: Recipe[] };
@@ -72,11 +73,16 @@ function CatalogDialog({ title, Editor, onSaved }: {
 function ItemCodeEditor({ busy, setBusy, close, onSaved }: EditorProps) {
   const [input, setInput] = useState("");
   const [name, setName] = useState<string | null>(null);
+  const [erpName, setErpName] = useState<string | null>(null);
+  const [weight, setWeight] = useState<string | null>(null);
   const [customer, setCustomer] = useState<string | null>(null);
   const [customerList, setCustomerList] = useState<{ data?: string[]; error?: string } | null>(null);
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const item = useCatalogLookup(input);
   const productName = name ?? item.data?.catalog?.product_name ?? item.data?.catalog?.erp_name ?? "";
+  const displayedErpName = erpName ?? item.data?.catalog?.erp_name ?? "";
+  const displayedWeight = weight ?? String(item.data?.catalog?.netweight ?? "");
+  const chosenWeight = displayedWeight === "" ? null : Number(displayedWeight);
   const chosenCustomer = customer ?? item.data?.catalog?.customer ?? "";
   const customers = customerList?.data ?? [];
   useEffect(() => {
@@ -88,12 +94,17 @@ function ItemCodeEditor({ busy, setBusy, close, onSaved }: EditorProps) {
     return () => controller.abort();
   }, []);
 
-  const canSave = !busy && Boolean(item.data && productName.trim() && customerList?.data);
+  const canSave = !busy && Boolean(item.data && productName.trim() && customerList?.data)
+    && (chosenWeight === null || (Number.isFinite(chosenWeight) && chosenWeight >= 0 && chosenWeight <= MAX_MASTER_WEIGHT));
   async function save() {
     if (!canSave) return;
     setBusy(true); setNotice(null);
     try {
-      await catalogRequest("save_item", { itemcode: item.code, product_name: productName.trim(), customer: chosenCustomer || null });
+      await catalogRequest("save_item", {
+        itemcode: item.code, product_name: productName.trim(), customer: chosenCustomer || null,
+        ...(erpName !== null ? { erp_name: erpName.trim() || null } : {}),
+        ...(weight !== null ? { netweight: chosenWeight } : {}),
+      });
       onSaved(item.code);
       setNotice({ text: `Đã cập nhật itemcode ${item.code}.` });
     } catch (cause) {
@@ -104,9 +115,13 @@ function ItemCodeEditor({ busy, setBusy, close, onSaved }: EditorProps) {
   return <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
     <div className="warehouse-catalog-fields">
       <label>Itemcode <input value={input} required maxLength={200} disabled={busy} onChange={(event) => {
-        setInput(event.target.value); setName(null); setCustomer(null); setNotice(null);
+        setInput(event.target.value); setName(null); setErpName(null); setWeight(null); setCustomer(null); setNotice(null);
       }} /></label>
       <label>Tên sản phẩm <input value={productName} required maxLength={500} disabled={busy} onChange={(event) => setName(event.target.value)} /></label>
+      <label>Tên ERP <input value={displayedErpName} maxLength={500} disabled={busy}
+        placeholder="Không bắt buộc" onChange={(event) => setErpName(event.target.value)} /></label>
+      <label>Khối lượng <input type="number" inputMode="decimal" min={0} max={MAX_MASTER_WEIGHT} step="any"
+        value={displayedWeight} disabled={busy} placeholder="Không bắt buộc" onChange={(event) => setWeight(event.target.value)} /></label>
       <label>Khách hàng
         <select value={chosenCustomer} disabled={busy || !customerList?.data} onChange={(event) => setCustomer(event.target.value)}>
           <option value="">{customerList ? "Không chọn khách hàng" : "Đang tải khách hàng…"}</option>
@@ -125,20 +140,30 @@ function ItemCodeEditor({ busy, setBusy, close, onSaved }: EditorProps) {
   </form>;
 }
 
-function ChildCodeRow({ index, code, disabled, onChange }: {
-  index: number; code: string; disabled: boolean; onChange: (value: string) => void;
+function buildUpName(lookup: ReturnType<typeof useCatalogLookup>) {
+  return lookup.data?.catalog?.product_name ?? lookup.data?.catalog?.erp_name ?? "";
+}
+
+function BuildUpCodeRow({ label, code, lookup, disabled, required, onChange }: {
+  label: string; code: string; lookup: ReturnType<typeof useCatalogLookup>;
+  disabled: boolean; required?: boolean; onChange: (value: string) => void;
 }) {
-  const item = useCatalogLookup(code);
-  const name = item.data?.catalog?.product_name ?? item.data?.catalog?.erp_name;
+  const errorId = useId();
+  const name = buildUpName(lookup);
+  const error = lookup.error || (lookup.data && !name
+    ? (lookup.data.catalog ? "Mã này chưa có tên sản phẩm hoặc tên ERP." : "Itemcode chưa có trong danh mục.") : "");
   return <div className="warehouse-catalog-code-row">
-    <label>{`Itemcode con ${index + 1}`}<input value={code} maxLength={200} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>
-    <label>{`Tên sản phẩm con ${index + 1}`}<input readOnly value={name ?? ""} placeholder={item.loading ? "Đang tra…" : code.trim() ? item.error || "Chưa có tên sản phẩm" : "Tự hiện theo itemcode"} /></label>
+    <label>{`Itemcode ${label}`}<input value={code} maxLength={200} disabled={disabled} required={required}
+      aria-label={`Itemcode ${label}`} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined}
+      onChange={(event) => onChange(event.target.value)} />
+      {error ? <span id={errorId} className="warehouse-required small" role="alert">{error}</span> : null}
+    </label>
+    <label>{`Tên sản phẩm ${label}`}<input readOnly value={name} placeholder={lookup.loading ? "Đang tra…" : "Tự hiện theo itemcode"} /></label>
   </div>;
 }
 
-function BuildUpEditor({ busy, setBusy, close, onSaved }: EditorProps) {
+function BuildUpEditor({ busy, setBusy, close }: EditorProps) {
   const [parent, setParent] = useState("");
-  const [name, setName] = useState<string | null>(null);
   const [editedChildren, setEditedChildren] = useState<[string, string, string] | null>(null);
   const [recipeId, setRecipeId] = useState("");
   const [revision, setRevision] = useState(0);
@@ -149,13 +174,17 @@ function BuildUpEditor({ busy, setBusy, close, onSaved }: EditorProps) {
   const replacement = recipes.length === 1 ? recipes[0] : recipes.find((recipe) => recipe.id === recipeId);
   const childInputs = editedChildren ?? (replacement ? replacement.children.map((child) => child ?? "") as [string, string, string] : emptyChildren);
   const children = childInputs.map((child) => child.trim() || null) as Children;
-  const parentName = item.data?.catalog?.product_name;
-  const productName = parentName ?? name ?? item.data?.catalog?.erp_name ?? "";
-  const canSave = !busy && Boolean(item.data && productName.trim() && (recipes.length === 0 || replacement))
-    && children.some((child) => child !== null) && children.every((child) => child === null || validCode(child));
+  const childOne = useCatalogLookup(childInputs[0], false, revision);
+  const childTwo = useCatalogLookup(childInputs[1], false, revision);
+  const childThree = useCatalogLookup(childInputs[2], false, revision);
+  const childLookups = [childOne, childTwo, childThree];
+  const canSave = !busy && Boolean(buildUpName(item)) && (recipes.length === 0 || Boolean(replacement))
+    && children.some((child) => child !== null)
+    && children.every((child, index) => child === null || Boolean(buildUpName(childLookups[index])));
 
   function changeParent(value: string) {
-    setParent(value); setName(null); setRecipeId(""); setEditedChildren(null); setConfirming(false); setNotice(null);
+    if (editedChildren || children.some((child) => child !== null)) setEditedChildren(childInputs);
+    setParent(value); setRecipeId(""); setConfirming(false); setNotice(null);
   }
 
   async function save() {
@@ -163,10 +192,9 @@ function BuildUpEditor({ busy, setBusy, close, onSaved }: EditorProps) {
     setBusy(true); setNotice(null);
     try {
       const saved = await catalogRequest<{ replaced: boolean }>("save_build_up", {
-        itemcode: item.code, product_name: productName.trim(), children,
+        itemcode: item.code, children,
         replace_id: replacement?.id ?? null, expected_children: replacement?.children ?? null,
       });
-      onSaved(item.code);
       setConfirming(false);
       setNotice({ text: saved.replaced ? `Đã thay tổ hợp của mã mẹ ${item.code}.` : `Đã lưu tổ hợp cho mã mẹ ${item.code}.` });
       setRevision((value) => value + 1);
@@ -183,25 +211,19 @@ function BuildUpEditor({ busy, setBusy, close, onSaved }: EditorProps) {
     else void save();
   }}>
     <div className="warehouse-catalog-fields">
-      <div className="warehouse-catalog-code-row">
-        <label>Itemcode mẹ <input value={parent} required maxLength={200} disabled={busy || confirming} onChange={(event) => changeParent(event.target.value)} /></label>
-        <label>Tên sản phẩm mẹ <input value={productName} required maxLength={500} readOnly={Boolean(parentName)} disabled={busy || confirming}
-          placeholder={item.loading ? "Đang tra…" : "Nhập tên nếu mã mẹ chưa có tên"}
-          onChange={(event) => setName(event.target.value)} /></label>
-      </div>
+      <BuildUpCodeRow label="mẹ" code={parent} lookup={item} disabled={busy || confirming} required onChange={changeParent} />
       {recipes.length > 1 ? <label>Tổ hợp cần thay
         <select value={recipeId} disabled={busy || confirming} required onChange={(event) => {
-          setRecipeId(event.target.value); setEditedChildren(null); setNotice(null);
+          setRecipeId(event.target.value); setNotice(null);
         }}>
           <option value="">Chọn tổ hợp đang có</option>
           {recipes.map((recipe) => <option value={recipe.id} key={recipe.id}>{recipeLabel(recipe.children)}</option>)}
         </select>
       </label> : null}
       {replacement && !confirming ? <p className="muted small">Tổ hợp đang lưu: {recipeLabel(replacement.children)}. Hệ thống sẽ hỏi xác nhận trước khi thay.</p> : null}
-      {childInputs.map((code, index) => <ChildCodeRow key={index} index={index} code={code} disabled={busy || confirming || (recipes.length > 1 && !replacement)}
+      {childInputs.map((code, index) => <BuildUpCodeRow key={index} label={`con ${index + 1}`} code={code} lookup={childLookups[index]} disabled={busy || confirming}
         onChange={(value) => setEditedChildren(childInputs.map((child, i) => i === index ? value : child) as [string, string, string])} />)}
     </div>
-    {item.error ? <p className="alert alert-error" role="alert">{item.error}</p> : null}
     {notice ? <p className={`alert ${notice.error ? "alert-error" : "alert-success"}`} role={notice.error ? "alert" : "status"}>{notice.text}</p> : null}
     {confirming && replacement ? <div className="alert warehouse-bulk-warning" role="alert">
       <strong>Xác nhận thay thế tổ hợp của {item.code}?</strong><br />
