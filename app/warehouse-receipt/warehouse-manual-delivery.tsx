@@ -3,7 +3,9 @@
 import { useEffect, useId, useState } from "react";
 import { isInventoryDate, todayInVietnam } from "@/lib/warehouse-receipt/incoming";
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
-import { MAX_DELIVERY_QUANTITY, type ManualDeliveryInput, type ManualDeliveryItem } from "@/lib/warehouse-receipt/outgoing";
+import { MAX_DELIVERY_QUANTITY, selectDeliveryBuildUp, type ManualDeliveryInput, type ManualDeliveryItem } from "@/lib/warehouse-receipt/outgoing";
+
+const num = (quantity: number) => quantity.toLocaleString("vi-VN");
 
 type FormProps = { locked: boolean; onSubmit: (payload: ManualDeliveryInput) => void };
 
@@ -31,6 +33,7 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
   const [quantity, setQuantity] = useState("");
   const [lookup, setLookup] = useState<{ code: string; item?: ManualDeliveryItem; error?: string; retryable?: boolean } | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [choice, setChoice] = useState<{ code: string; token: string } | null>(null);
   let code = "";
   let codeError = "";
   if (itemcode.trim()) {
@@ -59,17 +62,21 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
   const item = current?.item;
   const error = codeError || current?.error;
   const amount = Number(quantity);
-  const canSubmit = !locked && item && isInventoryDate(date) && Number.isInteger(amount) && amount > 0 && amount <= MAX_DELIVERY_QUANTITY;
+  const options = item?.build_up_options;
+  const recipe = selectDeliveryBuildUp(options, choice?.code === code ? choice.token : undefined);
+  const exceedsLimit = recipe?.components.some((component) => amount * component.factor > MAX_DELIVERY_QUANTITY);
+  const canSubmit = !locked && item && (!options?.length || recipe) && !exceedsLimit
+    && isInventoryDate(date) && Number.isInteger(amount) && amount > 0 && amount <= MAX_DELIVERY_QUANTITY;
 
   return <form className="warehouse-manual-delivery" onSubmit={(event) => {
     event.preventDefault();
-    if (canSubmit) onSubmit({ delivery_date: date, itemcode: code, ordered_qty: amount });
+    if (canSubmit) onSubmit({ delivery_date: date, itemcode: code, ordered_qty: amount, build_up_token: recipe?.token ?? null });
   }}>
     <div className="warehouse-incoming-fields">
       <label>Ngày giao<input required type="date" value={date} disabled={locked} onChange={(event) => setDate(event.target.value)} /></label>
       <label>Mã sản phẩm (Itemcode)<input required value={itemcode} disabled={locked} autoComplete="off"
         aria-invalid={Boolean(error)} aria-describedby={`${id}-lookup`}
-        onChange={(event) => setItemcode(event.target.value)} onBlur={() => { if (code) setItemcode(code); }} /></label>
+        onChange={(event) => { setItemcode(event.target.value); setChoice(null); }} onBlur={() => { if (code) setItemcode(code); }} /></label>
       <label>Số lượng<input required type="number" min={1} max={MAX_DELIVERY_QUANTITY} step={1} value={quantity} disabled={locked}
         onChange={(event) => setQuantity(event.target.value)} /></label>
       <dl className="warehouse-incoming-item-details" aria-live="polite">
@@ -77,6 +84,25 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
         <div><dt>Khách hàng</dt><dd>{item ? item.customer || "Chưa có tên khách hàng" : "—"}</dd></div>
       </dl>
     </div>
+    {options && options.length > 1 ? <label>Tổ hợp mã con
+      <select required disabled={locked} value={recipe?.token ?? ""} onChange={(event) => setChoice({ code, token: event.target.value })}>
+        <option value="">Chọn tổ hợp…</option>
+        {options.map((option) => <option key={option.token} value={option.token}>{option.codes.filter(Boolean).join(" + ")}</option>)}
+      </select>
+    </label> : null}
+    {recipe ? <div aria-live="polite">
+      <p className="muted small">Mã mẹ {code} sẽ tách thành các mã con sau:</p>
+      <ul>{recipe.components.map((component) => {
+        const available = component.item_stock_qty - component.item_on_order_qty;
+        const needed = amount * component.factor;
+        return <li key={component.itemcode}>
+          <strong>{component.itemcode}</strong> · Yêu cầu {amount > 0 ? num(needed) : "—"}
+          {" · Tồn khả dụng "}{num(available)}
+          {amount > 0 && needed > available ? <> · <strong>Thiếu dự kiến {num(needed - available)}</strong></> : null}
+        </li>;
+      })}</ul>
+      {exceedsLimit ? <p role="alert" className="alert alert-error">Số lượng mã con vượt giới hạn. Hãy giảm số lượng mã mẹ.</p> : null}
+    </div> : null}
     <div id={`${id}-lookup`} aria-live="polite">
       {error ? <p className="alert alert-error">{error}</p> : code && !current ? <p className="muted small">Đang tra cứu sản phẩm…</p> : null}
       {current?.retryable ? <button type="button" className="button button-secondary button-small" disabled={locked}

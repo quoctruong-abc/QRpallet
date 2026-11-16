@@ -973,6 +973,17 @@ Tên hiển thị ưu tiên `product_name` rồi `"ERP_name"`; thiếu cả hai 
 chặn lưu. Đổi mã mẹ giữ nguyên các mã con đang nhập. Form ghép cặp chỉ
 ghi `item_build_up`. Form itemcode có thêm tên ERP và khối lượng tùy chọn.
 
+Migration `20261116110000_delivery_build_up.sql` áp dụng ghép cặp cho lịch
+giao thủ công và ERP. Lịch mới tra `item_build_up`: nếu một mã mẹ có nhiều tổ
+hợp, người dùng chọn tổ hợp trước khi xác nhận. Mỗi vị trí mã con tính một đơn vị
+trên mỗi mã mẹ; mã con lặp được gộp và nhân số lượng theo số lần xuất hiện.
+Hệ thống chỉ tách một cấp. `inv_delivery_requests.request_type` phân biệt
+`origin`, `parent`, `child`; `parent_request_id` nối dòng con với yêu cầu gốc.
+Dòng mẹ lưu ngày giao, PO/Sales ID và số lượng gốc để đối chiếu. Chỉ dòng con
+và dòng thường tính On order, kiểm tra thiếu tồn, Review và xuất FIFO. Nạp lại
+hoặc dời lịch giữ các mã con đã chốt; các yêu cầu tồn tại trước migration vẫn
+là `origin` và không tự tách.
+
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
 ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị

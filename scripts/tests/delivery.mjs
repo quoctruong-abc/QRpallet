@@ -698,5 +698,92 @@ assert.deepEqual(await catalog("00011"),{product_name:"Tên sản xuất đổi"
 assert.equal((await catalog("ERP-ONLY-PARENT")).product_name," ","Build-up linking does not fill production names");
 console.log("PASS: build-up links only existing named items; ERP-only names qualify and optional ERP metadata can be edited or cleared.");
 
+const originalRequest=(await get("P1"))[0];
+await migrate("20261116110000_delivery_build_up.sql");
+assert.equal((await request(originalRequest.id)).request_type,"origin");
+assert.equal((await request(originalRequest.id)).parent_request_id,null);
+await db.exec(`insert into public.item_pallet_config(itemcode,product_name,customer,"ERP_name") values
+  ('BOM-KIT','Hàng mẹ','Khách ráp bộ',null),('BOM-CHILD-A','Hàng con A','Khách linh kiện',null),
+  ('BOM-CHILD-B',null,null,'Hàng con B từ ERP');
+  insert into public.item_build_up(parent_itemcode,child_itemcode_1,child_itemcode_2,child_itemcode_3) values
+  ('BOM-KIT','BOM-CHILD-A','BOM-CHILD-A','BOM-CHILD-B'),
+  ('BOM-OTHER','BOM-CHILD-A',null,null),('BOM-OTHER',null,'BOM-CHILD-B',null)`);
+const undatedBomLot=(await seed("BOM-CHILD-A",4,null)).rows[0].id;
+await seed("BOM-CHILD-A",7,"2026-09-01");
+await seed("BOM-CHILD-B",20,"2026-10-01");
+const lookupBuild=async item=>(await db.query("select public.lookup_delivery_build_up($1) as data",[item])).rows[0].data;
+const buildRows=async (id)=>(await db.query("select * from public.inv_delivery_requests where parent_request_id=$1 order by itemcode",[id])).rows.map(normalizeDate);
+await assert.rejects(db.exec("set role anon; select public.lookup_delivery_build_up('BOM-KIT')"),/permission denied/);
+await db.exec("set role authenticated");
+const buildItem=await lookupBuild("BOM-KIT");
+assert.equal(buildItem.product_name,"Hàng mẹ");
+const buildOption=buildItem.build_up_options[0];
+assert.deepEqual(buildOption.components.map(c=>[c.itemcode,c.factor,c.item_stock_qty]),[["BOM-CHILD-A",2,11],["BOM-CHILD-B",1,20]]);
+assert.equal(parseManualDeliveryInput({...input,build_up_token:buildOption.token}).build_up_token,buildOption.token);
+await assert.rejects(postManual({...input,itemcode:"BOM-KIT",build_up_token:null}),/DELIVERY_BUILD_UP_CHANGED:BOM-KIT/);
+assert.equal((await lookupBuild("BOM-OTHER")).build_up_options.length,2);
+await assert.rejects(postManual({...input,itemcode:"BOM-OTHER",ordered_qty:1}),/DELIVERY_BUILD_UP_CHOOSE:BOM-OTHER/);
+const manualKitPayload={...input,itemcode:"BOM-KIT",ordered_qty:2,build_up_token:buildOption.token};
+const manualKitCommand=randomUUID();
+const manualKit=(await postManual(manualKitPayload,manualKitCommand)).request_id;
+assert.equal((await postManual(manualKitPayload,manualKitCommand)).request_id,manualKit);
+assert.equal((await request(manualKit)).request_type,"parent");
+const manualParts=await buildRows(manualKit);
+assert.deepEqual(manualParts.map(r=>[r.request_type,r.itemcode,r.ordered_qty,r.delivery_source,r.product_name,r.customer]),[
+  ["child","BOM-CHILD-A",4,"manual","Hàng con A","Khách ráp bộ"],
+  ["child","BOM-CHILD-B",2,"manual","Hàng con B từ ERP","Khách ráp bộ"],
+]);
+assert.equal((await summary("BOM-KIT"))?.on_order_qty ?? 0,0);
+assert.equal((await summary("BOM-CHILD-A")).on_order_qty,4);
+const bomQueue=(await db.query("select public.list_delivery(0,'BOM-KIT',false) as data")).rows[0].data;
+assert.deepEqual(bomQueue.rows.map(r=>[r.request_type,r.parent_itemcode,r.system_customer_name]),[
+  ["child","BOM-KIT","Khách ráp bộ"],["child","BOM-KIT","Khách ráp bộ"]]);
+assert.deepEqual((await reviewFifo([manualKit,...manualParts.map(r=>r.id)])).rows.map(r=>[r.itemcode,r.quantity]),[
+  ["BOM-CHILD-A",4],["BOM-CHILD-B",2]]);
+assert.equal(String((await fifo(manualParts[0].id,4)).fifo[0].incoming_id),String(undatedBomLot));
+await assert.rejects(fifo(manualKit,1),/DELIVERY_INVALID|DELIVERY_SHIP_CHILDREN_ONLY/);
+await assert.rejects(rpc("ship",{id:manualKit,version:(await request(manualKit)).version,quantity:1,shipped_date:"2026-11-16"}),/DELIVERY_SHIP_CHILDREN_ONLY/);
+
+const erpKitLine=line("BOM-ERP","BOM-KIT",4,"2026-11-17",{excel_row:1});
+const erpDirect=line("BOM-ERP","BOM-CHILD-A",2,"2026-11-17",{excel_row:2});
+const erpOther=line("BOM-ERP","BOM-OTHER",1,"2026-11-17",{excel_row:3});
+const bomPreview=await rpc("preview",{rows:[erpDirect,erpKitLine,erpOther]});
+assert.equal(bomPreview.build_up_version,1);
+assert.deepEqual(bomPreview.rows.map(r=>r.excel_row),[1,2,3]);
+const otherOption=bomPreview.rows[2].build_up_options.find(o=>o.codes.includes("BOM-CHILD-A"));
+const bomChoices={1:"new",2:"new",3:"new"};
+const reviewBom=previewDeliveryDemand(bomPreview.rows,bomChoices,{3:otherOption.token});
+assert.deepEqual(reviewBom.map(r=>r.item_shortage_after),[4,4,4],"Same component aggregated across manual, direct and two ERP parents");
+assert.equal(previewDeliveryDemand(bomPreview.rows,bomChoices)[2].preview_components.length,0);
+await assert.rejects(rpc("import",{rows:[erpOther]}),/DELIVERY_BUILD_UP_CHOOSE:BOM-OTHER/);
+const erpBomPayload={rows:[{...erpKitLine,build_up_token:buildOption.token}, {...erpDirect,build_up_token:null}, {...erpOther,build_up_token:otherOption.token}]};
+assert.equal((await rpc("import",erpBomPayload)).changed,3);
+assert.equal((await rpc("import",erpBomPayload)).skipped,3);
+const allErpBom=await get("BOM-ERP");
+assert.equal(allErpBom.length,6);
+assert.equal(allErpBom.filter(r=>r.itemcode==="BOM-CHILD-A").length,3);
+assert.equal(allErpBom.find(r=>r.request_type==="origin").parent_request_id,null);
+const erpParent=allErpBom.find(r=>r.itemcode==="BOM-KIT");
+
+const bulkBuild=(await db.query("select public.preview_bulk_delivery($1::uuid[]) as data",[[manualKit,manualParts[0].id]])).rows[0].data;
+assert.deepEqual(bulkBuild.requests.map(r=>r.id),[manualParts[0].id]);
+const shipBuild={shipped_date:"2026-11-16",requests:bulkBuild.requests.map(({id,version})=>({id,version})),
+  lots:[{incoming_id:String(undatedBomLot),quantity:4}]};
+await assert.rejects(postBulk({...shipBuild,requests:[{id:manualKit,version:1}]}),/DELIVERY_STALE/);
+assert.equal((await postBulk(shipBuild)).shipped,4);
+assert.equal((await request(manualParts[0].id)).shipped_qty,4);
+assert.equal((await request(manualKit)).shipped_qty,0);
+assert.equal((await summary("BOM-CHILD-A")).balance_qty,7);
+
+await db.exec("reset role; update public.item_build_up set child_itemcode_2=null where parent_itemcode='BOM-KIT'; set role authenticated");
+await assert.rejects(postManual(manualKitPayload),/DELIVERY_BUILD_UP_CHANGED:BOM-KIT/);
+const moveKit={...erpKitLine,delivery_date:"2026-11-18",ordered_qty:3, mode:"update",target_id:erpParent.id,expected_version:erpParent.version};
+const moveKitPreview=(await rpc("preview",{rows:[moveKit]})).rows;
+assert.deepEqual(previewDeliveryDemand(moveKitPreview,{1:erpParent.id})[0].preview_components.map(c=>c.requested_qty),[6,3]);
+await rpc("import",{rows:[moveKit]});
+assert.deepEqual((await buildRows(erpParent.id)).map(r=>[r.ordered_qty,r.delivery_date]),[[6,"2026-11-18"],[3,"2026-11-18"]]);
+assert.equal((await summary("BOM-CHILD-A")).on_order_qty,9);
+console.log("PASS: manual/ERP build-up, aggregate component shortage, source dedupe, stored recipes, child inventory and bulk FIFO.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

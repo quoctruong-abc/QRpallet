@@ -16,6 +16,7 @@ export type DeliveryInput = {
 export type DeliveryRequest = DeliveryInput & {
   id: string; system_customer_name: string | null; shipped_qty: number; remaining_qty: number;
   delivery_source?: "erp" | "manual";
+  request_type?: "origin" | "parent" | "child"; parent_request_id?: string | null; parent_itemcode?: string | null;
   item_stock_qty: number; item_on_order_qty: number; item_available_qty: number; item_shortage_qty: number;
   cancelled: boolean; version: number; status: "pending" | "partial" | "done" | "cancelled";
 };
@@ -40,8 +41,13 @@ export type BulkDeliveryInput = {
   requests: { id: string; version: number }[];
   lots: { incoming_id: string; quantity: number }[];
 };
-export type ManualDeliveryInput = Pick<DeliveryInput, "itemcode" | "delivery_date" | "ordered_qty">;
-export type ManualDeliveryItem = { product_name: string; customer: string | null };
+export type DeliveryComponent = {
+  itemcode: string; factor: number; item_stock_qty: number; item_on_order_qty: number;
+  ordered_qty?: number; shipped_qty?: number; cancelled?: boolean;
+};
+export type DeliveryBuildUpOption = { token: string; codes: (string | null)[]; components: DeliveryComponent[] };
+export type ManualDeliveryInput = Pick<DeliveryInput, "itemcode" | "delivery_date" | "ordered_qty"> & { build_up_token?: string | null };
+export type ManualDeliveryItem = { product_name: string; customer: string | null; build_up_options?: DeliveryBuildUpOption[] };
 
 export function parseManualDeliveryInput(value: unknown): ManualDeliveryInput {
   const row = (value ?? {}) as Partial<ManualDeliveryInput>;
@@ -51,15 +57,20 @@ export function parseManualDeliveryInput(value: unknown): ManualDeliveryInput {
   if (typeof qty !== "number" || !Number.isInteger(qty) || qty < 1 || qty > MAX_DELIVERY_QUANTITY) {
     throw new Error("Số lượng phải là số nguyên dương hợp lệ.");
   }
-  return { itemcode, delivery_date: row.delivery_date, ordered_qty: qty };
+  const token = row.build_up_token;
+  if (token != null && (typeof token !== "string" || !/^\d+:[0-9a-f]{32}$/.test(token))) throw new Error("Tổ hợp mã con không hợp lệ.");
+  return { itemcode, delivery_date: row.delivery_date, ordered_qty: qty, ...(token === undefined ? {} : { build_up_token: token }) };
 }
 export type DeliveryCandidate = {
   id: string; delivery_date: string; ordered_qty: number; shipped_qty: number;
+  request_type?: DeliveryRequest["request_type"]; components?: DeliveryComponent[];
   version: number; unit: string; cancelled: boolean;
 };
 export type DeliveryPreviewLine = DeliveryInput & {
   existing: DeliveryCandidate | null; candidates: DeliveryCandidate[];
   item_stock_qty: number; item_on_order_qty: number; item_on_order_after: number; item_shortage_after: number;
+  build_up_options?: DeliveryBuildUpOption[];
+  preview_components?: (DeliveryComponent & { requested_qty: number; item_shortage_after: number })[];
 };
 export type DeliveryHistory = {
   id: string; quantity: number; shipped_date: string; created_at: string; entered_by_name: string;
@@ -150,18 +161,41 @@ export type FifoPreview = {
   fifo: { incoming_id: number; quantity: number; received_date: string; production_date: string | null }[];
 };
 
-// Recompute the displayed item demand after choosing "new" versus rescheduling
-// an existing request. This is an estimate; the database rechecks on submission.
-export function previewDeliveryDemand(rows: DeliveryPreviewLine[], choices: Record<number, string>): DeliveryPreviewLine[] {
+export function selectDeliveryBuildUp(options: DeliveryBuildUpOption[] | undefined, token: string | undefined) {
+  return options?.length === 1 ? options[0] : options?.find((option) => option.token === token);
+}
+
+// Aggregate real demand by stock item, including components shared by separate requests.
+export function previewDeliveryDemand(rows: DeliveryPreviewLine[], choices: Record<number, string>, recipeChoices: Record<number, string> = {}): DeliveryPreviewLine[] {
   const delta = new Map<string, number>();
-  for (const row of rows) {
+  const parts = rows.map((row) => {
     const target = row.existing || row.candidates.find((candidate) => candidate.id === choices[row.excel_row]);
-    const adjustment = target?.cancelled ? 0 : Math.max(0, row.ordered_qty - (target?.shipped_qty ?? 0))
-      - (target ? Math.max(0, target.ordered_qty - target.shipped_qty) : 0);
-    delta.set(row.itemcode, (delta.get(row.itemcode) ?? 0) + adjustment);
-  }
-  return rows.map((row) => {
-    const onOrder = row.item_on_order_qty + (delta.get(row.itemcode) ?? 0);
-    return { ...row, item_on_order_after: onOrder, item_shortage_after: Math.max(0, onOrder - row.item_stock_qty) };
+    const recipe = !target && selectDeliveryBuildUp(row.build_up_options, recipeChoices[row.excel_row]);
+    const split = target ? target.request_type === "parent" : Boolean(row.build_up_options?.length);
+    const components: DeliveryComponent[] = split
+      ? (target ? target.components : recipe ? recipe.components : undefined) ?? []
+      : [{ itemcode: row.itemcode, factor: 1, item_stock_qty: row.item_stock_qty, item_on_order_qty: row.item_on_order_qty,
+        ordered_qty: target?.ordered_qty, shipped_qty: target?.shipped_qty, cancelled: target?.cancelled }];
+    if (target || choices[row.excel_row] === "new" || (!row.candidates.length && choices[row.excel_row] === undefined)) {
+      for (const component of components) {
+        const shipped = component.shipped_qty ?? 0;
+        const adjustment = component.cancelled ? 0 : Math.max(0, row.ordered_qty * component.factor - shipped)
+          - Math.max(0, (component.ordered_qty ?? 0) - shipped);
+        delta.set(component.itemcode, (delta.get(component.itemcode) ?? 0) + adjustment);
+      }
+    }
+    return { components, split };
+  });
+  return rows.map((row, index) => {
+    const { components, split } = parts[index];
+    if (!split) {
+      const onOrder = row.item_on_order_qty + (delta.get(row.itemcode) ?? 0);
+      return { ...row, item_on_order_after: onOrder, item_shortage_after: Math.max(0, onOrder - row.item_stock_qty) };
+    }
+    const preview_components = components.map((component) => ({
+      ...component, requested_qty: row.ordered_qty * component.factor,
+      item_shortage_after: Math.max(0, component.item_on_order_qty + (delta.get(component.itemcode) ?? 0) - component.item_stock_qty),
+    }));
+    return { ...row, preview_components, item_shortage_after: Math.max(0, ...preview_components.map((component) => component.item_shortage_after)) };
   });
 }

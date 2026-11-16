@@ -9,10 +9,16 @@ import { MAX_DELIVERY_REVIEW_REQUESTS, parseDeliverySheet, parseManualDeliveryIn
 export const runtime = "nodejs";
 export const maxDuration = 60;
 const fail = (error: string, status = 400) => Response.json({ success: false, error }, { status });
+const needsBuildUpMigration = () => fail("Cần chạy migration 20261116110000_delivery_build_up.sql để tách mã ghép cặp khi tạo lịch giao.", 503);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
+  const buildUpIssue = message.match(/^DELIVERY_BUILD_UP_(CHOOSE|CHANGED):(.+)$/);
+  if (buildUpIssue) return fail(buildUpIssue[1] === "CHOOSE"
+    ? `Mã ${buildUpIssue[2]} có nhiều tổ hợp. Hãy chọn tổ hợp mã con trước khi xác nhận.`
+    : `Ghép cặp của mã ${buildUpIssue[2]} đã thay đổi. Hãy tra cứu hoặc kiểm tra lại file.`, 409);
+  if (["PGRST202", "42883"].includes(error.code ?? "") && message.includes("lookup_delivery_build_up")) return needsBuildUpMigration();
   const shortItem = message.match(/^DELIVERY_BULK_SHORT_STOCK:(.+)$/)?.[1];
   if (shortItem) return fail(`Item ${shortItem} không còn đủ tồn để xuất. Mở lại Xuất hàng loạt và bỏ tick dòng thiếu tồn.`, 409);
   if (error.code === "PGRST202" && /preview_bulk_delivery|post_bulk_delivery/.test(message)) {
@@ -45,6 +51,8 @@ function dbError(error: { code?: string; message?: string }) {
     ["DELIVERY_CANCELLED", "Yêu cầu đã hủy, không thể tiếp tục xuất hoặc chỉnh sửa."],
     ["DELIVERY_DONE", "Yêu cầu đã hoàn tất và không còn phần chờ xuất."],
     ["DELIVERY_ITEM_NOT_FOUND", "Không tìm thấy item, vui lòng cập nhật database."],
+    ["DELIVERY_SHIP_CHILDREN_ONLY", "Mã mẹ chỉ dùng để theo dõi. Hãy chọn các mã con để xuất hàng."],
+    ["DELIVERY_EDIT_PARENT_ONLY", "Cần cập nhật lịch theo mã mẹ để giữ đúng số lượng mã con."],
     ["DELIVERY_DUPLICATE_KEY", "File có dòng trùng PO, Sales ID, Itemcode và ngày giao."],
   ];
   const known = messages.find(([key]) => message.includes(key));
@@ -64,9 +72,8 @@ export async function GET(request: Request) {
     let itemcode: string;
     try { itemcode = normalizeWarehouseItemcode(url.searchParams.get("itemcode") || ""); }
     catch (error) { return fail(error instanceof Error ? error.message : "Mã sản phẩm không hợp lệ."); }
-    const { data, error } = await db.rpc("lookup_manual_delivery_item", { p_itemcode: itemcode });
+    const { data: item, error } = await db.rpc("lookup_delivery_build_up", { p_itemcode: itemcode });
     if (error) return dbError(error);
-    const item = data?.[0];
     if (!item) return fail("Không tìm thấy item, vui lòng cập nhật database.", 404);
     return Response.json({ success: true, item }, { headers: { "Cache-Control": "no-store" } });
   }
@@ -122,6 +129,7 @@ export async function POST(request: Request) {
       const { data, error } = await db.rpc("manage_delivery", { p_action: "preview", p_command_id: null, p_payload: { rows: parsed.rows } });
       if (error) return dbError(error);
       if (data?.model_version !== 2) return fail("Cần chạy migration 20261105140000_item_stock_summary.sql để chuyển mô hình tồn kho.", 503);
+      if (data?.build_up_version !== 1) return needsBuildUpMigration();
       // A fingerprint identifies the parsed source, independent of uploaded filename.
       const fingerprint = createHash("sha256").update(JSON.stringify(parsed.rows)).digest("hex");
       return Response.json({ success: true, ...data, fingerprint, file_name: file.name });

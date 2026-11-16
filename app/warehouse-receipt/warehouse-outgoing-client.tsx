@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { loadWarehouseRows, matchesWarehouseSearch, warehouseSearchTokens, WAREHOUSE_PAGE_SIZE } from "@/lib/warehouse-receipt/outgoing-list";
-import { previewDeliveryDemand, type DeliveryPreviewLine, type DeliveryRequest } from "@/lib/warehouse-receipt/outgoing";
+import { MAX_DELIVERY_QUANTITY, previewDeliveryDemand, selectDeliveryBuildUp, type DeliveryPreviewLine, type DeliveryRequest } from "@/lib/warehouse-receipt/outgoing";
 import { WarehouseManualDelivery } from "./warehouse-manual-delivery";
 import { WarehouseDeliveryReview } from "./warehouse-delivery-review";
 
@@ -12,7 +12,7 @@ import { WarehouseStockSummary } from "./warehouse-stock-summary";
 const num = (n: number) => Number(n).toLocaleString("vi-VN");
 const date = (v: string | null) => v ? v.split("-").reverse().join("/") : "—";
 const statusLabel = { pending: "Chờ xuất", partial: "Xuất một phần", done: "Done", cancelled: "Đã hủy" };
-const manualReference = (row: DeliveryRequest) => `NT-${row.id.slice(0, 8).toUpperCase()}`;
+const manualReference = (row: DeliveryRequest) => `NT-${(row.parent_request_id ?? row.id).slice(0, 8).toUpperCase()}`;
 
 export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const id = useId();
@@ -37,7 +37,8 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const [sourcePreview, setPreview] = useState<DeliveryPreviewLine[] | null>(null);
   const [uploadError, setUploadError] = useState("");
   const [choices, setChoices] = useState<Record<number, string>>({});
-  const preview = useMemo(() => sourcePreview ? previewDeliveryDemand(sourcePreview, choices) : null, [sourcePreview, choices]);
+  const [recipeChoices, setRecipeChoices] = useState<Record<number, string>>({});
+  const preview = useMemo(() => sourcePreview ? previewDeliveryDemand(sourcePreview, choices, recipeChoices) : null, [sourcePreview, choices, recipeChoices]);
   const [selected, setSelected] = useState<DeliveryRequest | null>(null);
   const [mode, setMode] = useState<"cancel" | "history">("history");
   const [history, setHistory] = useState<History[]>([]);
@@ -161,6 +162,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       const parsed = (data.rows as DeliveryPreviewLine[]).slice().sort((a, b) => a.excel_row - b.excel_row);
       setPreview(parsed);
       setChoices(Object.fromEntries(parsed.map((row) => [row.excel_row, row.existing?.id || (row.candidates.length ? "" : "new")])));
+      setRecipeChoices({});
     } catch (error) { setUploadError(error instanceof Error ? error.message : "Không kiểm tra được file."); }
     finally { busyRef.current = false; setBusy(false); }
   }
@@ -171,7 +173,9 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       const choice = choices[row.excel_row];
       const target = choice === row.existing?.id ? row.existing : row.candidates.find((candidate) => candidate.id === choice);
       return {
-        ...row, existing: undefined, candidates: undefined, item_stock_qty: undefined, item_on_order_qty: undefined, item_on_order_after: undefined, item_shortage_after: undefined,
+        excel_row: row.excel_row, delivery_date: row.delivery_date, purorder: row.purorder, sales_id: row.sales_id, itemcode: row.itemcode,
+        product_name: row.product_name, customer: row.customer, unit: row.unit, unit_label: row.unit_label, ordered_qty: row.ordered_qty,
+        ...(choice === "new" ? { build_up_token: selectDeliveryBuildUp(row.build_up_options, recipeChoices[row.excel_row])?.token ?? null } : {}),
         mode: choice === "new" ? "new" : "update", target_id: target?.id ?? null, expected_version: target?.version ?? null,
       };
     });
@@ -205,8 +209,14 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const selectedTargets = preview?.map((row) => row.existing?.id || (choices[row.excel_row] === "new" ? null : choices[row.excel_row])).filter(Boolean) || [];
   const invalidChoice = new Set(selectedTargets).size !== selectedTargets.length || (preview?.some((row) => {
     const chosen = row.existing?.id === choices[row.excel_row] ? row.existing : row.candidates.find((c) => c.id === choices[row.excel_row]);
+    if (chosen?.cancelled) return false;
+    if (row.preview_components) return !choices[row.excel_row] || !row.preview_components.length || row.preview_components.some((part) =>
+      part.requested_qty > MAX_DELIVERY_QUANTITY || part.requested_qty < Math.min(part.ordered_qty ?? 0, part.shipped_qty ?? 0));
     return !choices[row.excel_row] || (chosen && !chosen.cancelled && row.ordered_qty < Math.min(chosen.ordered_qty, chosen.shipped_qty));
   }) ?? true);
+  const projectedShortages = new Set(preview?.flatMap((row) => row.preview_components
+    ? row.preview_components.filter((part) => part.item_shortage_after > 0).map((part) => part.itemcode)
+    : row.item_shortage_after > 0 ? [row.itemcode] : []));
 
   const loaded = useMemo(() => rows.filter((row) => !row.cancelled && row.remaining_qty > 0), [rows]);
   const dateOptions = useMemo(() => [...new Set(loaded.map((row) => row.delivery_date))].sort(), [loaded]);
@@ -220,7 +230,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
     const tokens = warehouseSearchTokens(search);
     return loaded.filter((row) => (!manualOnly || row.delivery_source === "manual") && (!activeDate || row.delivery_date === activeDate)
       && (!activeCustomer || (activeCustomer === "missing" ? !row.system_customer_name : `name:${row.system_customer_name}` === activeCustomer))
-      && matchesWarehouseSearch(tokens, [row.purorder, row.sales_id, row.itemcode, row.product_name, row.customer, row.system_customer_name,
+      && matchesWarehouseSearch(tokens, [row.purorder, row.sales_id, row.itemcode, row.parent_itemcode, row.product_name, row.customer, row.system_customer_name,
         row.delivery_source === "manual" ? `Nhập tay ${manualReference(row)}` : null]));
   }, [loaded, manualOnly, activeDate, activeCustomer, search]);
   const total = filtered.length;
@@ -267,7 +277,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         <tbody>{visible.map((row) => <tr key={row.id} className={row.item_shortage_qty > 0 ? "warehouse-outgoing-shortage" : undefined}>
           <td>{date(row.delivery_date)}</td>
           <td>{row.delivery_source === "manual" ? <span title={row.purorder}>Nhập tay · {manualReference(row)}</span> : row.purorder}</td>
-          <td>{row.delivery_source === "manual" ? "—" : row.sales_id}</td><td>{row.itemcode}</td>
+          <td>{row.delivery_source === "manual" ? "—" : row.sales_id}</td><td className="warehouse-outgoing-name">{row.itemcode}{row.parent_itemcode ? <small>Mã mẹ: {row.parent_itemcode}</small> : null}</td>
           <td className="warehouse-outgoing-name">{row.product_name}{row.delivery_source !== "manual" && row.customer ? <small>{row.customer}</small> : null}</td><td>{row.system_customer_name || "—"}</td><td>{row.unit_label || "—"}</td>
           <td>{num(row.ordered_qty)}</td><td>{num(row.shipped_qty)}</td><td>{num(row.remaining_qty)}</td><td>{num(row.item_shortage_qty)}</td><td>{statusLabel[row.status]}</td>
           <td><div className="warehouse-incoming-row-actions">
@@ -294,20 +304,38 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       {notice ? <p role="status" className="alert">{notice}</p> : null}
       {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">Thử lại thao tác chưa rõ kết quả</button> : null}
       {preview ? <>
-        <p><strong>{preview.length} dòng.</strong> Có {new Set(preview.filter((row) => row.item_shortage_after > 0).map((row) => row.itemcode)).size} item thiếu hàng dự kiến. Số thiếu tính theo tổng nhu cầu của từng item, gồm các lịch đang chờ và thay đổi từ file.</p>
+        <p><strong>{preview.length} dòng.</strong> Có {projectedShortages.size} item thiếu hàng dự kiến. Số thiếu tính theo mã thực xuất, gồm các lịch đang chờ và thay đổi từ file.</p>
         <div className="scan-table-wrap warehouse-outgoing-preview"><table className="warehouse-table">
           <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Yêu cầu trong file</th><th>Tồn hiện tại</th><th>Đã yêu cầu</th><th>Tồn khả dụng</th><th>Thiếu của item</th><th>Cách nạp</th></tr></thead>
-          <tbody>{preview.map((row) => <tr key={row.excel_row} className={row.item_shortage_after > 0 ? "warehouse-outgoing-shortage" : undefined}>
-            <td>{row.excel_row}</td><td>{date(row.delivery_date)}</td><td>{row.purorder}<br />{row.sales_id}</td><td>{row.itemcode}</td>
-            <td>{num(row.ordered_qty)}</td><td>{num(row.item_stock_qty)}</td><td>{num(row.item_on_order_qty)}</td>
-            {/* The preview already contains both operands of inv_stock_summary.available_qty from the same snapshot. */}
-            <td>{num(row.item_stock_qty - row.item_on_order_qty)}</td><td>{num(row.item_shortage_after)}</td>
+          <tbody>{preview.map((row) => {
+            const parts = row.preview_components;
+            const componentValue = (value: (part: NonNullable<typeof parts>[number]) => number, usual: number) =>
+              parts ? parts.length ? <><div aria-hidden="true">&nbsp;</div>{parts.map((part) => <div key={part.itemcode}>{num(value(part))}</div>)}</> : "—" : num(usual);
+            return <tr key={row.excel_row} className={row.item_shortage_after > 0 ? "warehouse-outgoing-shortage" : undefined}>
+            <td>{row.excel_row}</td><td>{date(row.delivery_date)}</td><td>{row.purorder}<br />{row.sales_id}</td>
+            <td>{parts ? <><strong>Mã mẹ: {row.itemcode}</strong> × {num(row.ordered_qty)}
+              {parts.map((part) => <div key={part.itemcode}>{part.itemcode}</div>)}</> : row.itemcode}</td>
+            <td>{componentValue((part) => part.requested_qty, row.ordered_qty)}</td>
+            <td>{componentValue((part) => part.item_stock_qty, row.item_stock_qty)}</td>
+            <td>{componentValue((part) => part.item_on_order_qty, row.item_on_order_qty)}</td>
+            <td>{componentValue((part) => part.item_stock_qty - part.item_on_order_qty, row.item_stock_qty - row.item_on_order_qty)}</td>
+            <td>{componentValue((part) => part.item_shortage_after, row.item_shortage_after)}</td>
             <td>{row.existing ? (row.existing.cancelled ? "Đã hủy — bỏ qua" : row.existing.ordered_qty === row.ordered_qty ? "Không đổi — bỏ qua" : "Cập nhật số lượng") : row.candidates.length ?
               <select aria-label={`Cách nạp dòng ${row.excel_row}`} disabled={locked} onChange={(event) => setChoices((old) => ({ ...old, [row.excel_row]: event.target.value }))} value={choices[row.excel_row] || ""}>
                 <option value="">Chọn lịch mới hoặc dời lịch…</option><option value="new">Tạo lịch giao mới</option>
-                {row.candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>Dời lịch {date(candidate.delivery_date)} — đã xuất {num(candidate.shipped_qty)}</option>)}
-              </select> : "Thêm lịch mới"}</td>
-          </tr>)}</tbody>
+                {row.candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>Dời lịch {date(candidate.delivery_date)}{candidate.request_type !== "parent" ? ` — đã xuất ${num(candidate.shipped_qty)}` : ""}</option>)}
+              </select> : "Thêm lịch mới"}
+              {choices[row.excel_row] === "new" && row.build_up_options && row.build_up_options.length > 1 ?
+                <select aria-label={`Tổ hợp mã con dòng ${row.excel_row}`} disabled={locked}
+                  value={recipeChoices[row.excel_row] || ""} onChange={(event) => setRecipeChoices((old) => ({ ...old, [row.excel_row]: event.target.value }))}>
+                  <option value="">Chọn tổ hợp mã con…</option>
+                  {row.build_up_options.map((option) => <option key={option.token} value={option.token}>{option.codes.filter(Boolean).join(" + ")}</option>)}
+                </select> : null}
+              {!row.existing?.cancelled && parts?.some((part) => part.requested_qty > MAX_DELIVERY_QUANTITY || part.requested_qty < Math.min(part.ordered_qty ?? 0, part.shipped_qty ?? 0))
+                ? <small role="alert">Số lượng mã con vượt giới hạn hoặc thấp hơn số đã xuất.</small> : null}
+            </td>
+          </tr>;
+          })}</tbody>
         </table></div>
         <p className="muted small">Tổng nhu cầu dự kiến cập nhật theo lựa chọn lịch mới / dời lịch; hệ thống kiểm tra lại khi xác nhận. Lượng yêu cầu mới phải bằng hoặc lớn hơn số đã xuất của lịch cũ.</p>
       </> : null}
@@ -323,6 +351,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         <button aria-label="Đóng chi tiết" className="modal-close" disabled={busy} onClick={() => actionDialog.current?.close()} type="button">×</button></div>
       {selected ? <>
         <p>{selected.delivery_source === "manual" ? `Nhập tay · ${manualReference(selected)}` : `${selected.purorder} / ${selected.sales_id}`} / {selected.itemcode}</p>
+        {selected.parent_itemcode ? <p>Mã mẹ: {selected.parent_itemcode}</p> : null}
         <p>Yêu cầu {num(selected.ordered_qty)} · Đã xuất {num(selected.shipped_qty)} · Còn phải giao {num(selected.remaining_qty)} · Tồn item {num(detailStock ?? selected.item_stock_qty)}</p>
         {notice ? <p role="status" className="alert">{notice}</p> : null}
         {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">Thử lại thao tác chưa rõ kết quả</button> : null}
