@@ -1,5 +1,6 @@
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { parseManualIncomingRequest } from "@/lib/warehouse-receipt/incoming";
 
 export async function POST(request: Request) {
@@ -24,7 +25,8 @@ export async function POST(request: Request) {
       const message = error.message || "";
       if (message.includes("INV_ITEM_NOT_FOUND:")) {
         const itemcode = message.slice(message.indexOf("INV_ITEM_NOT_FOUND:") + "INV_ITEM_NOT_FOUND:".length).trim();
-        return Response.json({ success: false, itemcode, error: "Không tìm thấy item, vui lòng cập nhật database" }, { status: 404 });
+        const { data: identity } = await createAdminClient().rpc("warehouse_item_identity", { p_itemcode: itemcode });
+        return Response.json({ success: false, itemcode, error: identity?.[0]?.lookup_error || "Không tìm thấy item, vui lòng cập nhật database" }, { status: 404 });
       }
       if (message.includes("NOT_AUTHORIZED")) return Response.json({ success: false, error: "Bạn không có quyền nhập kho." }, { status: 403 });
       if (message.includes("INV_REQUEST_CONFLICT")) return Response.json({ success: false, error: "Mã yêu cầu đã được dùng cho danh sách khác. Vui lòng tải lại trang và kiểm tra lần nhập trước." }, { status: 409 });

@@ -16,6 +16,7 @@ export async function POST(request: Request) {
   const { data, error } = await db.rpc("warehouse_catalog_manage", { p_action: input.action, p_payload: input.payload });
   if (error || !data) {
     const message = error?.message ?? "";
+    if (message.startsWith("WAREHOUSE_CATALOG_LOOKUP_REJECTED:")) return fail(message.slice("WAREHOUSE_CATALOG_LOOKUP_REJECTED:".length), 409);
     if (message.includes("WAREHOUSE_CATALOG_FORBIDDEN")) return fail("Chỉ Super Admin có quyền cập nhật danh mục kho.", 403);
     if (message.includes("WAREHOUSE_CATALOG_UNKNOWN_CUSTOMER")) return fail("Khách hàng không còn trong danh sách. Mở lại form để cập nhật.", 409);
     if (message.includes("WAREHOUSE_CATALOG_CONFIRM_REPLACEMENT")) return fail("Mã mẹ đã có tổ hợp. Hãy tra lại và chọn tổ hợp cần thay thế.", 409);
@@ -27,6 +28,9 @@ export async function POST(request: Request) {
     if (error?.code === "PGRST202" || error?.code === "42883") return fail("Cần áp dụng migration 20261116100000_warehouse_catalog_link_existing_items.sql.", 503);
     console.error("Warehouse catalog request failed", { action: input.action, error });
     return fail("Không xử lý được danh mục kho. Vui lòng thử lại.", 500);
+  }
+  if (input.action === "lookup" && data.catalog_lookup_version !== 1) {
+    return fail("Cần áp dụng migration 20261118110000_unified_warehouse_item_lookup.sql.", 503);
   }
   return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
 }

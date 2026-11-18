@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 require.extensions[".ts"] = (module, file) => module._compile(ts.transpileModule(readFileSync(file, "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, file);
-const { parseDeliverySheet, parseManualDeliveryInput, previewDeliveryDemand } = require("../../lib/warehouse-receipt/outgoing.ts");
+const { parseDeliverySheet, parseManualDeliveryInput, previewDeliveryDemand, deliveryPreviewErrors } = require("../../lib/warehouse-receipt/outgoing.ts");
 const { analyzeDeliveryGroups, componentPickKey, suggestDeliveryGroups } = require("../../lib/warehouse-receipt/delivery-groups.ts");
 const { expandMergedCells } = require("../../lib/excel-merged.ts");
 const { parseWarehouseMasterData } = require("../../lib/warehouse-receipt/master-data.ts");
@@ -981,5 +981,129 @@ await assert.rejects(reviewFifo(groupSources),/DELIVERY_NOT_AUTHORIZED/);
 await assert.rejects(postBulk(groupPayload,groupCommand),/DELIVERY_NOT_AUTHORIZED/);
 await db.exec("select set_config('test.permission','yes',false)");
 console.log("PASS: parent groups, synchronized ratio validation and atomic parent-first SO allocation.");
+
+await db.exec("reset role; drop function public.resolve_warehouse_item(text)");
+await migrate("20261118110000_unified_warehouse_item_lookup.sql");
+await db.exec(`insert into public.item_pallet_config(itemcode,product_name,"ERP_name",customer) values
+ ('LOOKUP-ERP',null,'Tên ERP dùng được',null),('LOOKUP-PROD','Tên sản xuất ưu tiên','Tên ERP không ưu tiên','Khách master'),
+ ('LOOKUP-FIELDS',null,null,null),('LOOKUP-NONAME',' ',null,'Khách có sẵn'),
+ ('LOOKUP-PARENT','Bộ mới',null,null),('LOOKUP-BAD-PARENT','Bộ lỗi',null,null);
+ insert into public.pallet_data(id,itemcode,product_name,customer,effect_to,updated_at) values
+ (900001,'LOOKUP-FIELDS','Tên từ pallet',null,null,now()),
+ (900002,'LOOKUP-FIELDS',null,'Khách từ pallet',null,now()),
+ (900003,'LOOKUP-LEGACY','Tên legacy','Khách legacy',null,now());
+ insert into public.item_build_up(parent_itemcode,child_itemcode_1,child_itemcode_2) values
+ ('LOOKUP-PARENT','LOOKUP-ERP','LOOKUP-PROD'),('LOOKUP-BAD-PARENT','LOOKUP-ERP','LOOKUP-NONAME')`);
+const unified=async code=>(await db.query("select * from public.warehouse_item_identity($1)",[code])).rows[0];
+assert.equal((await unified("LOOKUP-ERP")).product_name,"Tên ERP dùng được");
+assert.equal((await unified("LOOKUP-ERP")).customer,null);
+assert.equal((await unified("LOOKUP-PROD")).product_name,"Tên sản xuất ưu tiên");
+assert.equal((await unified("LOOKUP-FIELDS")).product_name,"Tên từ pallet");
+assert.equal((await unified("LOOKUP-FIELDS")).customer,"Khách từ pallet");
+assert.match((await unified("LOOKUP-NONAME")).lookup_error,/chưa có tên sản phẩm/);
+assert.match((await unified("LOOKUP-NOT-DECLARED")).lookup_error,/chưa được khai báo/);
+await seed("LOOKUP-STOCK-ONLY",2,"2026-11-01");
+assert.equal((await unified("LOOKUP-STOCK-ONLY")).declared,false,"Stock is not a master declaration");
+await db.exec("set role authenticated");
+const validManualLookup=await lookupBuild("LOOKUP-ERP");
+assert.equal(validManualLookup.catalog_lookup_version,1);
+assert.equal(validManualLookup.product_name,"Tên ERP dùng được");
+assert.equal(validManualLookup.customer,null);
+assert.match((await lookupBuild("LOOKUP-NOT-DECLARED")).lookup_error,/chưa được khai báo/);
+const blankCustomerInput={itemcode:"LOOKUP-ERP",received_date:"2026-11-18",production_date:"2026-11-17",quantity:2,note:"",wo:null};
+const emptyCustomerID=randomUUID();
+await postIncoming(emptyCustomerID,[blankCustomerInput]);
+assert.deepEqual(await postIncoming(emptyCustomerID,[blankCustomerInput]),await postIncoming(emptyCustomerID,[blankCustomerInput]));
+assert.deepEqual((await db.query("select product_name,customer from public.inv_incoming where manual_batch_id=$1",[emptyCustomerID])).rows,[{product_name:"Tên ERP dùng được",customer:""}]);
+const validDelivery={...input,itemcode:"LOOKUP-ERP",ordered_qty:1,build_up_token:null};
+assert.equal((await request((await postManual(validDelivery)).request_id)).product_name,"Tên ERP dùng được");
+await assert.rejects(postManual({...validDelivery,itemcode:"LOOKUP-NOT-DECLARED"}),/DELIVERY_CATALOG_REJECTED/);
+await assert.rejects(postManual({...validDelivery,itemcode:"LOOKUP-NONAME"}),/DELIVERY_CATALOG_REJECTED/);
+await assert.rejects(rpc("import",{rows:[line("LOOKUP-STOCK-ONLY","LOOKUP-STOCK-ONLY",1)]}),/DELIVERY_CATALOG_REJECTED/);
+const badBuild=await lookupBuild("LOOKUP-BAD-PARENT");
+assert.ok(badBuild.build_up_options[0].components.some(c=>c.lookup_error));
+await assert.rejects(postManual({...validDelivery,itemcode:"LOOKUP-BAD-PARENT",build_up_token:badBuild.build_up_options[0].token}),/DELIVERY_CATALOG_REJECTED/);
+const erpInvalidRows=[line("LOOKUP-VALID","LOOKUP-ERP",1),line("LOOKUP-UNKNOWN","LOOKUP-NOT-DECLARED",1,"2026-11-18",{excel_row:13,product_name:"Tên trong file không khai báo item"}),
+ line("LOOKUP-NONAME","LOOKUP-NONAME",1,"2026-11-18",{excel_row:14})];
+const invalidCatalogPreview=await rpc("preview",{rows:erpInvalidRows});
+assert.equal(invalidCatalogPreview.catalog_lookup_version,1);
+assert.equal(invalidCatalogPreview.rows.filter(r=>r.catalog_error).length,2);
+await assert.rejects(rpc("import",{rows:erpInvalidRows}),(error)=>{
+  assert.ok(error.message.startsWith("DELIVERY_CATALOG_REJECTED:"));
+  const rejection=JSON.parse(error.message.slice("DELIVERY_CATALOG_REJECTED:".length));
+  assert.deepEqual(rejection.errors.map(e=>e.row),[13,14]);
+  assert.match(rejection.errors[0].reason,/chưa được khai báo/);
+  assert.match(rejection.errors[1].reason,/chưa có tên sản phẩm/);
+  return true;
+});
+assert.equal((await get("LOOKUP-VALID")).length,0,"A file rejection is atomic, including valid rows");
+const badChildrenPreview=(await rpc("preview",{rows:[line("LOOKUP-BAD-CHILD","LOOKUP-BAD-PARENT",1)]})).rows;
+assert.ok(deliveryPreviewErrors(previewDeliveryDemand(badChildrenPreview,{12:"new"})[0]).length>0);
+const goodPreview=await rpc("preview",{rows:[line("LOOKUP-GOOD","LOOKUP-PARENT",1)]});
+const goodOption=goodPreview.rows[0].build_up_options[0];
+assert.ok(goodOption.components.every(c=>!c.lookup_error));
+await rpc("import",{rows:[line("LOOKUP-GOOD","LOOKUP-PARENT",1,"2026-11-18",{build_up_token:goodOption.token})]});
+const newGoodParent=(await get("LOOKUP-GOOD")).find(r=>r.request_type==="parent");
+assert.deepEqual((await buildRows(newGoodParent.id)).map(c=>[c.product_name,c.customer]),[
+ ["Tên ERP dùng được",""],["Tên sản xuất ưu tiên","Khách master"]]);
+await db.exec("reset role");
+await seed("LOOKUP-PROD",2,"2026-11-17");
+await db.exec("set role authenticated");
+const declaredParentBulk=(await db.query("select public.preview_bulk_delivery($1::uuid[]) as data",[[newGoodParent.id]])).rows[0].data;
+assert.equal(declaredParentBulk.rows[0].product_name,"Bộ mới");
+const declaredKeys=new Set(declaredParentBulk.rows.map(g=>g.group_key));
+await postBulk(sourcePayload(declaredParentBulk,suggestDeliveryGroups(declaredParentBulk,declaredKeys)));
+assert.ok((await buildRows(newGoodParent.id)).every(c=>c.shipped_qty===1),"Unified lookup preserves synchronized parent shipping");
+const rawErpLine=line("LOOKUP-RAW","LOOKUP-PROD",1,"2026-11-18",{product_name:"Tên ERP gốc trong file",customer:"Khách ERP gốc"});
+const rawPreview=(await rpc("preview",{rows:[rawErpLine]})).rows[0];
+assert.equal(rawPreview.product_name,rawErpLine.product_name);
+assert.equal(rawPreview.system_product_name,"Tên sản xuất ưu tiên");
+await rpc("import",{rows:[rawErpLine]});
+assert.equal((await get("LOOKUP-RAW"))[0].product_name,"Tên ERP gốc trong file","Keep ERP evidence separately from system display");
+const legacyLookup=await manageCatalog("lookup",{itemcode:"LOOKUP-LEGACY",recipes:true});
+assert.equal(legacyLookup.catalog_lookup_version,1);
+assert.equal(legacyLookup.catalog,null);
+assert.equal(legacyLookup.resolved.product_name,"Tên legacy");
+assert.equal(legacyLookup.resolved.customer,"Khách legacy");
+await manageCatalog("save_build_up",{itemcode:"LOOKUP-LEGACY",children:["LOOKUP-FIELDS","LOOKUP-ERP",null]});
+await assert.rejects(manageCatalog("save_build_up",{itemcode:"LOOKUP-UNKNOWN-LINK",children:["LOOKUP-ERP",null,null]}),/WAREHOUSE_CATALOG_LOOKUP_REJECTED/);
+await assert.rejects(manageCatalog("save_build_up",{itemcode:"LOOKUP-NONAME",children:["LOOKUP-ERP",null,null]}),/WAREHOUSE_CATALOG_LOOKUP_REJECTED/);
+await db.exec("reset role");
+assert.equal((await catalog("LOOKUP-LEGACY")).product_name,"Tên legacy");
+assert.equal((await catalog("LOOKUP-FIELDS")).product_name,"Tên từ pallet");
+assert.equal((await catalog("LOOKUP-FIELDS")).customer,"Khách từ pallet");
+assert.equal((await catalog("LOOKUP-ERP")).product_name,null,"ERP display fallback never overwrites production name");
+await db.exec(`insert into public.item_pallet_config(itemcode,product_name) values
+ ('LOOKUP-RACE','Tên trước khi kiểm tra'),('LOOKUP-RETRY','Tên đã ghi lịch');
+ insert into public.item_build_up(parent_itemcode,child_itemcode_1) values ('LOOKUP-PARENT','LOOKUP-NONAME')`);
+await db.exec("set role authenticated");
+const raceLine=line("LOOKUP-RACE","LOOKUP-RACE",1);
+assert.equal((await rpc("preview",{rows:[raceLine]})).rows[0].catalog_error,null);
+const retryLine=line("LOOKUP-RETRY","LOOKUP-RETRY",1);
+const catalogCommand=randomUUID();
+const alreadyPosted=await rpc("import",{rows:[retryLine]},catalogCommand);
+const alternativePreview=(await rpc("preview",{rows:[line("LOOKUP-ALT","LOOKUP-PARENT",1)]})).rows;
+const invalidAlternative=alternativePreview[0].build_up_options.find(o=>o.components.some(c=>c.lookup_error));
+const validAlternative=alternativePreview[0].build_up_options.find(o=>o.components.every(c=>!c.lookup_error));
+assert.equal(deliveryPreviewErrors(previewDeliveryDemand(alternativePreview,{12:"new"},{12:validAlternative.token})[0]).length,0);
+assert.ok(deliveryPreviewErrors(previewDeliveryDemand(alternativePreview,{12:"new"},{12:invalidAlternative.token})[0]).length>0);
+await assert.rejects(rpc("import",{rows:[line("LOOKUP-ALT","LOOKUP-PARENT",1,"2026-11-18",{build_up_token:invalidAlternative.token})]}),/DELIVERY_CATALOG_REJECTED/);
+await db.exec("reset role; delete from public.item_pallet_config where itemcode in ('LOOKUP-RACE','LOOKUP-RETRY'); set role authenticated");
+await assert.rejects(rpc("import",{rows:[raceLine]}),/DELIVERY_CATALOG_REJECTED/);
+assert.equal((await get("LOOKUP-RACE")).length,0,"Posting rechecks a declaration removed after preview");
+assert.deepEqual(await rpc("import",{rows:[retryLine]},catalogCommand),alreadyPosted,"A successful prior operation remains safely retryable");
+await assert.rejects(rpc("import",{rows:[retryLine]}),/DELIVERY_CATALOG_REJECTED/);
+await db.exec("reset role");
+await db.exec(`grant select,insert,update on public.item_pallet_config to service_role;
+ grant select on public.pallet_data to service_role;
+ insert into public.pallet_data(id,itemcode,product_name,customer,effect_to,updated_at)
+ values(900004,'LOOKUP-SERVICE','Tên qua server',null,null,now());
+ set role service_role`);
+assert.deepEqual((await db.query("select * from public.resolve_warehouse_item('LOOKUP-SERVICE')")).rows,
+ [{itemcode:"LOOKUP-SERVICE",product_name:"Tên qua server",customer:""}],"The real service-role lookup can call the shared helper and backfill the catalog");
+await db.exec("set role authenticated");
+await assert.rejects(db.query("select * from public.warehouse_item_identity('LOOKUP-ERP')"),/permission denied/);
+await assert.rejects(db.query("select public.post_manual_delivery_catalog_v1($1,'{}')",[randomUUID()]),/permission denied/);
+console.log("PASS: unified catalog lookup, ERP-name priority, independent field fallbacks, optional customer intake, strict ERP/manual declarations, recipe checks and ERP evidence preservation.");
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

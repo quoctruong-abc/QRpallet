@@ -22,8 +22,9 @@ export async function POST(request: Request) {
     if (error) throw error;
     const item = data?.[0];
     if (!item) {
+      const { data: identity } = await adminClient.rpc("warehouse_item_identity", { p_itemcode: itemcode });
       return Response.json(
-        { success: false, error: "Không tìm thấy item, vui lòng cập nhật database" },
+        { success: false, error: identity?.[0]?.lookup_error || "Không tìm thấy item, vui lòng cập nhật database" },
         { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }

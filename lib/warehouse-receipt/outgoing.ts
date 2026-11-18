@@ -54,6 +54,7 @@ export type BulkDeliveryInput = {
 export type DeliveryComponent = {
   itemcode: string; factor: number; item_stock_qty: number; item_on_order_qty: number;
   product_name?: string; customer?: string | null;
+  lookup_error?: string | null; declared?: boolean;
   ordered_qty?: number; shipped_qty?: number; cancelled?: boolean;
 };
 export type DeliveryRequestComponent = DeliveryComponent & {
@@ -82,11 +83,16 @@ export type DeliveryCandidate = {
   version: number; unit: string; cancelled: boolean;
 };
 export type DeliveryPreviewLine = DeliveryInput & {
+  system_product_name?: string | null; system_customer_name?: string | null; catalog_error?: string | null;
   existing: DeliveryCandidate | null; candidates: DeliveryCandidate[];
   item_stock_qty: number; item_on_order_qty: number; item_on_order_after: number; item_shortage_after: number;
   build_up_options?: DeliveryBuildUpOption[];
   preview_components?: (DeliveryComponent & { requested_qty: number; item_shortage_after: number })[];
 };
+export function deliveryPreviewErrors(row: DeliveryPreviewLine): string[] {
+  return [...new Set([row.catalog_error, ...(row.preview_components?.map((part) => part.lookup_error) ?? [])]
+    .filter((error): error is string => Boolean(error)))];
+}
 export type DeliveryHistory = {
   id: string; quantity: number; shipped_date: string; created_at: string; entered_by_name: string;
   allocations: { incoming_id: number; quantity: number; production_date: string | null; received_date: string }[];

@@ -113,6 +113,13 @@
 .warehouse-catalog-code-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 12px; }
 .warehouse-catalog-fields p { margin: 0; }
 .warehouse-catalog-fields input[readonly] { background: var(--surface-soft); }
+.warehouse-opening-dialog.warehouse-build-up-dialog { width: min(1320px, calc(100% - 24px)); max-width: none; max-height: calc(100dvh - 24px); }
+.warehouse-build-up-dialog .warehouse-catalog-code-row { grid-template-columns: minmax(180px, .75fr) minmax(0, 2fr) minmax(0, 1.1fr); align-items: start; }
+.warehouse-catalog-display { display: block; min-height: 44px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
+.warehouse-catalog-rejection { display: block; margin-top: 5px; color: var(--danger); white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 800px) {
+  .warehouse-build-up-dialog .warehouse-catalog-code-row { grid-template-columns: 1fr; gap: 6px; }
+}
 @media (max-width: 480px) {
   .warehouse-catalog-code-row { grid-template-columns: 1fr; gap: 6px; }
 }

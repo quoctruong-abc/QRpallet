@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { loadWarehouseRows, matchesWarehouseSearch, warehouseSearchTokens, WAREHOUSE_PAGE_SIZE } from "@/lib/warehouse-receipt/outgoing-list";
-import { MAX_DELIVERY_QUANTITY, previewDeliveryDemand, selectDeliveryBuildUp, type DeliveryPreviewLine, type DeliveryRequest } from "@/lib/warehouse-receipt/outgoing";
+import { MAX_DELIVERY_QUANTITY, deliveryPreviewErrors, previewDeliveryDemand, selectDeliveryBuildUp, type DeliveryPreviewLine, type DeliveryRequest } from "@/lib/warehouse-receipt/outgoing";
 import { WarehouseManualDelivery } from "./warehouse-manual-delivery";
 import { WarehouseDeliveryReview } from "./warehouse-delivery-review";
 
@@ -168,7 +168,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   }
 
   function importRows() {
-    if (!preview || !file) return;
+    if (!preview || !file || invalidChoice) return;
     const inputs = preview.map((row) => {
       const choice = choices[row.excel_row];
       const target = choice === row.existing?.id ? row.existing : row.candidates.find((candidate) => candidate.id === choice);
@@ -209,6 +209,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
 
   const selectedTargets = preview?.map((row) => row.existing?.id || (choices[row.excel_row] === "new" ? null : choices[row.excel_row])).filter(Boolean) || [];
   const invalidChoice = new Set(selectedTargets).size !== selectedTargets.length || (preview?.some((row) => {
+    if (deliveryPreviewErrors(row).length) return true;
     const chosen = row.existing?.id === choices[row.excel_row] ? row.existing : row.candidates.find((c) => c.id === choices[row.excel_row]);
     if (chosen?.cancelled) return false;
     if (row.preview_components) return !choices[row.excel_row] || !row.preview_components.length || row.preview_components.some((part) =>
@@ -317,10 +318,14 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">Thử lại thao tác chưa rõ kết quả</button> : null}
       {preview ? <>
         <p><strong>{preview.length} dòng.</strong> Có {projectedShortages.size} item thiếu hàng dự kiến. Số thiếu tính theo mã thực xuất, gồm các lịch đang chờ và thay đổi từ file.</p>
+        {preview.some((row) => deliveryPreviewErrors(row).length) ? <p role="alert" className="alert alert-error">
+          Có item chưa được khai báo hoặc thiếu tên sản phẩm. Các dòng bị từ chối hiện lý do bên dưới; cần cập nhật danh mục rồi kiểm tra lại file trước khi xác nhận.
+        </p> : null}
         <div className="scan-table-wrap warehouse-outgoing-preview"><table className="warehouse-table">
           <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Tên sản phẩm</th><th>Khách hàng mã con</th><th>Yêu cầu trong file</th><th>Tồn hiện tại</th><th>Đã yêu cầu</th><th>Tồn khả dụng</th><th>Thiếu của item</th><th>Cách nạp</th></tr></thead>
           <tbody>{preview.map((row) => {
             const parts = row.preview_components;
+            const rejection = deliveryPreviewErrors(row);
             const entries = parts?.length ? parts : [null];
             const action = <>{row.existing ? (row.existing.cancelled ? "Đã hủy — bỏ qua" : row.existing.ordered_qty === row.ordered_qty ? "Không đổi — bỏ qua" : "Cập nhật số lượng") : row.candidates.length ?
               <select aria-label={`Cách nạp dòng ${row.excel_row}`} disabled={locked} onChange={(event) => setChoices((old) => ({ ...old, [row.excel_row]: event.target.value }))} value={choices[row.excel_row] || ""}>
@@ -334,10 +339,11 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
                   {row.build_up_options.map((option) => <option key={option.token} value={option.token}>{option.codes.filter(Boolean).join(" + ")}</option>)}
                 </select> : null}
               {!row.existing?.cancelled && parts?.some((part) => part.requested_qty > MAX_DELIVERY_QUANTITY || part.requested_qty < Math.min(part.ordered_qty ?? 0, part.shipped_qty ?? 0))
-                ? <small role="alert">Số lượng mã con vượt giới hạn hoặc thấp hơn số đã xuất.</small> : null}</>;
+                ? <small role="alert">Số lượng mã con vượt giới hạn hoặc thấp hơn số đã xuất.</small> : null}
+              {rejection.map((reason) => <small key={reason} role="alert" className="warehouse-catalog-rejection">Từ chối: {reason}</small>)}</>;
             return <Fragment key={row.excel_row}>{entries.map((part, index) => <tr
               key={part?.itemcode ?? row.itemcode}
-              className={(part?.item_shortage_after ?? row.item_shortage_after) > 0 ? "warehouse-outgoing-shortage" : undefined}>
+              className={rejection.length ? "warehouse-incoming-row-error" : (part?.item_shortage_after ?? row.item_shortage_after) > 0 ? "warehouse-outgoing-shortage" : undefined}>
               {index === 0 ? <>
                 <td rowSpan={entries.length}>{row.excel_row}</td>
                 <td rowSpan={entries.length}>{date(row.delivery_date)}</td>
@@ -347,8 +353,8 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
               </> : null}
               {parts && !part ? <td colSpan={8}>Chọn tổ hợp để xem các mã con.</td> : <>
                 <td><strong>{part?.itemcode ?? row.itemcode}</strong></td>
-                <td>{part ? part.product_name || "Chưa có tên sản phẩm" : row.product_name || "—"}</td>
-                <td>{part ? part.customer || "Chưa có tên khách hàng" : "—"}</td>
+                <td>{part ? part.product_name || "Chưa có tên sản phẩm" : row.system_product_name || row.product_name || "—"}</td>
+                <td>{part ? part.customer || "Chưa có tên khách hàng" : row.system_customer_name || "Chưa có tên khách hàng"}</td>
                 <td className="warehouse-delivery-number">{num(part?.requested_qty ?? row.ordered_qty)}</td>
                 <td className="warehouse-delivery-number">{num(part?.item_stock_qty ?? row.item_stock_qty)}</td>
                 <td className="warehouse-delivery-number">{num(part?.item_on_order_qty ?? row.item_on_order_qty)}</td>

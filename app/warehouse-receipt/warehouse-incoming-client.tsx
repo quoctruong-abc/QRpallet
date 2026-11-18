@@ -96,7 +96,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
         if (controller.signal.aborted) return { ok: false, error: "", aborted: true };
         if (!response.ok || !result.success) throw new Error(result.error || "Không thể tra cứu sản phẩm. Vui lòng thử lại.");
         const found = result.item as ItemDetails | undefined;
-        if (found?.itemcode !== code || !found.product_name?.trim() || !found.customer?.trim()) {
+        if (found?.itemcode !== code || !found.product_name?.trim()) {
           throw new Error("Không tìm thấy item, vui lòng cập nhật database");
         }
         itemCache.current.set(code, found);
@@ -430,7 +430,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
           if (missing) itemCache.current.delete(missing);
           const editable = drafts.map((row): IncomingDraft => {
             if (row.itemcode === missing) return { ...row, product_name: "", customer: "", lookupStatus: "error", lookupError: result.error };
-            if (row.product_name && row.customer) return row;
+            if (row.product_name) return row;
             return { ...row, lookupStatus: "loading", lookupVersion: nextLookupVersion.current++ };
           });
           setDrafts(editable);

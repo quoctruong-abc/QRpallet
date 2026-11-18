@@ -2,11 +2,13 @@
 
 import { useEffect, useId, useRef, useState, type ComponentType } from "react";
 import { MAX_MASTER_WEIGHT } from "@/lib/warehouse-receipt/master-data";
+import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 
 type CatalogItem = { product_name: string | null; customer: string | null; erp_name: string | null; netweight: number | null };
 type Children = [string | null, string | null, string | null];
 type Recipe = { id: string; children: Children };
-type Lookup = { catalog: CatalogItem | null; recipes: Recipe[] };
+type Lookup = { catalog: CatalogItem | null; recipes: Recipe[];
+  resolved?: { product_name: string | null; customer: string | null; declared: boolean; lookup_error: string | null } };
 type OnSaved = (itemcode: string) => void;
 type EditorProps = { busy: boolean; setBusy: (busy: boolean) => void; close: () => void; onSaved: OnSaved };
 
@@ -24,8 +26,13 @@ async function catalogRequest<T>(action: string, payload: object = {}, signal?: 
 }
 
 function useCatalogLookup(input: string, recipes = false, revision = 0) {
-  const code = input.trim();
-  const valid = validCode(code);
+  let code = input.trim();
+  let codeError = "";
+  if (code) {
+    try { code = normalizeWarehouseItemcode(code); }
+    catch (error) { codeError = error instanceof Error ? error.message : "Itemcode không hợp lệ."; }
+  }
+  const valid = !codeError && validCode(code);
   const key = valid ? JSON.stringify([code, recipes, revision]) : "";
   const [result, setResult] = useState<{ key: string; data?: Lookup; error?: string } | null>(null);
   useEffect(() => {
@@ -40,14 +47,15 @@ function useCatalogLookup(input: string, recipes = false, revision = 0) {
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [code, recipes, key]);
   const current = key && key === result?.key ? result : null;
-  return { code, data: current?.data, error: code && !valid ? "Itemcode không hợp lệ." : current?.error,
+  return { code, data: current?.data, error: codeError || (code && !valid ? "Itemcode không hợp lệ." : current?.error),
     loading: valid && !current };
 }
 
-function CatalogDialog({ title, Editor, onSaved }: {
+function CatalogDialog({ title, Editor, onSaved, wide = false }: {
   title: string;
   Editor: ComponentType<EditorProps>;
   onSaved: OnSaved;
+  wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const id = useId();
@@ -59,7 +67,7 @@ function CatalogDialog({ title, Editor, onSaved }: {
       setOpen(true);
       ref.current?.showModal();
     }}>{title}</button>
-    <dialog ref={ref} aria-labelledby={id} className="modal-card warehouse-opening-dialog warehouse-catalog-dialog"
+    <dialog ref={ref} aria-labelledby={id} className={`modal-card warehouse-opening-dialog warehouse-catalog-dialog${wide ? " warehouse-build-up-dialog" : ""}`}
       onClose={() => setOpen(false)} onCancel={(event) => { if (busy) event.preventDefault(); }}>
       <div className="modal-heading">
         <h2 id={id}>{title}</h2>
@@ -141,7 +149,7 @@ function ItemCodeEditor({ busy, setBusy, close, onSaved }: EditorProps) {
 }
 
 function buildUpName(lookup: ReturnType<typeof useCatalogLookup>) {
-  return lookup.data?.catalog?.product_name ?? lookup.data?.catalog?.erp_name ?? "";
+  return lookup.error || lookup.data?.resolved?.lookup_error ? "" : lookup.data?.resolved?.product_name ?? "";
 }
 
 function BuildUpCodeRow({ label, code, lookup, disabled, required, onChange }: {
@@ -150,15 +158,17 @@ function BuildUpCodeRow({ label, code, lookup, disabled, required, onChange }: {
 }) {
   const errorId = useId();
   const name = buildUpName(lookup);
-  const error = lookup.error || (lookup.data && !name
-    ? (lookup.data.catalog ? "Mã này chưa có tên sản phẩm hoặc tên ERP." : "Itemcode chưa có trong danh mục.") : "");
+  const error = lookup.error || lookup.data?.resolved?.lookup_error || "";
   return <div className="warehouse-catalog-code-row">
     <label>{`Itemcode ${label}`}<input value={code} maxLength={200} disabled={disabled} required={required}
       aria-label={`Itemcode ${label}`} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined}
       onChange={(event) => onChange(event.target.value)} />
       {error ? <span id={errorId} className="warehouse-required small" role="alert">{error}</span> : null}
     </label>
-    <label>{`Tên sản phẩm ${label}`}<input readOnly value={name} placeholder={lookup.loading ? "Đang tra…" : "Tự hiện theo itemcode"} /></label>
+    <label>{`Tên sản phẩm ${label}`}<output className="warehouse-catalog-display" aria-label={`Tên sản phẩm ${label}`} aria-live="polite">{lookup.loading ? "Đang tra…" : name || "—"}</output></label>
+    <label>{`Khách hàng ${label}`}<output className="warehouse-catalog-display" aria-label={`Khách hàng ${label}`} aria-live="polite">
+      {lookup.loading ? "Đang tra…" : lookup.data?.resolved?.customer || (name ? "Chưa có tên khách hàng" : "—")}
+    </output></label>
   </div>;
 }
 
@@ -173,11 +183,11 @@ function BuildUpEditor({ busy, setBusy, close }: EditorProps) {
   const recipes = item.data?.recipes ?? [];
   const replacement = recipes.length === 1 ? recipes[0] : recipes.find((recipe) => recipe.id === recipeId);
   const childInputs = editedChildren ?? (replacement ? replacement.children.map((child) => child ?? "") as [string, string, string] : emptyChildren);
-  const children = childInputs.map((child) => child.trim() || null) as Children;
   const childOne = useCatalogLookup(childInputs[0], false, revision);
   const childTwo = useCatalogLookup(childInputs[1], false, revision);
   const childThree = useCatalogLookup(childInputs[2], false, revision);
   const childLookups = [childOne, childTwo, childThree];
+  const children = childInputs.map((child, index) => child.trim() ? childLookups[index].code : null) as Children;
   const canSave = !busy && Boolean(buildUpName(item)) && (recipes.length === 0 || Boolean(replacement))
     && children.some((child) => child !== null)
     && children.every((child, index) => child === null || Boolean(buildUpName(childLookups[index])));
@@ -245,6 +255,6 @@ function BuildUpEditor({ busy, setBusy, close }: EditorProps) {
 export function WarehouseCatalogEditors({ onSaved }: { onSaved: OnSaved }) {
   return <>
     <CatalogDialog title="Cập nhật itemcode" Editor={ItemCodeEditor} onSaved={onSaved} />
-    <CatalogDialog title="Cập nhật ghép cặp" Editor={BuildUpEditor} onSaved={onSaved} />
+    <CatalogDialog title="Cập nhật ghép cặp" Editor={BuildUpEditor} onSaved={onSaved} wide />
   </>;
 }

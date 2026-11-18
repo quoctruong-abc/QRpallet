@@ -65,7 +65,8 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
   const options = item?.build_up_options;
   const recipe = selectDeliveryBuildUp(options, choice?.code === code ? choice.token : undefined);
   const exceedsLimit = recipe?.components.some((component) => amount * component.factor > MAX_DELIVERY_QUANTITY);
-  const canSubmit = !locked && item && (!options?.length || recipe) && !exceedsLimit
+  const invalidRecipe = recipe?.components.some((component) => component.lookup_error);
+  const canSubmit = !locked && item && (!options?.length || recipe) && !exceedsLimit && !invalidRecipe
     && isInventoryDate(date) && Number.isInteger(amount) && amount > 0 && amount <= MAX_DELIVERY_QUANTITY;
 
   return <form className="warehouse-manual-delivery" onSubmit={(event) => {
@@ -99,8 +100,8 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
             const available = component.item_stock_qty - component.item_on_order_qty;
             const needed = amount * component.factor;
             const shortage = amount > 0 ? Math.max(0, needed - available) : null;
-            return <tr key={component.itemcode} className={shortage ? "warehouse-outgoing-shortage" : undefined}>
-              <td><strong>{component.itemcode}</strong></td><td>{component.product_name || "Chưa có tên sản phẩm"}</td>
+        return <tr key={component.itemcode} className={component.lookup_error ? "warehouse-incoming-row-error" : shortage ? "warehouse-outgoing-shortage" : undefined}>
+          <td><strong>{component.itemcode}</strong>{component.lookup_error ? <small role="alert" className="warehouse-catalog-rejection">{component.lookup_error}</small> : null}</td><td>{component.product_name || "Chưa có tên sản phẩm"}</td>
               <td>{component.customer || "Chưa có tên khách hàng"}</td>
               <td>{amount > 0 ? num(needed) : "—"}</td><td>{num(available)}</td>
               <td>{shortage === null ? "—" : shortage > 0 ? <strong>{num(shortage)} · Thiếu hàng</strong> : "0"}</td>

@@ -1017,6 +1017,25 @@ ngày sản xuất/FIFO và nút sửa lô. Chỉ mã mẹ mới có bảng mã 
 đồng bộ tổ hợp. Bảng Review copy ảnh vẫn dùng các cột cũ; mã con được trình bày
 bên dưới mã mẹ, hàng thường không lặp thêm dòng chi tiết.
 
+Migration `20261118110000_unified_warehouse_item_lookup.sql` thống nhất tra cứu
+cho nhập kho manual, xuất kho manual/ERP và cập nhật ghép cặp. Tên ưu tiên
+`product_name` → `"ERP_name"` → tên trong `pallet_data`; khách hàng tra độc lập
+từ config → pallet data → để trống. Không dùng định mức hoặc khối lượng để
+quyết định item có hợp lệ. Fallback từ tên ERP chỉ dùng để hiển thị; fallback
+từ pallet data chỉ bổ sung trường còn thiếu, không ghi đè thông tin đã khai báo.
+
+Nhập kho manual chấp nhận khách hàng trống. Lịch xuất yêu cầu item đã có trong
+config hoặc pallet data và có tên hợp lệ; tồn kho hay tên trong file ERP không
+thay thế việc khai báo item. Bảng kiểm tra ERP vẫn hiện dòng lỗi và lý do từ chối,
+khóa xác nhận khi còn lỗi. Backend kiểm tra lại cả mã gốc và mã con của tổ hợp
+được chọn, từ chối toàn bộ thao tác nếu có lỗi. Tên/khách ERP gốc được giữ để
+đối chiếu. Tổ hợp cũ giữ snapshot mã con, các tổ hợp khác không bị ép dùng chung.
+
+Popup cập nhật ghép cặp rộng hơn, hiển thị itemcode, toàn bộ tên sản phẩm tự
+xuống dòng và khách hàng riêng của từng mã. Mã mẹ và các mã con phải tra được
+theo logic chung; thay mã mẹ giữ nguyên mã con. Tên/khách có sẵn trong pallet
+data được bổ sung vào config khi lưu; không tạo item từ nội dung file lịch ERP.
+
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
 ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị

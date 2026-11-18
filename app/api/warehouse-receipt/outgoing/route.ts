@@ -11,10 +11,22 @@ export const maxDuration = 60;
 const fail = (error: string, status = 400) => Response.json({ success: false, error }, { status });
 const needsBuildUpMigration = () => fail("Cần chạy migration 20261116110000_delivery_build_up.sql để tách mã ghép cặp khi tạo lịch giao.", 503);
 const needsParentMigration = () => fail("Cần chạy migration 20261118100000_parent_delivery_workflow.sql để quản lý xuất theo mã mẹ.", 503);
+const needsCatalogMigration = () => fail("Cần chạy migration 20261118110000_unified_warehouse_item_lookup.sql để tra cứu danh mục kho.", 503);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
+  if (message.startsWith("DELIVERY_CATALOG_REJECTED:")) {
+    try {
+      const rejection = JSON.parse(message.slice("DELIVERY_CATALOG_REJECTED:".length)) as {
+        errors: { row?: number; itemcode: string; parent_itemcode?: string; reason: string }[];
+      };
+      return Response.json({ success: false, errors: rejection.errors, error: [
+        "Không thể tạo lịch xuất. Cần khai báo đầy đủ item trước khi nạp lịch.",
+        ...rejection.errors.map((row) => `${row.row ? `Dòng ${row.row}: ` : ""}${row.parent_itemcode ? `Mã mẹ ${row.parent_itemcode} / ` : ""}${row.reason}`),
+      ].join("\n") }, { status: 409 });
+    } catch { return fail("Item chưa được khai báo hoặc thiếu tên sản phẩm. Vui lòng cập nhật danh mục trước khi tạo lịch.", 409); }
+  }
   const buildUpIssue = message.match(/^DELIVERY_BUILD_UP_(CHOOSE|CHANGED):(.+)$/);
   if (buildUpIssue) return fail(buildUpIssue[1] === "CHOOSE"
     ? `Mã ${buildUpIssue[2]} có nhiều tổ hợp. Hãy chọn tổ hợp mã con trước khi xác nhận.`
@@ -79,6 +91,8 @@ export async function GET(request: Request) {
     catch (error) { return fail(error instanceof Error ? error.message : "Mã sản phẩm không hợp lệ."); }
     const { data: item, error } = await db.rpc("lookup_delivery_build_up", { p_itemcode: itemcode });
     if (error) return dbError(error);
+    if (item?.catalog_lookup_version !== 1) return needsCatalogMigration();
+    if (item.lookup_error) return fail(item.lookup_error, 404);
     if (!item) return fail("Không tìm thấy item, vui lòng cập nhật database.", 404);
     return Response.json({ success: true, item }, { headers: { "Cache-Control": "no-store" } });
   }
@@ -128,6 +142,7 @@ export async function POST(request: Request) {
       if (error) return dbError(error);
       if (data?.model_version !== 2) return fail("Cần chạy migration 20261105140000_item_stock_summary.sql để chuyển mô hình tồn kho.", 503);
       if (data?.build_up_version !== 1) return needsBuildUpMigration();
+      if (data?.catalog_lookup_version !== 1) return needsCatalogMigration();
       // A fingerprint identifies the parsed source, independent of uploaded filename.
       const fingerprint = createHash("sha256").update(JSON.stringify(parsed.rows)).digest("hex");
       return Response.json({ success: true, ...data, fingerprint, file_name: file.name });
