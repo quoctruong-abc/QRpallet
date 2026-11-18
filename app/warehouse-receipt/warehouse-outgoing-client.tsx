@@ -306,15 +306,19 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       {preview ? <>
         <p><strong>{preview.length} dòng.</strong> Có {projectedShortages.size} item thiếu hàng dự kiến. Số thiếu tính theo mã thực xuất, gồm các lịch đang chờ và thay đổi từ file.</p>
         <div className="scan-table-wrap warehouse-outgoing-preview"><table className="warehouse-table">
-          <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Yêu cầu trong file</th><th>Tồn hiện tại</th><th>Đã yêu cầu</th><th>Tồn khả dụng</th><th>Thiếu của item</th><th>Cách nạp</th></tr></thead>
+          <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Tên sản phẩm</th><th>Khách hàng mã con</th><th>Yêu cầu trong file</th><th>Tồn hiện tại</th><th>Đã yêu cầu</th><th>Tồn khả dụng</th><th>Thiếu của item</th><th>Cách nạp</th></tr></thead>
           <tbody>{preview.map((row) => {
             const parts = row.preview_components;
             const componentValue = (value: (part: NonNullable<typeof parts>[number]) => number, usual: number) =>
               parts ? parts.length ? <><div aria-hidden="true">&nbsp;</div>{parts.map((part) => <div key={part.itemcode}>{num(value(part))}</div>)}</> : "—" : num(usual);
+            const componentText = (value: (part: NonNullable<typeof parts>[number]) => string | null | undefined, usual: string) =>
+              parts ? parts.length ? <><div aria-hidden="true">&nbsp;</div>{parts.map((part) => <div key={part.itemcode}>{value(part) || "—"}</div>)}</> : "—" : usual || "—";
             return <tr key={row.excel_row} className={row.item_shortage_after > 0 ? "warehouse-outgoing-shortage" : undefined}>
             <td>{row.excel_row}</td><td>{date(row.delivery_date)}</td><td>{row.purorder}<br />{row.sales_id}</td>
             <td>{parts ? <><strong>Mã mẹ: {row.itemcode}</strong> × {num(row.ordered_qty)}
               {parts.map((part) => <div key={part.itemcode}>{part.itemcode}</div>)}</> : row.itemcode}</td>
+            <td>{componentText((part) => part.product_name, row.product_name)}</td>
+            <td>{componentText((part) => part.customer, "")}</td>
             <td>{componentValue((part) => part.requested_qty, row.ordered_qty)}</td>
             <td>{componentValue((part) => part.item_stock_qty, row.item_stock_qty)}</td>
             <td>{componentValue((part) => part.item_on_order_qty, row.item_on_order_qty)}</td>

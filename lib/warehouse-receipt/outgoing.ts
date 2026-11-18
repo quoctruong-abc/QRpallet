@@ -43,6 +43,7 @@ export type BulkDeliveryInput = {
 };
 export type DeliveryComponent = {
   itemcode: string; factor: number; item_stock_qty: number; item_on_order_qty: number;
+  product_name?: string; customer?: string | null;
   ordered_qty?: number; shipped_qty?: number; cancelled?: boolean;
 };
 export type DeliveryBuildUpOption = { token: string; codes: (string | null)[]; components: DeliveryComponent[] };

@@ -984,6 +984,14 @@ và dòng thường tính On order, kiểm tra thiếu tồn, Review và xuất 
 hoặc dời lịch giữ các mã con đã chốt; các yêu cầu tồn tại trước migration vẫn
 là `origin` và không tự tách.
 
+Migration `20261118090000_delivery_component_identity.sql` tra từng mã con
+để lấy tên sản phẩm và khách hàng riêng, hiển thị khi chọn tổ hợp trong nhập
+thủ công và kiểm tra ERP. Tên ưu tiên `product_name`, rồi `"ERP_name"`;
+tra cứu còn lại dùng nguồn database hiện có của nhập lịch thủ công.
+Khách của mã con có thể khác mã mẹ và khác các mã con còn lại; nếu không có
+thì để trống. Danh sách chờ, bộ lọc khách hàng và Review dùng khách của từng
+mã con. Migration sửa thông tin mã con đã tạo, giữ nguyên số lượng và lịch sử xuất.
+
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
 ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị

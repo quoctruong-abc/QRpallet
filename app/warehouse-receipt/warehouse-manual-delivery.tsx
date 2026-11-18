@@ -96,7 +96,9 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
         const available = component.item_stock_qty - component.item_on_order_qty;
         const needed = amount * component.factor;
         return <li key={component.itemcode}>
-          <strong>{component.itemcode}</strong> · Yêu cầu {amount > 0 ? num(needed) : "—"}
+          <strong>{component.itemcode}</strong> · {component.product_name || "Chưa có tên sản phẩm"}
+          {" · Khách hàng: "}{component.customer || "Chưa có tên khách hàng"}
+          {" · Yêu cầu "}{amount > 0 ? num(needed) : "—"}
           {" · Tồn khả dụng "}{num(available)}
           {amount > 0 && needed > available ? <> · <strong>Thiếu dự kiến {num(needed - available)}</strong></> : null}
         </li>;

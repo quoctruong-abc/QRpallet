@@ -785,5 +785,56 @@ assert.deepEqual((await buildRows(erpParent.id)).map(r=>[r.ordered_qty,r.deliver
 assert.equal((await summary("BOM-CHILD-A")).on_order_qty,9);
 console.log("PASS: manual/ERP build-up, aggregate component shortage, source dedupe, stored recipes, child inventory and bulk FIFO.");
 
+// The follow-up migration must repair old parent-inherited identities as well as new requests.
+await db.exec("reset role");
+const beforeIdentity=(await request(manualParts[0].id));
+await migrate("20261118090000_delivery_component_identity.sql");
+const repaired=await request(manualParts[0].id);
+assert.equal(repaired.customer,"Khách linh kiện");
+assert.equal(repaired.system_customer_name,"Khách linh kiện");
+assert.equal(repaired.version,beforeIdentity.version);
+assert.equal(repaired.shipped_qty,beforeIdentity.shipped_qty);
+assert.equal(repaired.ordered_qty,beforeIdentity.ordered_qty);
+await db.exec(`update public.item_pallet_config set customer='Khách con B riêng' where itemcode='BOM-CHILD-B';
+  insert into public.item_pallet_config(itemcode,product_name,customer,"ERP_name") values
+    ('BOM-NO-CUSTOMER','Con chưa có khách',null,null);
+  insert into public.item_build_up(parent_itemcode,child_itemcode_1,child_itemcode_2,child_itemcode_3) values
+    ('BOM-IDENTITY','BOM-CHILD-A','BOM-CHILD-B','BOM-NO-CUSTOMER')`);
+await db.exec("set role authenticated");
+const identityOption=(await lookupBuild("BOM-IDENTITY")).build_up_options[0];
+const expectedIdentities=[
+  ["BOM-CHILD-A","Hàng con A","Khách linh kiện"],
+  ["BOM-CHILD-B","Hàng con B từ ERP","Khách con B riêng"],
+  ["BOM-NO-CUSTOMER","Con chưa có khách",null],
+];
+assert.deepEqual(identityOption.components.map(c=>[c.itemcode,c.product_name,c.customer]),expectedIdentities);
+const mixedManualPayload={...input,itemcode:"BOM-IDENTITY",ordered_qty:1,build_up_token:identityOption.token};
+const mixedManual=await postManual(mixedManualPayload);
+const mixedChildren=await buildRows(mixedManual.request_id);
+assert.deepEqual(mixedChildren.map(c=>[c.itemcode,c.product_name,c.system_customer_name]),expectedIdentities);
+assert.deepEqual(mixedChildren.map(c=>c.customer),["Khách linh kiện","Khách con B riêng",""]);
+const mixedErpLine=line("BOM-MIXED-IDENTITY","BOM-IDENTITY",1,"2026-11-18",
+  {customer:"Khách ERP mã mẹ",build_up_token:identityOption.token});
+const identityPreview=await rpc("preview",{rows:[mixedErpLine]});
+assert.deepEqual(previewDeliveryDemand(identityPreview.rows,{12:"new"})[0].preview_components.map(c=>
+  [c.itemcode,c.product_name,c.customer]),expectedIdentities);
+await rpc("import",{rows:[mixedErpLine]});
+const mixedErpParent=(await get("BOM-MIXED-IDENTITY")).find(r=>r.request_type==="parent");
+const mixedErpChildren=await buildRows(mixedErpParent.id);
+assert.deepEqual(mixedErpChildren.map(c=>[c.itemcode,c.product_name,c.system_customer_name]),expectedIdentities);
+assert.deepEqual(mixedErpChildren.map(c=>c.customer),["Khách linh kiện","Khách con B riêng",""]);
+const mixedQueue=(await db.query("select public.list_delivery(0,'BOM-IDENTITY',false) as data")).rows[0].data.rows;
+assert.equal(mixedQueue.length,6);
+assert.ok(mixedQueue.every(r=>r.system_customer_name===expectedIdentities.find(c=>c[0]===r.itemcode)[2]));
+const mixedReview=await reviewFifo(mixedErpChildren.map(c=>c.id));
+assert.deepEqual(mixedReview.rows.map(r=>[r.itemcode,r.customer]),expectedIdentities.map(([code,,customer])=>[code,customer]));
+const mixedSaved=(await rpc("preview",{rows:[mixedErpLine]})).rows[0].existing.components;
+assert.deepEqual(mixedSaved.map(c=>[c.itemcode,c.product_name,c.customer]),expectedIdentities);
+await db.exec("reset role; update public.item_pallet_config set customer='Khách con A mới' where itemcode='BOM-CHILD-A'; set role authenticated");
+assert.equal((await request(mixedErpChildren[0].id)).system_customer_name,"Khách con A mới");
+assert.equal((await request(mixedManual.request_id)).request_type,"parent");
+assert.equal((await request(originalRequest.id)).request_type,"origin");
+console.log("PASS: child-specific names/customers in manual and ERP preview, posting, queue, review, catalog refresh and migration repair; mixed or absent customers accepted.");
+
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");
