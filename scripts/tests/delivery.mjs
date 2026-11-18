@@ -1226,5 +1226,61 @@ await assert.rejects(db.query("select public.post_manual_delivery_before_active(
 await assert.rejects(db.query("select public.manage_delivery_before_active('import',$1,'{}')",[randomUUID()]),/permission denied/);
 await assert.rejects(manageCatalog("save_build_up",{itemcode:"ACTIVE-P",children:["ACTIVE-A","ACTIVE-D",null],create_new:true}),/WAREHOUSE_CATALOG_DUPLICATE_RECIPE/);
 console.log("PASS: active recipe migration, default selection, manual/ERP activation, editor changes, uniqueness, stale snapshots and retries.");
+// Receipt presentation reads saved requests and actual issues only.
+await db.exec("reset role");
+const ledgerSnapshot=async()=>(await db.query(`select
+ (select jsonb_agg(to_jsonb(t) order by id) from public.inv_incoming t) as incoming,
+ (select jsonb_agg(to_jsonb(t) order by id) from public.inv_delivery_requests t) as requests,
+ (select jsonb_agg(to_jsonb(t) order by id) from public.inv_delivery_issues t) as issues,
+ (select jsonb_agg(to_jsonb(t) order by id) from public.item_build_up t) as recipes`)).rows[0];
+const beforeReceiptLayout=await ledgerSnapshot();
+await migrate("20261118130000_parent_outgoing_receipt_layout.sql");
+await db.exec("set role authenticated");
+const parentReceiptDetails=async(day,id,offset=0)=>(await db.query(
+ "select public.outgoing_parent_receipt_details($1,$2,$3) as data",[day,id,offset])).rows[0].data;
+const newNormalHistory=await receipts("2026-11-12","2026-11-12");
+assert.equal(newNormalHistory.receipt_layout_version,1);
+const unchangedNormal=newNormalHistory.rows.find(r=>r.itemcode===bulkItem);
+assert.equal(unchangedNormal.request_type,"origin");
+assert.equal(unchangedNormal.quantity,14);
+assert.deepEqual(await receiptDetails("2026-11-12",bulkItem),receiptDetail,"Normal item details retain the existing presentation data");
+const parentHistory=await receipts("2026-11-18","2026-11-18");
+const displayedParent=parentHistory.rows.find(r=>r.request_id===doneParent.id);
+assert.ok(displayedParent);
+assert.equal(displayedParent.request_type,"parent");
+assert.equal(displayedParent.ordered_qty,doneParent.ordered_qty);
+assert.equal(displayedParent.quantity,undefined,"A request header does not invent a parent shipped quantity");
+assert.equal(displayedParent.purorder,doneParent.purorder);
+assert.equal(displayedParent.sales_id,doneParent.sales_id);
+const expectedActual=(await db.query(`select d.itemcode,sum(i.quantity)::int as quantity
+ from public.inv_delivery_requests d join public.inv_delivery_issues i on i.request_id=d.id
+ where d.parent_request_id=$1 and i.shipped_date='2026-11-18' group by d.itemcode order by d.itemcode`,[doneParent.id])).rows;
+assert.deepEqual(displayedParent.components.map(c=>({itemcode:c.itemcode,quantity:c.quantity})),expectedActual);
+assert.equal(displayedParent.components.length,2);
+assert.ok(parentHistory.rows.filter(r=>r.itemcode==="GROUP-P").length>1,"Distinct requests of the same parent remain identifiable");
+const parentActualDetails=await parentReceiptDetails("2026-11-18",doneParent.id);
+assert.equal(parentActualDetails.total,2);
+assert.ok(parentActualDetails.rows.every(r=>r.itemcode && r.lots.length));
+for(const detail of parentActualDetails.rows) {
+ assert.equal(detail.lots.reduce((sum,l)=>sum+l.quantity,0),detail.quantity);
+ assert.ok((await buildRows(doneParent.id)).some(c=>c.id===detail.request_id));
+}
+assert.deepEqual((await parentReceiptDetails("2026-11-18",doneParent.id,50)).rows,[]);
+assert.deepEqual((await parentReceiptDetails("2026-11-17",doneParent.id)).rows,[]);
+const directA=await receiptDetails("2026-11-18","GROUP-A");
+assert.ok(directA.rows.every(r=>!parentActualDetails.rows.some(c=>c.id===r.id)),"Direct history cannot mix in component issues of the same item");
+const mixedCustomers=parentHistory.rows.find(r=>r.request_id===newGoodParent.id);
+assert.deepEqual(mixedCustomers.components.map(c=>c.customer),[null,"Khách master"],"Each child keeps its own recorded customer");
+await db.exec("select set_config('test.permission','no',false)");
+await assert.rejects(receipts(null,null),/DELIVERY_NOT_AUTHORIZED/);
+await assert.rejects(parentReceiptDetails("2026-11-18",doneParent.id),/DELIVERY_NOT_AUTHORIZED/);
+await db.exec("select set_config('test.permission','yes',false)");
+await assert.rejects(parentReceiptDetails("2026-11-18",doneParent.id,-1),/DELIVERY_INVALID_RECEIPT/);
+await db.exec("reset role");
+assert.deepEqual(await ledgerSnapshot(),beforeReceiptLayout,"Receipt layout and reads never change inventory, requests, issues or active recipes");
+await db.exec("begin; update public.item_build_up set child_itemcode_1='GROUP-B' where parent_itemcode='GROUP-P'; set role authenticated");
+assert.deepEqual((await receipts("2026-11-18","2026-11-18")).rows.find(r=>r.request_id===doneParent.id),displayedParent,"History uses saved children independently of today's catalog");
+await db.exec("rollback");
+console.log("PASS: read-only parent receipt headers, actual child quantities and lots, source isolation, distinct requests, optional customers and history access control.");
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

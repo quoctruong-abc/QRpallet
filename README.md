@@ -1059,6 +1059,16 @@ ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Rev
 các ngày giao của yêu cầu được chọn. Nhập kho thủ công mới bắt buộc có ngày
 sản xuất; dữ liệu đã ghi và retry hợp lệ không đổi.
 
+Migration `20261118130000_parent_outgoing_receipt_layout.sql` chỉ cập nhật
+truy vấn đọc cho bố cục **Receipt → Xuất kho**. Mã thường tiếp tục gộp theo
+ngày xuất / item. Với mã mẹ, mỗi yêu cầu có dòng thông tin riêng (mã mẹ,
+PO/Sales ID hoặc mã nhập tay, ngày giao, số yêu cầu); bảng con ngay bên dưới
+hiển thị tên, khách hàng, số thực xuất và người xuất của từng mã con.
+Icon mắt mở popup rộng với cùng bố cục mẹ–con và các lần xuất/lô thực tế.
+Các lần xuất được phân trang 50 dòng. Dữ liệu lấy từ yêu cầu và lịch sử đã
+lưu, không quy đổi số xuất mã mẹ, không tra bộ active và không thay đổi FIFO,
+quy trình xác nhận, số liệu tồn hoặc dữ liệu xuất kho.
+
 API/RPC yêu cầu tài khoản hoạt động có `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.
 Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đầy đủ vẫn lưu trong DB.

@@ -200,6 +200,11 @@
 .warehouse-receipt-tablist { grid-template-columns: repeat(2, minmax(0, 1fr)); width: min(100%, 360px); }
 .warehouse-receipt-outgoing-table { min-width: 720px; }
 .warehouse-receipt-date { white-space: nowrap; }
+.warehouse-receipt-request-info { display: block; margin-top: 5px; color: var(--muted); font-size: .8rem; line-height: 1.5; }
+.warehouse-table .warehouse-receipt-parent-row > td { background: #eef4ff; vertical-align: top; }
+.warehouse-opening-dialog.warehouse-receipt-parent-dialog { width: calc(100% - 24px); max-width: none; }
+.warehouse-receipt-parent-dialog .warehouse-outgoing-review-table { max-height: 65dvh; }
+.warehouse-receipt-parent-details { min-width: 960px; }
 .warehouse-outgoing-error { white-space: pre-wrap; }
 .warehouse-outgoing .warehouse-opening-dialog h3 { margin: 20px 0 10px; }
 

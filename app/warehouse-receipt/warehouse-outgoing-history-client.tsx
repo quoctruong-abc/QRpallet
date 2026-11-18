@@ -1,22 +1,41 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { isInventoryDate } from "@/lib/warehouse-receipt/incoming";
 
 const pageSize = 50;
 const date = (value: string | null) => value ? value.split("-").reverse().join("/") : "—";
 const num = (value: number) => value.toLocaleString("vi-VN");
 
-type HistoryRow = {
-  shipped_date: string; customer: string | null; itemcode: string; product_name: string | null;
+type ShippedItem = {
+  customer: string | null; itemcode: string; product_name: string | null;
   quantity: number; creator_name: string;
 };
+type RequestInfo = {
+  request_id: string; delivery_date: string; purorder: string; sales_id: string;
+  delivery_source: "erp" | "manual"; ordered_qty: number;
+};
+type HistoryRow = { shipped_date: string; group_key: string } & (
+  | (ShippedItem & { request_type: "origin" })
+  | (Pick<ShippedItem, "itemcode" | "product_name" | "customer"> & RequestInfo & { request_type: "parent"; components: ShippedItem[] })
+);
 type Issue = {
   id: string; request_id: string; delivery_date: string; purorder: string; sales_id: string;
   delivery_source: "erp" | "manual"; ordered_qty: number; quantity: number; creator_name: string;
+  itemcode?: string; product_name?: string | null; customer?: string | null;
   lots: { incoming_id: string; production_date: string | null; quantity: number }[];
 };
 type Page<T> = { rows: T[]; total: number };
+
+function RequestReference({ request }: { request: RequestInfo }) {
+  return request.delivery_source === "manual" ? <>Nhập tay · NT-{request.request_id.slice(0, 8).toUpperCase()}</>
+    : <>PO: {request.purorder} · Sales ID: {request.sales_id}</>;
+}
+
+function IssuedLots({ lots }: { lots: Issue["lots"] }) {
+  return lots.length ? <ul className="warehouse-outgoing-review-days">{lots.map((lot) =>
+    <li key={lot.incoming_id}><span>#{lot.incoming_id} · {lot.production_date ? date(lot.production_date) : "Không có ngày sản xuất"}</span><strong>{num(lot.quantity)}</strong></li>)}</ul> : <>—</>;
+}
 
 function useHistoryPage<T>(query: string | null, refresh = 0) {
   const key = query === null ? null : `${refresh}:${query}`;
@@ -61,14 +80,17 @@ export function WarehouseOutgoingHistoryClient({ active }: { active: boolean }) 
   const [detailOffset, setDetailOffset] = useState(0);
   const [selected, setSelected] = useState<HistoryRow | null>(null);
   const listQuery = new URLSearchParams({ ...range, offset: String(offset) }).toString();
-  const detailQuery = selected ? new URLSearchParams({ itemcode: selected.itemcode, shipped: selected.shipped_date, offset: String(detailOffset) }).toString() : null;
+  const detailQuery = selected ? new URLSearchParams({
+    ...(selected.request_type === "parent" ? { parent: selected.request_id } : { itemcode: selected.itemcode }),
+    shipped: selected.shipped_date, offset: String(detailOffset),
+  }).toString() : null;
   const history = useHistoryPage<HistoryRow>(active ? listQuery : null, refresh);
   const details = useHistoryPage<Issue>(active ? detailQuery : null);
   const rangeReady = isInventoryDate(from) && isInventoryDate(to);
 
   return <section className="warehouse-page">
     <div className="hero-row">
-      <div><h2>Lịch sử xuất kho</h2><p className="muted">Gộp số thực xuất theo ngày xuất và mã sản phẩm. Mặc định hiển thị 10 dòng gần nhất.</p></div>
+      <div><h2>Lịch sử xuất kho</h2><p className="muted">Mã mẹ hiển thị yêu cầu, mã con hiển thị số thực xuất. Mặc định hiển thị 10 dòng gần nhất.</p></div>
       <div className="stat-card"><span className="stat-number">{num(history.data?.total ?? 0)}</span><span className="muted">Dòng xuất kho</span></div>
     </div>
 
@@ -93,38 +115,58 @@ export function WarehouseOutgoingHistoryClient({ active }: { active: boolean }) 
       {history.data ? <>
         {history.data.rows.length ? <div className="scan-table-wrap"><table className="warehouse-table warehouse-receipt-outgoing-table">
           <thead><tr><th>Ngày xuất</th><th>Khách hàng</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Số lượng</th><th>Người tạo</th><th>Chi tiết</th></tr></thead>
-          <tbody>{history.data.rows.map((row) => <tr key={JSON.stringify([row.shipped_date, row.itemcode])}>
-            <td className="warehouse-receipt-date">{date(row.shipped_date)}</td><td>{row.customer || "—"}</td><td>{row.itemcode}</td>
-            <td>{row.product_name || "—"}</td><td>{num(row.quantity)}</td><td>{row.creator_name || "—"}</td>
+          <tbody>{history.data.rows.map((row) => <Fragment key={JSON.stringify([row.shipped_date, row.group_key])}><tr className={row.request_type === "parent" ? "warehouse-receipt-parent-row" : undefined}>
+            <td className="warehouse-receipt-date">{date(row.shipped_date)}</td><td>{row.customer || "—"}</td>
+            <td>{row.request_type === "parent" ? <><strong>{row.itemcode}</strong><small className="warehouse-review-lot-ids">Mã mẹ</small></> : row.itemcode}</td>
+            <td>{row.product_name || "—"}{row.request_type === "parent" ? <small className="warehouse-receipt-request-info"><RequestReference request={row} /><br />Ngày giao: {date(row.delivery_date)}</small> : null}</td>
+            <td>{row.request_type === "parent" ? <>Yêu cầu: <strong>{num(row.ordered_qty)}</strong></> : num(row.quantity)}</td>
+            <td>{row.request_type === "parent" ? "Chi tiết mã con bên dưới" : row.creator_name || "—"}</td>
             <td><button className="button button-secondary button-small warehouse-stock-eye" type="button" title="Xem chi tiết"
-              aria-label={`Xem chi tiết xuất ${row.itemcode} ngày ${date(row.shipped_date)}`}
+              aria-label={`Xem chi tiết xuất ${row.itemcode} ngày ${date(row.shipped_date)}${row.request_type === "parent" ? ` yêu cầu ${row.request_id}` : ""}`}
               onClick={() => { setSelected(row); setDetailOffset(0); dialog.current?.showModal(); }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" /><circle cx="12" cy="12" r="2.5" />
               </svg>
             </button></td>
-          </tr>)}</tbody>
+          </tr>{row.request_type === "parent" ? <tr><td colSpan={7} className="warehouse-parent-components-cell">
+            <table className="warehouse-table warehouse-parent-components" aria-label={`Mã thực xuất của ${row.itemcode}`}>
+              <thead><tr><th>Mã thực xuất</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng thực xuất</th><th>Người xuất</th></tr></thead>
+              <tbody>{row.components.map((part) => <tr key={part.itemcode}><td>{part.itemcode}</td><td>{part.product_name || "—"}</td><td>{part.customer || "—"}</td>
+                <td className="warehouse-review-number">{num(part.quantity)}</td><td>{part.creator_name || "—"}</td></tr>)}</tbody>
+            </table>
+          </td></tr> : null}</Fragment>)}</tbody>
         </table></div> : <p className="scan-empty">Không có lần xuất kho trong khoảng ngày đã chọn.</p>}
         <HistoryPager page={history.data} offset={offset} onChange={setOffset} />
       </> : null}
     </section>
 
-    <dialog className="modal-card warehouse-opening-dialog" aria-labelledby={titleId} ref={dialog} onClose={() => setSelected(null)}>
+    <dialog className={`modal-card warehouse-opening-dialog${selected?.request_type === "parent" ? " warehouse-receipt-parent-dialog" : ""}`} aria-labelledby={titleId} ref={dialog} onClose={() => setSelected(null)}>
       <div className="modal-heading">
         <h2 id={titleId}>Chi tiết xuất kho</h2>
         <button className="modal-close" aria-label="Đóng chi tiết xuất kho" type="button" onClick={() => dialog.current?.close()}>×</button>
       </div>
-      {selected ? <p><strong>{selected.itemcode}</strong> · {selected.product_name || "—"} · Ngày xuất {date(selected.shipped_date)} · Tổng xuất {num(selected.quantity)}</p> : null}
+      {selected ? <p><strong>{selected.itemcode}</strong> · {selected.product_name || "—"} · Ngày xuất {date(selected.shipped_date)}
+        {selected.request_type === "origin" ? <> · Tổng xuất {num(selected.quantity)}</> : null}</p> : null}
       {details.error ? <p className="alert alert-error" role="alert">{details.error}</p> : null}
       {details.loading ? <p className="muted" role="status">Đang tải chi tiết…</p> : null}
       {details.data ? <>
-        {details.data.rows.length ? <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table">
+        {selected?.request_type === "parent" ? <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table warehouse-receipt-parent-details">
+          <thead><tr><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số yêu cầu</th><th>Thực xuất lần này</th><th>Người xuất</th><th>Ngày sản xuất / Số lượng thực xuất</th></tr></thead>
+          <tbody><tr className="warehouse-receipt-parent-row"><td><strong>{selected.itemcode}</strong><small className="warehouse-review-lot-ids">Mã mẹ</small></td>
+            <td>{selected.product_name || "—"}<small className="warehouse-receipt-request-info"><RequestReference request={selected} /><br />Ngày giao: {date(selected.delivery_date)}</small></td>
+            <td>{selected.customer || "—"}</td><td className="warehouse-review-number">{num(selected.ordered_qty)}</td><td colSpan={3}>Chi tiết thực xuất theo mã con bên dưới</td></tr>
+            <tr><td colSpan={7} className="warehouse-parent-components-cell"><table className="warehouse-table warehouse-parent-components" aria-label={`Chi tiết mã thực xuất của ${selected.itemcode}`}>
+              <thead><tr><th>Mã thực xuất</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số yêu cầu</th><th>Thực xuất lần này</th><th>Người xuất</th><th>Lô đã xuất</th></tr></thead>
+              <tbody>{details.data.rows.map((issue) => <tr key={issue.id}><td>{issue.itemcode}</td><td>{issue.product_name || "—"}</td><td>{issue.customer || "—"}</td>
+                <td className="warehouse-review-number">{num(issue.ordered_qty)}</td><td className="warehouse-review-number"><strong>{num(issue.quantity)}</strong></td><td>{issue.creator_name}</td><td><IssuedLots lots={issue.lots} /></td></tr>)}</tbody>
+            </table>{!details.data.rows.length ? <p className="scan-empty">Không có chi tiết xuất kho.</p> : null}</td></tr>
+          </tbody>
+        </table></div> : details.data.rows.length ? <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table">
           <thead><tr><th>PO / Sales ID</th><th>Ngày giao</th><th>Số yêu cầu</th><th>Thực xuất lần này</th><th>Người tạo</th><th>Lô đã xuất</th></tr></thead>
           <tbody>{details.data.rows.map((issue) => <tr key={issue.id}>
             <td>{issue.delivery_source === "manual" ? `Nhập tay · NT-${issue.request_id.slice(0, 8).toUpperCase()}` : <>{issue.purorder}<br />{issue.sales_id}</>}</td>
             <td className="warehouse-receipt-date">{date(issue.delivery_date)}</td><td>{num(issue.ordered_qty)}</td><td>{num(issue.quantity)}</td><td>{issue.creator_name}</td>
-            <td>{issue.lots.length ? <ul className="warehouse-outgoing-review-days">{issue.lots.map((lot) =>
-              <li key={lot.incoming_id}><span>#{lot.incoming_id} · {lot.production_date ? date(lot.production_date) : "Không có ngày sản xuất"}</span><strong>{num(lot.quantity)}</strong></li>)}</ul> : "—"}</td>
+            <td><IssuedLots lots={issue.lots} /></td>
           </tr>)}</tbody>
         </table></div> : <p className="scan-empty">Không có chi tiết xuất kho.</p>}
         <HistoryPager page={details.data} offset={detailOffset} onChange={setDetailOffset} />
