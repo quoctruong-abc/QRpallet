@@ -7,6 +7,7 @@ import { incomingStorageKey, INCOMING_DRAFT_TTL, parseStoredIncoming, type Store
 import { WarehouseItemBuildUp, WarehouseMasterData } from "./warehouse-master-data";
 import { WarehouseCatalogEditors } from "./warehouse-catalog-editors";
 import { WarehouseOpeningInventory } from "./warehouse-opening-inventory";
+import { WarehouseActionConfirmation } from "./warehouse-action-confirmation";
 
 type ItemDetails = { itemcode: string; product_name: string; customer: string };
 type LookupResult = { ok: true; item: ItemDetails } | { ok: false; error: string; aborted?: boolean };
@@ -54,6 +55,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
   const [drafts, setDrafts] = useState<IncomingDraft[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [savedList, setSavedList] = useState<StoredIncoming | null>(null);
   const storedRaw = useRef<string | null>(null);
   const legacyRaw = useRef<string | null>(null);
@@ -539,11 +541,17 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
         <div className="warehouse-incoming-next">
           {reviewing ? <>
             <button className="button button-secondary" disabled={saving || Boolean(submission)} onClick={() => setReviewing(false)} type="button">Quay lại chỉnh sửa</button>
-            <button className="button button-primary" disabled={saving || !canProceed} onClick={() => { void postInventory(); }} type="button">{saving ? "Đang ghi nhận..." : submission ? "Thử lại ghi nhận" : "Xác nhận nhập kho"}</button>
+            <button className="button button-primary" disabled={saving || !canProceed} onClick={() => { if (canProceed && !saving) setConfirming(true); }} type="button">{saving ? "Đang ghi nhận..." : submission ? "Thử lại ghi nhận" : "Xác nhận nhập kho"}</button>
           </> : <button aria-describedby={`${id}-proceed-note`} className="button button-primary" disabled={!canProceed} onClick={() => { if (canProceed) setReviewing(true); }} type="button">Tiếp theo</button>}
           <p className="muted small" id={`${id}-proceed-note`}>{reviewing ? "Xác nhận để lưu toàn bộ danh sách vào tồn kho." : "Chỉ tiếp tục khi tất cả dòng tra cứu thành công và đã lưu chỉnh sửa."}</p>
         </div>
       </section>
+      <WarehouseActionConfirmation open={confirming} title={submission ? "Xác nhận thử lại nhập kho?" : "Xác nhận nhập kho?"}
+        confirmLabel={submission ? "Đồng ý thử lại" : "Đồng ý nhập kho"} busy={saving} disabled={!canProceed}
+        onCancel={() => setConfirming(false)} onConfirm={async () => { await postInventory(); setConfirming(false); }}>
+        <p>{submission ? "Kiểm tra và tiếp tục lần nhập kho đã lưu bằng cùng mã thao tác?" : "Ghi nhận toàn bộ danh sách đã kiểm tra vào tồn kho?"}</p>
+        <p><strong>{drafts.length.toLocaleString("vi-VN")}</strong> dòng · Tổng số lượng <strong>{drafts.reduce((total, row) => total + row.quantity, 0).toLocaleString("vi-VN")}</strong></p>
+      </WarehouseActionConfirmation>
     </div>
   );
 }

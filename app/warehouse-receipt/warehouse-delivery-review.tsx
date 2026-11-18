@@ -5,6 +5,7 @@ import { isInventoryDate, todayInVietnam } from "@/lib/warehouse-receipt/incomin
 import { renderReviewImage } from "@/lib/warehouse-receipt/review-image";
 import { analyzeDeliveryGroups, componentPickKey, suggestDeliveryGroups, type DeliveryGroup, type GroupPicks, type PickAmounts } from "@/lib/warehouse-receipt/delivery-groups";
 import type { BulkDeliveryInput, BulkDeliveryLot, BulkDeliveryPreview, DeliveryFifoReview, DeliveryRequest, DeliveryReviewComponent } from "@/lib/warehouse-receipt/outgoing";
+import { WarehouseActionConfirmation } from "./warehouse-action-confirmation";
 
 const num = (qty: number) => qty.toLocaleString("vi-VN");
 const formatDate = (date: string) => date.split("-").reverse().join("/");
@@ -62,6 +63,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
   const [copying, setCopying] = useState(false);
   const [savedLots, setSavedLots] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [confirmation, setConfirmation] = useState<"post" | "retry" | null>(null);
   useEffect(() => () => request.current?.abort(), []);
   const hasParents = review?.rows.some((row) => row.request_type === "parent") ?? false;
 
@@ -81,6 +83,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
     setCopied("");
     setSavedLots("");
     setSubmitted(false);
+    setConfirmation(null);
     dialog.current?.showModal();
     try {
       const response = await fetch("/api/warehouse-receipt/outgoing", {
@@ -160,6 +163,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
   });
   const analysis = bulkData ? analyzeDeliveryGroups(bulkData, picked, included) : null;
   const selectedRows = bulkData?.rows.filter((row) => included.has(row.group_key)) ?? [];
+  const executableRows = selectedRows.filter((group) => (analysis?.groups.get(group.group_key)?.quantity ?? 0) > 0);
   const chosenTotal = selectedRows.reduce((total, row) => {
     const state = analysis?.groups.get(row.group_key);
     return total + (state && !state.mismatch ? state.quantity : 0);
@@ -308,12 +312,29 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
         <div className="modal-actions">
           <button className="button button-secondary" type="button" disabled={bulk && busy} onClick={() => dialog.current?.close()}>Đóng</button>
           {!bulk ? <button className="button button-primary" type="button" disabled={copying || !review?.rows.length} onClick={() => { void copyReview(); }}>{copying ? "Đang tạo ảnh…" : "Copy ảnh"}</button>
-            : onBulkRetry && submitted ? <button className="button button-primary" type="button" disabled={busy} onClick={async () => { if (await onBulkRetry()) dialog.current?.close(); }}>Thử lại thao tác</button>
+            : onBulkRetry && submitted ? <button className="button button-primary" type="button" disabled={busy} onClick={() => setConfirmation("retry")}>Thử lại thao tác</button>
               : <button className="button button-primary" type="button" disabled={locked || !bulkData || !analysis?.canProceed || !isInventoryDate(shipDate)}
-                onClick={() => { void confirmBulk(); }}>Xác nhận xuất hàng loạt</button>}
+                onClick={() => { if (!locked && bulkData && analysis?.canProceed && isInventoryDate(shipDate)) setConfirmation("post"); }}>Xác nhận xuất hàng loạt</button>}
         </div>
       </footer>
     </dialog>
+    <WarehouseActionConfirmation open={confirmation !== null}
+      title={confirmation === "retry" ? "Xác nhận thử lại xuất hàng?" : "Xác nhận xuất hàng loạt?"}
+      confirmLabel={confirmation === "retry" ? "Đồng ý thử lại" : "Đồng ý xuất hàng"} busy={busy}
+      disabled={confirmation === "retry" ? !onBulkRetry : locked || !bulkData || !analysis?.canProceed || !isInventoryDate(shipDate)}
+      onCancel={() => setConfirmation(null)} onConfirm={async () => {
+        if (confirmation === "retry") { if (onBulkRetry && await onBulkRetry()) dialog.current?.close(); }
+        else if (confirmation === "post") await confirmBulk();
+        setConfirmation(null);
+      }}>
+      {confirmation === "retry" ? <p>Kiểm tra và tiếp tục thao tác xuất hàng đã lưu bằng cùng mã thao tác?</p> : <>
+        <p>Ghi nhận xuất hàng và trừ tồn kho theo các mã, số lượng và lô đã chọn?</p>
+        <p>Ngày xuất: <strong>{shipDate ? formatDate(shipDate) : "—"}</strong></p>
+        <p><strong>{num(executableRows.length)}</strong> mã chọn xuất · Tổng số lượng <strong>{num(chosenTotal)}</strong></p>
+        {executableRows.some((row) => row.request_type === "parent") ? <p className="muted small">Số lượng mã mẹ tính theo bộ; mã con sẽ xuất đồng bộ theo tỷ lệ đã chọn.</p> : null}
+        {excessCount > 0 ? <p className="alert warehouse-bulk-warning" role="alert">Có {num(excessCount)} mã xuất vượt số lượng yêu cầu.</p> : null}
+      </>}
+    </WarehouseActionConfirmation>
     <dialog aria-labelledby={editorTitle} className="modal-card warehouse-opening-dialog warehouse-lot-editor" ref={editor} onClose={() => setEditing(null)}>
       <div className="modal-heading"><h2 id={editorTitle}>Chọn lô xuất {editing?.component.itemcode}{editing?.group.request_type === "parent" ? ` · ${editing.group.itemcode}` : ""}</h2>
         <button aria-label="Đóng chọn lô" className="modal-close" type="button" onClick={() => editor.current?.close()}>×</button></div>
