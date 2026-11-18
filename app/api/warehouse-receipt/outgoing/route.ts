@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 const fail = (error: string, status = 400) => Response.json({ success: false, error }, { status });
 const needsBuildUpMigration = () => fail("Cần chạy migration 20261116110000_delivery_build_up.sql để tách mã ghép cặp khi tạo lịch giao.", 503);
+const needsParentMigration = () => fail("Cần chạy migration 20261118100000_parent_delivery_workflow.sql để quản lý xuất theo mã mẹ.", 503);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 function dbError(error: { code?: string; message?: string }) {
@@ -19,6 +20,7 @@ function dbError(error: { code?: string; message?: string }) {
     ? `Mã ${buildUpIssue[2]} có nhiều tổ hợp. Hãy chọn tổ hợp mã con trước khi xác nhận.`
     : `Ghép cặp của mã ${buildUpIssue[2]} đã thay đổi. Hãy tra cứu hoặc kiểm tra lại file.`, 409);
   if (["PGRST202", "42883"].includes(error.code ?? "") && message.includes("lookup_delivery_build_up")) return needsBuildUpMigration();
+  if (["PGRST202", "42883"].includes(error.code ?? "") && message.includes("delivery_request_details")) return needsParentMigration();
   const shortItem = message.match(/^DELIVERY_BULK_SHORT_STOCK:(.+)$/)?.[1];
   if (shortItem) return fail(`Item ${shortItem} không còn đủ tồn để xuất. Mở lại Xuất hàng loạt và bỏ tick dòng thiếu tồn.`, 409);
   if (error.code === "PGRST202" && /preview_bulk_delivery|post_bulk_delivery/.test(message)) {
@@ -37,6 +39,9 @@ function dbError(error: { code?: string; message?: string }) {
     return fail("Supabase chưa có cấu trúc Xuất kho. Cần chạy migration 20261105140000_item_stock_summary.sql.", 503);
   }
   const messages: [string, string][] = [
+    ["DELIVERY_SELECT_PARENT", "Cần chọn mã mẹ để xuất hoặc hủy cả tổ hợp. Tải lại danh sách để cập nhật."],
+    ["DELIVERY_COMPONENTS_OUT_OF_SYNC", "Lịch sử mã con không đồng bộ theo tỷ lệ ghép cặp. Cần đối chiếu trước khi xuất tiếp."],
+    ["DELIVERY_COMPONENT_QTY_MISMATCH", "Không thể xuất: số lượng các mã con không đồng bộ. Số xuất chia tỷ lệ phải bằng nhau và là số nguyên dương."],
     ["DELIVERY_NOT_AUTHORIZED", "Bạn không có quyền xuất kho."],
     ["DELIVERY_STALE", "Dữ liệu đã thay đổi. Tải lại danh sách và kiểm tra trước khi xác nhận."],
     ["DELIVERY_COMMAND_CONFLICT", "Mã thao tác đã dùng cho nội dung khác. Tải lại trang để kiểm tra kết quả."],
@@ -87,17 +92,9 @@ export async function GET(request: Request) {
   const id = url.searchParams.get("id");
   if (id) {
     if (!uuid(id)) return fail("Mã yêu cầu không hợp lệ.");
-    const { data, error } = await db.from("inv_delivery_issues")
-      .select("id,quantity,shipped_date,created_at,entered_by_name,inv_delivery_issue_lines(incoming_id,quantity,inv_incoming(production_date,received_date))")
-      .eq("request_id", id).order("created_at", { ascending: false }).limit(500);
+    const { data, error } = await db.rpc("delivery_request_details", { p_id: id });
     if (error) return dbError(error);
-    const quantity = url.searchParams.get("quantity");
-    if (quantity !== null && (!Number.isSafeInteger(Number(quantity)) || Number(quantity) < 0 || Number(quantity) > 2147483647)) return fail("Số lượng xem FIFO không hợp lệ.");
-    const { data: fifoPreview, error: fifoError } = await db.rpc("preview_delivery_fifo", {
-      p_id: id, p_quantity: quantity === null ? null : Number(quantity),
-    });
-    if (fifoError) return dbError(fifoError);
-    return Response.json({ success: true, history: data, ...fifoPreview }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
   }
   const offset = Number(url.searchParams.get("offset") || 0);
   if (!Number.isSafeInteger(offset) || offset < 0) return fail("Trang không hợp lệ.");
@@ -108,6 +105,7 @@ export async function GET(request: Request) {
     : await db.rpc("list_delivery", { p_offset: offset, p_search, p_closed: url.searchParams.get("closed") === "true" });
   if (error) return dbError(error);
   if (data?.model_version !== 2) return fail("Cần chạy migration 20261105140000_item_stock_summary.sql để chuyển mô hình tồn kho.", 503);
+  if (!summary && data?.group_model_version !== 1) return needsParentMigration();
   return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -145,6 +143,7 @@ export async function POST(request: Request) {
     }
     const { data, error } = await db.rpc(body.action === "review" ? "review_delivery_fifo" : "preview_bulk_delivery", { p_request_ids: ids });
     if (error) return dbError(error);
+    if (data?.group_model_version !== 1) return needsParentMigration();
     return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
   }
   if (!body || !["manual", "import", "edit", "cancel", "reserve", "ship", "bulk_ship"].includes(body.action) || !uuid(body.command_id) || !body.payload || typeof body.payload !== "object") return fail("Yêu cầu không hợp lệ.");

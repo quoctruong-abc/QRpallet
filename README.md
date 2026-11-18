@@ -992,6 +992,26 @@ Khách của mã con có thể khác mã mẹ và khác các mã con còn lại;
 thì để trống. Danh sách chờ, bộ lọc khách hàng và Review dùng khách của từng
 mã con. Migration sửa thông tin mã con đã tạo, giữ nguyên số lượng và lịch sử xuất.
 
+Migration `20261118100000_parent_delivery_workflow.sql` chuyển danh sách chờ,
+Review và Xuất hàng loạt sang mã mẹ. Bộ lọc có thể khớp thông tin mã con nhưng
+luôn giữ cả tổ hợp. Review gộp cùng mã mẹ và cùng tổ hợp đã chốt; các tổ hợp
+khác nhau của cùng mã mẹ được giữ riêng. Hàng thường tiếp tục dùng mã gốc.
+Chọn/bỏ chọn cả nhóm; sửa lô vẫn thao tác theo từng mã con. Backend chặn xuất
+nếu thiếu mã con, lượng xuất chia tỷ lệ không bằng nhau hoặc không nguyên,
+lịch sử các mã con đã lệch, hoặc tổng tồn không đáp ứng toàn bộ nhu cầu được
+chọn. Tồn và từng lô dùng chung được kiểm tra trên tất cả nhóm, kể cả hàng
+thường dùng cùng mã con. Khi đổi lựa chọn có thể bấm **Khôi phục FIFO đã chọn**
+để phân bổ lại các lô giữa các nhóm.
+
+Xuất một phần và xuất vượt vẫn được phép nếu tất cả mã con đồng bộ. Hệ thống
+phân bổ số lượng mã mẹ cho các SO theo ngày giao, thời điểm tạo và ID trước,
+rồi nhân tỷ lệ cho từng mã con; phần vượt thuộc SO cuối cùng của nhóm.
+Ghi toàn bộ trong một transaction, cập nhật tồn, lịch sử mã con và phiên bản
+mã mẹ cùng nhau. Tiến độ mã mẹ tính từ lịch sử mã con; không tự sửa các lượt
+xuất cũ đã lệch tỷ lệ. Dữ liệu lệch được cảnh báo và chặn xuất tiếp để đối chiếu.
+Các RPC cũ không còn cho xuất/hủy riêng mã con; retry của thao tác đã ghi
+vẫn trả kết quả cũ để tránh trừ tồn hai lần.
+
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
 ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị

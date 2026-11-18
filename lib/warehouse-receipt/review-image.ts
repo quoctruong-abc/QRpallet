@@ -25,12 +25,17 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, width: number): strin
   });
 }
 
-export function renderReviewImage(headers: string[], rows: ImageRow[], title: string, subtitle: string): Promise<Blob> {
+export function renderReviewImage(headers: string[], rows: ImageRow[], title: string, subtitle: string,
+  options?: { columnWidths: number[]; numericColumns: number[] }): Promise<Blob> {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Không tạo được ảnh bảng Review.");
 
-  const columnWidths = [110, 138, 254, 178, 108, 278, 93];
+  const columnWidths = options?.columnWidths ?? [110, 138, 254, 178, 108, 278, 93];
+  const numericColumns = new Set(options?.numericColumns ?? [4, 6]);
+  if (columnWidths.length !== headers.length || rows.some((row) => row.cells.length !== headers.length)) {
+    throw new Error("Cấu trúc cột ảnh Review không hợp lệ.");
+  }
   const margin = 24;
   const padding = 11;
   const lineHeight = 20;
@@ -73,7 +78,7 @@ export function renderReviewImage(headers: string[], rows: ImageRow[], title: st
       ctx.strokeStyle = "#d0d5dd";
       ctx.strokeRect(x, y, cellWidth, row.height);
       ctx.fillStyle = "#101828";
-      const numeric = index === 4 || index === 6;
+      const numeric = numericColumns.has(index);
       ctx.textAlign = numeric ? "right" : "left";
       lines.forEach((line, i) => ctx.fillText(line, numeric ? x + cellWidth - padding : x + padding, y + padding + i * lineHeight));
       x += cellWidth;

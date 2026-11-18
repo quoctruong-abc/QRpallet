@@ -17,34 +17,48 @@ export type DeliveryRequest = DeliveryInput & {
   id: string; system_customer_name: string | null; shipped_qty: number; remaining_qty: number;
   delivery_source?: "erp" | "manual";
   request_type?: "origin" | "parent" | "child"; parent_request_id?: string | null; parent_itemcode?: string | null;
+  components?: DeliveryRequestComponent[]; sync_error?: boolean;
   item_stock_qty: number; item_on_order_qty: number; item_available_qty: number; item_shortage_qty: number;
   cancelled: boolean; version: number; status: "pending" | "partial" | "done" | "cancelled";
 };
 export const MAX_DELIVERY_QUANTITY = 2147483647;
 export const MAX_DELIVERY_REVIEW_REQUESTS = 50_000;
 export type DeliveryFifoReview = {
+  group_model_version: 1;
   request_count: number;
   rows: {
+    group_key: string; request_type: "origin" | "parent"; sync_error: boolean;
     itemcode: string; product_name: string; customer: string | null;
+    components: DeliveryReviewComponent[];
     delivery_dates?: string[];
     quantity: number; shortage_qty: number;
     days: { production_date: string | null; quantity: number }[];
   }[];
 };
+export type DeliveryReviewComponent = {
+  itemcode: string; product_name: string; customer: string | null; factor: number;
+  quantity: number; shortage_qty: number; item_stock_qty: number;
+  days: { production_date: string | null; quantity: number }[];
+};
 export type BulkDeliveryLot = { incoming_id: string; production_date: string | null; received_date: string; balance_qty: number };
 export type BulkDeliveryPreview = DeliveryFifoReview & {
-  requests: { id: string; version: number; itemcode: string }[];
+  requests: { id: string; version: number; itemcode: string; group_key: string; components: { id: string; version: number }[] }[];
   lots: Record<string, BulkDeliveryLot[]>;
 };
 export type BulkDeliveryInput = {
+  group_model_version?: 1;
   shipped_date: string;
-  requests: { id: string; version: number }[];
-  lots: { incoming_id: string; quantity: number }[];
+  requests: { id: string; version: number; components?: { id: string; version: number }[] }[];
+  lots: { incoming_id: string; quantity: number; group_key?: string }[];
 };
 export type DeliveryComponent = {
   itemcode: string; factor: number; item_stock_qty: number; item_on_order_qty: number;
   product_name?: string; customer?: string | null;
   ordered_qty?: number; shipped_qty?: number; cancelled?: boolean;
+};
+export type DeliveryRequestComponent = DeliveryComponent & {
+  id: string; version: number; ordered_qty: number; shipped_qty: number;
+  remaining_qty: number; cancelled: boolean; item_shortage_qty?: number;
 };
 export type DeliveryBuildUpOption = { token: string; codes: (string | null)[]; components: DeliveryComponent[] };
 export type ManualDeliveryInput = Pick<DeliveryInput, "itemcode" | "delivery_date" | "ordered_qty"> & { build_up_token?: string | null };

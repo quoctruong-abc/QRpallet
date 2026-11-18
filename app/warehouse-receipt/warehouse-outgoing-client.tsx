@@ -7,7 +7,7 @@ import { WarehouseManualDelivery } from "./warehouse-manual-delivery";
 import { WarehouseDeliveryReview } from "./warehouse-delivery-review";
 
 type Command = { action: string; command_id: string; profile_id: string; payload: Record<string, unknown> };
-type History = { id: string; quantity: number; shipped_date: string; entered_by_name: string; inv_delivery_issue_lines: { incoming_id: number; quantity: number; inv_incoming: { received_date: string; production_date: string | null } }[] };
+type History = { id: string; itemcode: string; product_name: string; quantity: number; shipped_date: string; entered_by_name: string; inv_delivery_issue_lines: { incoming_id: number; quantity: number; inv_incoming: { received_date: string; production_date: string | null } }[] };
 import { WarehouseStockSummary } from "./warehouse-stock-summary";
 const num = (n: number) => Number(n).toLocaleString("vi-VN");
 const date = (v: string | null) => v ? v.split("-").reverse().join("/") : "—";
@@ -192,6 +192,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       if (version === detailVersion.current) {
         setHistory(data.history);
         setDetailStock(data.item_stock_qty);
+        if (data.request) setSelected((old) => old?.id === requestId ? { ...old, ...data.request } : old);
       }
     } catch (error) { if (version === detailVersion.current) setDetailError(error instanceof Error ? error.message : "Không tải được chi tiết."); }
   }
@@ -218,20 +219,23 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
     ? row.preview_components.filter((part) => part.item_shortage_after > 0).map((part) => part.itemcode)
     : row.item_shortage_after > 0 ? [row.itemcode] : []));
 
-  const loaded = useMemo(() => rows.filter((row) => !row.cancelled && row.remaining_qty > 0), [rows]);
+  const loaded = useMemo(() => rows.filter((row) => !row.cancelled && (row.remaining_qty > 0 || row.sync_error)), [rows]);
   const dateOptions = useMemo(() => [...new Set(loaded.map((row) => row.delivery_date))].sort(), [loaded]);
-  const customerOptions = useMemo(() => [...new Set(loaded.map((row) => row.system_customer_name).filter((name): name is string => Boolean(name)))]
+  const customerOptions = useMemo(() => [...new Set(loaded.flatMap((row) => [row.system_customer_name, ...(row.request_type === "parent" ? row.components?.map((part) => part.customer) ?? [] : [])]).filter((name): name is string => Boolean(name)))]
     .sort((a, b) => a.localeCompare(b, "vi")), [loaded]);
-  const hasUnnamedCustomer = loaded.some((row) => !row.system_customer_name);
+  const hasUnnamedCustomer = loaded.some((row) => !row.system_customer_name || (row.request_type === "parent" && row.components?.some((part) => !part.customer)));
   const activeDate = dateOptions.includes(deliveryDate) ? deliveryDate : "";
   const activeCustomer = (systemCustomer === "missing" && hasUnnamedCustomer) || customerOptions.includes(systemCustomer.slice(5))
     ? systemCustomer : "";
   const filtered = useMemo(() => {
     const tokens = warehouseSearchTokens(search);
     return loaded.filter((row) => (!manualOnly || row.delivery_source === "manual") && (!activeDate || row.delivery_date === activeDate)
-      && (!activeCustomer || (activeCustomer === "missing" ? !row.system_customer_name : `name:${row.system_customer_name}` === activeCustomer))
+      && (!activeCustomer || (activeCustomer === "missing"
+        ? !row.system_customer_name || (row.request_type === "parent" && row.components?.some((part) => !part.customer))
+        : `name:${row.system_customer_name}` === activeCustomer || (row.request_type === "parent" && row.components?.some((part) => `name:${part.customer}` === activeCustomer))))
       && matchesWarehouseSearch(tokens, [row.purorder, row.sales_id, row.itemcode, row.parent_itemcode, row.product_name, row.customer, row.system_customer_name,
-        row.delivery_source === "manual" ? `Nhập tay ${manualReference(row)}` : null]));
+        row.delivery_source === "manual" ? `Nhập tay ${manualReference(row)}` : null,
+        ...(row.request_type === "parent" ? row.components?.flatMap((part) => [part.itemcode, part.product_name, part.customer]) ?? [] : [])]));
   }, [loaded, manualOnly, activeDate, activeCustomer, search]);
   const total = filtered.length;
   const pageStart = Math.min(offset, Math.max(0, Math.floor((total - 1) / WAREHOUSE_PAGE_SIZE) * WAREHOUSE_PAGE_SIZE));
@@ -274,19 +278,27 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       <div className="warehouse-incoming-draft-heading"><h2>Danh sách chờ xuất hàng ({total})</h2></div>
       <div className="scan-table-wrap"><table className="warehouse-table">
         <thead><tr><th>Ngày giao</th><th>PO</th><th>Sales ID</th><th>Item</th><th>Tên / Khách ERP</th><th>Khách hệ thống</th><th>ĐVT</th><th>Yêu cầu</th><th>Đã xuất</th><th>Còn phải giao</th><th>Thiếu của item</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
-        <tbody>{visible.map((row) => <tr key={row.id} className={row.item_shortage_qty > 0 ? "warehouse-outgoing-shortage" : undefined}>
+        <tbody>{visible.map((row) => <Fragment key={row.id}><tr className={row.sync_error ? "warehouse-bulk-short" : row.item_shortage_qty > 0 ? "warehouse-outgoing-shortage" : undefined}>
           <td>{date(row.delivery_date)}</td>
           <td>{row.delivery_source === "manual" ? <span title={row.purorder}>Nhập tay · {manualReference(row)}</span> : row.purorder}</td>
-          <td>{row.delivery_source === "manual" ? "—" : row.sales_id}</td><td className="warehouse-outgoing-name">{row.itemcode}{row.parent_itemcode ? <small>Mã mẹ: {row.parent_itemcode}</small> : null}</td>
+          <td>{row.delivery_source === "manual" ? "—" : row.sales_id}</td><td className="warehouse-outgoing-name"><strong>{row.itemcode}</strong>{row.request_type === "parent" ? <small>Mã mẹ · {row.components?.length ?? 0} mã con</small> : null}</td>
           <td className="warehouse-outgoing-name">{row.product_name}{row.delivery_source !== "manual" && row.customer ? <small>{row.customer}</small> : null}</td><td>{row.system_customer_name || "—"}</td><td>{row.unit_label || "—"}</td>
-          <td>{num(row.ordered_qty)}</td><td>{num(row.shipped_qty)}</td><td>{num(row.remaining_qty)}</td><td>{num(row.item_shortage_qty)}</td><td>{statusLabel[row.status]}</td>
+          <td>{num(row.ordered_qty)}</td><td>{num(row.shipped_qty)}</td><td>{num(row.remaining_qty)}</td><td>{num(row.item_shortage_qty)}</td><td>{row.sync_error ? "Mã con không đồng bộ" : statusLabel[row.status]}</td>
           <td><div className="warehouse-incoming-row-actions">
             {!row.cancelled && row.shipped_qty < row.ordered_qty ? <>
               <button className="button button-secondary button-small" disabled={locked} onClick={() => { void openAction(row, "cancel"); }} type="button">Hủy phần chờ</button>
             </> : null}
             <button className="button button-secondary button-small" onClick={() => { void openAction(row, "history"); }} type="button">Chi tiết</button>
           </div></td>
-        </tr>)}</tbody>
+        </tr>{row.request_type === "parent" ? <tr><td colSpan={13} className="warehouse-parent-components-cell">
+          <details><summary>Xem mã con của {row.itemcode}</summary>
+            <table className="warehouse-table warehouse-parent-components" aria-label={`Mã con của ${row.itemcode}`}>
+              <thead><tr><th>Mã con</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Tỷ lệ</th><th>Yêu cầu</th><th>Đã xuất</th><th>Còn phải giao</th><th>Tồn hiện tại</th></tr></thead>
+              <tbody>{row.components?.map((part) => <tr key={part.id}><td>{part.itemcode}</td><td>{part.product_name || "—"}</td><td>{part.customer || "Chưa có tên khách hàng"}</td>
+                <td>{part.factor}</td><td>{num(part.ordered_qty)}</td><td>{num(part.shipped_qty)}</td><td>{num(part.remaining_qty)}</td><td>{num(part.item_stock_qty)}</td></tr>)}</tbody>
+            </table>
+          </details>
+        </td></tr> : null}</Fragment>)}</tbody>
       </table></div>
       {!visible.length ? <p className="scan-empty">{loading ? "Đang tải…" : "Không có yêu cầu giao hàng."}</p> : null}
       <div className="warehouse-incoming-next">
@@ -363,13 +375,15 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         <p>{selected.delivery_source === "manual" ? `Nhập tay · ${manualReference(selected)}` : `${selected.purorder} / ${selected.sales_id}`} / {selected.itemcode}</p>
         {selected.parent_itemcode ? <p>Mã mẹ: {selected.parent_itemcode}</p> : null}
         <p>Yêu cầu {num(selected.ordered_qty)} · Đã xuất {num(selected.shipped_qty)} · Còn phải giao {num(selected.remaining_qty)} · Tồn item {num(detailStock ?? selected.item_stock_qty)}</p>
+        {selected.request_type === "parent" ? <p className="muted small">Số lượng và tồn ở trên quy đổi theo mã mẹ. Hủy phần chờ sẽ hủy toàn bộ mã con còn phải giao.</p> : null}
+        {selected.sync_error ? <p className="alert alert-error">Lịch sử xuất các mã con không đồng bộ; cần đối chiếu trước khi xuất tiếp.</p> : null}
         {notice ? <p role="status" className="alert">{notice}</p> : null}
         {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">Thử lại thao tác chưa rõ kết quả</button> : null}
         {mode === "cancel" ? <p>Chỉ hủy phần chưa xuất và giảm On order của item. Lịch sử đã xuất được giữ lại.</p> : null}
         {detailError ? <p className="alert alert-error">{detailError}</p> : null}
         <h3>Lịch sử xuất thực tế</h3>
-        {history.length ? <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Ngày xuất</th><th>Số lượng</th><th>Người xuất</th><th>Lô nhập đã lấy</th></tr></thead>
-          <tbody>{history.map((issue) => <tr key={issue.id}><td>{date(issue.shipped_date)}</td><td>{num(issue.quantity)}</td><td>{issue.entered_by_name}</td>
+        {history.length ? <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Ngày xuất</th><th>Mã thực xuất</th><th>Tên sản phẩm</th><th>Số lượng</th><th>Người xuất</th><th>Lô nhập đã lấy</th></tr></thead>
+          <tbody>{history.map((issue) => <tr key={issue.id}><td>{date(issue.shipped_date)}</td><td>{issue.itemcode}</td><td>{issue.product_name}</td><td>{num(issue.quantity)}</td><td>{issue.entered_by_name}</td>
             <td>{issue.inv_delivery_issue_lines.map((line) => `#${line.incoming_id}: ${num(line.quantity)}`).join("; ")}</td></tr>)}</tbody></table></div> : <p className="muted">Chưa có lần xuất.</p>}
         <div className="modal-actions">
           <button className="button button-secondary" disabled={busy} onClick={() => actionDialog.current?.close()} type="button">Đóng</button>

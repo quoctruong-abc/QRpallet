@@ -10,6 +10,7 @@ require.extensions[".ts"] = (module, file) => module._compile(ts.transpileModule
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, file);
 const { parseDeliverySheet, parseManualDeliveryInput, previewDeliveryDemand } = require("../../lib/warehouse-receipt/outgoing.ts");
+const { analyzeDeliveryGroups, componentPickKey, suggestDeliveryGroups } = require("../../lib/warehouse-receipt/delivery-groups.ts");
 const { expandMergedCells } = require("../../lib/excel-merged.ts");
 const { parseWarehouseMasterData } = require("../../lib/warehouse-receipt/master-data.ts");
 const { parseWarehouseItemBuildUp } = require("../../lib/warehouse-receipt/item-build-up.ts");
@@ -836,5 +837,140 @@ assert.equal((await request(mixedManual.request_id)).request_type,"parent");
 assert.equal((await request(originalRequest.id)).request_type,"origin");
 console.log("PASS: child-specific names/customers in manual and ERP preview, posting, queue, review, catalog refresh and migration repair; mixed or absent customers accepted.");
 
+
+await db.exec("reset role");
+await migrate("20261118100000_parent_delivery_workflow.sql");
+await db.exec(`insert into public.item_pallet_config(itemcode,product_name,customer) values
+ ('GROUP-P','Bộ mẹ','Khách mẹ'),('GROUP-A','Con A','Khách A'),('GROUP-B','Con B','Khách B');
+ insert into public.item_build_up(parent_itemcode,child_itemcode_1,child_itemcode_2,child_itemcode_3) values
+ ('GROUP-P','GROUP-A','GROUP-A','GROUP-B')`);
+const groupLotA=(await seed("GROUP-A",40,null)).rows[0].id;
+const groupLotB=(await seed("GROUP-B",20,"2026-10-01")).rows[0].id;
+await db.exec("set role authenticated");
+await rpc("import",{rows:[line("GROUP-SO1","GROUP-P",3,"2026-11-18"),line("GROUP-SO2","GROUP-P",2,"2026-11-18")]});
+const groupSources=(await db.query("select id from public.inv_delivery_requests where itemcode='GROUP-P' order by purorder")).rows.map(r=>r.id);
+const groupPreview=(await db.query("select public.preview_bulk_delivery($1::uuid[]) as data",[groupSources])).rows[0].data;
+assert.equal(groupPreview.group_model_version,1);
+assert.equal(groupPreview.request_count,2);
+assert.equal(groupPreview.rows.length,1);
+assert.equal(groupPreview.rows[0].quantity,5);
+const groupKey=groupPreview.rows[0].group_key;
+const allGroupKeys=new Set([groupKey]);
+const initialPicks=suggestDeliveryGroups(groupPreview,allGroupKeys);
+assert.equal(analyzeDeliveryGroups(groupPreview,initialPicks,allGroupKeys).canProceed,true);
+const changedPicks=new Map(initialPicks).set(componentPickKey(groupPreview.rows[0],"GROUP-A"),{[String(groupLotA)]:9});
+assert.equal(analyzeDeliveryGroups(groupPreview,changedPicks,allGroupKeys).canProceed,false);
+const groupPayload={group_model_version:1,shipped_date:"2026-11-18",requests:groupPreview.requests.map(({id,version,components})=>({id,version,components})),
+ lots:[{group_key:groupKey,incoming_id:String(groupLotA),quantity:6},{group_key:groupKey,incoming_id:String(groupLotB),quantity:3}]};
+await assert.rejects(postBulk({...groupPayload,requests:groupPayload.requests.map(r=>({...r,components:[]}))}),/DELIVERY_STALE/);
+await assert.rejects(postBulk({...groupPayload,lots:groupPayload.lots.map(l=>({...l,group_key:groupKey.replace("parent:","origin:")}))}),/DELIVERY_BULK_LOT_MISMATCH/);
+await assert.rejects(postBulk({...groupPayload,lots:[{...groupPayload.lots[0],quantity:5},groupPayload.lots[1]]}),/DELIVERY_COMPONENT_QTY_MISMATCH/);
+await assert.rejects(postBulk({...groupPayload,lots:[groupPayload.lots[0]]}),/DELIVERY_COMPONENT_QTY_MISMATCH/);
+const groupCommand=randomUUID();
+assert.equal((await postBulk(groupPayload,groupCommand)).shipped,3);
+assert.equal((await postBulk(groupPayload,groupCommand)).shipped,3);
+const afterGroup=(await db.query("select public.list_delivery(0,'GROUP-P',true) as data")).rows[0].data;
+assert.equal(afterGroup.rows.length,2);
+assert.ok(afterGroup.rows.every(r=>r.request_type==="parent" && !r.sync_error));
+assert.equal(afterGroup.rows.reduce((sum,r)=>sum+r.shipped_qty,0),3);
+assert.equal(afterGroup.rows.filter(r=>r.remaining_qty===0).length,1);
+for(const source of afterGroup.rows) {
+  const children=await buildRows(source.id);
+  assert.deepEqual(children.map(c=>c.shipped_qty/(c.ordered_qty/source.ordered_qty)),[source.shipped_qty,source.shipped_qty]);
+}
+assert.equal((await summary("GROUP-A")).balance_qty,34);
+await assert.rejects(postBulk(groupPayload),/DELIVERY_STALE/);
+const doneParent=afterGroup.rows.find(r=>r.remaining_qty===0);
+const parentDetails=(await db.query("select public.delivery_request_details($1) as data",[doneParent.id])).rows[0].data;
+assert.equal(parentDetails.history.length,2);
+assert.deepEqual(parentDetails.history.map(h=>h.itemcode).sort(),["GROUP-A","GROUP-B"]);
+assert.ok(parentDetails.history.every(h=>h.inv_delivery_issue_lines.length>0));
+const someChild=(await buildRows(groupSources[0]))[0];
+await assert.rejects(rpc("ship",{id:someChild.id,version:someChild.version,quantity:1,shipped_date:"2026-11-18"}),/DELIVERY_SELECT_PARENT/);
+await assert.rejects(rpc("cancel",{id:someChild.id,version:someChild.version}),/DELIVERY_SELECT_PARENT/);
+await assert.rejects(postBulk({shipped_date:"2026-11-18",requests:[{id:someChild.id,version:someChild.version}],lots:[{incoming_id:String(groupLotA),quantity:1}]}),/DELIVERY_SELECT_PARENT/);
+await assert.rejects(db.query("select public.manage_delivery_components_v1('reserve',$1,'{}')",[randomUUID()]),/permission denied/);
+await assert.rejects(db.query("select public.post_bulk_delivery_components_v1($1,'{}')",[randomUUID()]),/permission denied/);
+// A synchronized excess is assigned to one source SO across all its children.
+const liveSources=afterGroup.rows.filter(r=>r.remaining_qty>0).map(r=>r.id);
+const overGroup=(await db.query("select public.preview_bulk_delivery($1::uuid[]) as data",[liveSources])).rows[0].data;
+const overGroupPayload={group_model_version:1,shipped_date:"2026-11-18",
+ requests:overGroup.requests.map(({id,version,components})=>({id,version,components})),
+ lots:[{group_key:groupKey,incoming_id:String(groupLotA),quantity:8},{group_key:groupKey,incoming_id:String(groupLotB),quantity:4}]};
+const beforeOverChildren=await buildRows(liveSources[0]);
+await postBulk(overGroupPayload);
+const overGroupChildren=await buildRows(liveSources[0]);
+assert.deepEqual(overGroupChildren.map((c,i)=>c.shipped_qty-beforeOverChildren[i].shipped_qty),[8,4]);
+assert.deepEqual(overGroupChildren.map(c=>c.ordered_qty),beforeOverChildren.map(c=>c.ordered_qty));
+// Different parent codes and a direct item share the same physical FIFO pool.
+await db.exec("reset role");
+await db.exec(`insert into public.item_build_up(parent_itemcode,child_itemcode_1,child_itemcode_2) values
+ ('GROUP-Q','GROUP-A',null);
+ insert into public.item_pallet_config(itemcode,product_name) values ('GROUP-Q','Bộ khác')`);
+await db.exec("set role authenticated");
+await rpc("import",{rows:[line("GROUP-Q1","GROUP-Q",20,"2026-11-18"),line("GROUP-DIRECT","GROUP-A",10,"2026-11-18")]});
+const sharedSources=(await db.query("select id from public.inv_delivery_requests where purorder in ('GROUP-Q1','GROUP-DIRECT') and request_type<>'child'")).rows.map(r=>r.id);
+const sharedPreview=(await db.query("select public.preview_bulk_delivery($1::uuid[]) as data",[sharedSources])).rows[0].data;
+assert.equal(sharedPreview.rows.length,2);
+const sharedKeys=new Set(sharedPreview.rows.map(r=>r.group_key));
+const sharedPicks=suggestDeliveryGroups(sharedPreview,sharedKeys);
+assert.equal(analyzeDeliveryGroups(sharedPreview,sharedPicks,sharedKeys).canProceed,false);
+assert.ok([...analyzeDeliveryGroups(sharedPreview,sharedPicks,sharedKeys).groups.values()].every(g=>g.short));
+const sourcePayload=(data,picks,selected=new Set(data.rows.map(r=>r.group_key)))=>({
+ group_model_version:1,shipped_date:"2026-11-18",
+ requests:data.requests.filter(r=>selected.has(r.group_key)).map(({id,version,components})=>({id,version,components})),
+ lots:data.rows.filter(r=>selected.has(r.group_key)).flatMap(g=>g.components.flatMap(c=>
+  Object.entries(picks.get(componentPickKey(g,c.itemcode))??{}).map(([incoming_id,quantity])=>({group_key:g.group_key,incoming_id,quantity})))),
+});
+await assert.rejects(postBulk(sourcePayload(sharedPreview,sharedPicks)),/DELIVERY_BULK_SHORT_STOCK:GROUP-A/);
+const chosenGroup=sharedPreview.rows.find(g=>g.itemcode==="GROUP-Q");
+const onlyOne=new Set([chosenGroup.group_key]);
+const onlyPicks=suggestDeliveryGroups(sharedPreview,onlyOne);
+assert.equal(analyzeDeliveryGroups(sharedPreview,onlyPicks,onlyOne).canProceed,true);
+const untouchedDirect=(await get("GROUP-DIRECT"))[0];
+await postBulk(sourcePayload(sharedPreview,onlyPicks,onlyOne));
+assert.equal((await request(untouchedDirect.id)).shipped_qty,0);
+assert.equal((await summary("GROUP-A")).balance_qty,6);
+// Reusing one code with a different recipe is never merged into one group.
+await db.exec("reset role; insert into public.item_build_up(parent_itemcode,child_itemcode_1) values ('GROUP-P','GROUP-B'); set role authenticated");
+const altOptions=(await lookupBuild("GROUP-P")).build_up_options;
+const altToken=altOptions.find(o=>o.codes.filter(Boolean).length===1).token;
+await rpc("import",{rows:[line("GROUP-ALT","GROUP-P",1,"2026-11-18",{build_up_token:altToken}),line("GROUP-BASE","GROUP-P",1,"2026-11-18",{build_up_token:altOptions.find(o=>o.token!==altToken).token})]});
+const altIds=(await db.query("select id from public.inv_delivery_requests where purorder in ('GROUP-ALT','GROUP-BASE') and request_type='parent'")).rows.map(r=>r.id);
+assert.equal((await reviewFifo(altIds)).rows.length,2);
+await rpc("import",{rows:[line("GROUP-DOUBLE","GROUP-A",2,"2026-11-18")]});
+const doubleIds=(await db.query("select id from public.inv_delivery_requests where purorder in ('GROUP-DOUBLE','GROUP-BASE') and request_type<>'child'")).rows.map(r=>r.id);
+const doublePreview=(await db.query("select public.preview_bulk_delivery($1::uuid[]) as data",[doubleIds])).rows[0].data;
+const doubleKeys=new Set(doublePreview.rows.map(g=>g.group_key));
+const doublePicks=suggestDeliveryGroups(doublePreview,doubleKeys);
+for(const g of doublePreview.rows) for(const c of g.components) {
+  doublePicks.set(componentPickKey(g,c.itemcode),{[String(c.itemcode==="GROUP-A"?groupLotA:groupLotB)]:c.factor*4});
+}
+assert.equal(analyzeDeliveryGroups(doublePreview,doublePicks,doubleKeys).canProceed,false);
+assert.equal(analyzeDeliveryGroups(doublePreview,doublePicks,doubleKeys).overdrawn,true);
+await assert.rejects(postBulk(sourcePayload(doublePreview,doublePicks)),/DELIVERY_INSUFFICIENT_STOCK/);
+assert.equal((await summary("GROUP-A")).balance_qty,6);
+// Origin-only old browsers remain compatible, and parent cancellation covers all children.
+await db.exec("reset role");
+const legacyOriginLot=(await seed("GROUP-LEGACY",2,"2026-10-01")).rows[0].id;
+await db.exec("set role authenticated");
+await rpc("import",{rows:[line("GROUP-LEGACY","GROUP-LEGACY",1,"2026-11-18")]});
+const legacyOrigin=(await get("GROUP-LEGACY"))[0];
+assert.equal((await postBulk({shipped_date:"2026-11-18",requests:[{id:legacyOrigin.id,version:legacyOrigin.version}],
+ lots:[{incoming_id:String(legacyOriginLot),quantity:1}]})).shipped,1);
+const toCancel=(await get("GROUP-BASE")).find(r=>r.request_type==="parent");
+await rpc("cancel",{id:toCancel.id,version:toCancel.version});
+assert.ok((await buildRows(toCancel.id)).every(c=>c.cancelled));
+assert.equal((await summary("GROUP-A")).on_order_qty,12);
+// Historical mismatches remain visible and cannot be shipped by the new workflow.
+const invalidOld=(await db.query("select public.preview_bulk_delivery($1::uuid[]) as data",[[manualKit]])).rows[0].data;
+assert.equal(invalidOld.rows[0].sync_error,true);
+const invalidPicks=suggestDeliveryGroups(invalidOld,new Set(invalidOld.rows.map(r=>r.group_key)));
+await assert.rejects(postBulk(sourcePayload(invalidOld,invalidPicks)),/DELIVERY_COMPONENTS_OUT_OF_SYNC/);
+await db.exec("select set_config('test.permission','no',false)");
+await assert.rejects(reviewFifo(groupSources),/DELIVERY_NOT_AUTHORIZED/);
+await assert.rejects(postBulk(groupPayload,groupCommand),/DELIVERY_NOT_AUTHORIZED/);
+await db.exec("select set_config('test.permission','yes',false)");
+console.log("PASS: parent groups, synchronized ratio validation and atomic parent-first SO allocation.");
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

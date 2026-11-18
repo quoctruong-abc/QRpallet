@@ -211,6 +211,12 @@
 .warehouse-delivery-components .warehouse-table { min-width: 720px; }
 .warehouse-delivery-components th:nth-child(n + 4),
 .warehouse-delivery-components td:nth-child(n + 4) { text-align: right; }
+.warehouse-table td.warehouse-parent-components-cell { padding: 8px 14px 14px; background: #f7f9fc; }
+.warehouse-parent-components-cell summary { padding: 6px 0; cursor: pointer; font-weight: 600; }
+.warehouse-table.warehouse-parent-components { min-width: 720px; border: 1px solid var(--border); }
+.warehouse-table.warehouse-parent-components th,
+.warehouse-table.warehouse-parent-components td { padding: 7px 9px; font-size: .82rem; }
+.warehouse-table.warehouse-parent-components thead th { position: static; text-align: left; }
 @media (max-width: 480px) {
   .warehouse-opening-dialog.warehouse-stock-details { padding: 14px; }
   .warehouse-stock-details .warehouse-table th,
