@@ -281,7 +281,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         <tbody>{visible.map((row) => <Fragment key={row.id}><tr className={row.sync_error ? "warehouse-bulk-short" : row.item_shortage_qty > 0 ? "warehouse-outgoing-shortage" : undefined}>
           <td>{date(row.delivery_date)}</td>
           <td>{row.delivery_source === "manual" ? <span title={row.purorder}>Nhập tay · {manualReference(row)}</span> : row.purorder}</td>
-          <td>{row.delivery_source === "manual" ? "—" : row.sales_id}</td><td className="warehouse-outgoing-name"><strong>{row.itemcode}</strong>{row.request_type === "parent" ? <small>Mã mẹ · {row.components?.length ?? 0} mã con</small> : null}</td>
+          <td>{row.delivery_source === "manual" ? "—" : row.sales_id}</td><td className="warehouse-outgoing-name">{row.request_type === "parent" ? <><strong>{row.itemcode}</strong><small>Mã mẹ · {row.components?.length ?? 0} mã con</small></> : row.itemcode}</td>
           <td className="warehouse-outgoing-name">{row.product_name}{row.delivery_source !== "manual" && row.customer ? <small>{row.customer}</small> : null}</td><td>{row.system_customer_name || "—"}</td><td>{row.unit_label || "—"}</td>
           <td>{num(row.ordered_qty)}</td><td>{num(row.shipped_qty)}</td><td>{num(row.remaining_qty)}</td><td>{num(row.item_shortage_qty)}</td><td>{row.sync_error ? "Mã con không đồng bộ" : statusLabel[row.status]}</td>
           <td><div className="warehouse-incoming-row-actions">
@@ -382,8 +382,8 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         {mode === "cancel" ? <p>Chỉ hủy phần chưa xuất và giảm On order của item. Lịch sử đã xuất được giữ lại.</p> : null}
         {detailError ? <p className="alert alert-error">{detailError}</p> : null}
         <h3>Lịch sử xuất thực tế</h3>
-        {history.length ? <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Ngày xuất</th><th>Mã thực xuất</th><th>Tên sản phẩm</th><th>Số lượng</th><th>Người xuất</th><th>Lô nhập đã lấy</th></tr></thead>
-          <tbody>{history.map((issue) => <tr key={issue.id}><td>{date(issue.shipped_date)}</td><td>{issue.itemcode}</td><td>{issue.product_name}</td><td>{num(issue.quantity)}</td><td>{issue.entered_by_name}</td>
+        {history.length ? <div className="scan-table-wrap"><table className="warehouse-table"><thead><tr><th>Ngày xuất</th>{selected.request_type === "parent" ? <><th>Mã thực xuất</th><th>Tên sản phẩm</th></> : null}<th>Số lượng</th><th>Người xuất</th><th>Lô nhập đã lấy</th></tr></thead>
+          <tbody>{history.map((issue) => <tr key={issue.id}><td>{date(issue.shipped_date)}</td>{selected.request_type === "parent" ? <><td>{issue.itemcode}</td><td>{issue.product_name}</td></> : null}<td>{num(issue.quantity)}</td><td>{issue.entered_by_name}</td>
             <td>{issue.inv_delivery_issue_lines.map((line) => `#${line.incoming_id}: ${num(line.quantity)}`).join("; ")}</td></tr>)}</tbody></table></div> : <p className="muted">Chưa có lần xuất.</p>}
         <div className="modal-actions">
           <button className="button button-secondary" disabled={busy} onClick={() => actionDialog.current?.close()} type="button">Đóng</button>

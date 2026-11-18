@@ -63,6 +63,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
   const [savedLots, setSavedLots] = useState("");
   const [submitted, setSubmitted] = useState(false);
   useEffect(() => () => request.current?.abort(), []);
+  const hasParents = review?.rows.some((row) => row.request_type === "parent") ?? false;
 
   async function openReview(forBulk: boolean) {
     request.current?.abort();
@@ -110,16 +111,23 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
     setCopied("");
     try {
       if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") throw new Error("Trình duyệt chưa hỗ trợ sao chép ảnh vào clipboard.");
-      const columns = ["Ngày giao", "Mã mẹ / Mã hàng", "Số lượng mẹ", "Mã thực xuất", "Tên sản phẩm", "Khách hàng mã con", "Số lượng cần xuất", "Ngày sản xuất / Số lượng FIFO", "Còn thiếu"];
-      const rows = review.rows.flatMap((group) => group.components.map((component) => ({
-        shortage: group.sync_error || component.shortage_qty > 0,
-        cells: [group.delivery_dates?.map(formatDate).join("\n") || "—", group.itemcode, num(group.quantity),
-          component.itemcode, component.product_name || "—", component.customer || "—", num(component.quantity),
-          component.days.map((day) => `${productionDate(day.production_date)}: ${num(day.quantity)}`).join("\n") || "Không có tồn",
-          group.sync_error ? "Lệch số lượng mã con" : num(component.shortage_qty)],
-      })));
-      const png = renderReviewImage(columns, rows, "Review xuất kho theo mã mẹ", `${num(review.rows.length)} nhóm mã · ${num(review.request_count)} yêu cầu chờ xuất`,
-        { columnWidths: [110, 145, 100, 145, 230, 180, 110, 275, 110], numericColumns: [2, 6, 8] });
+      const columns = ["Ngày giao", "Itemcode", "Tên sản phẩm", "Khách hàng", "Số lượng cần xuất", "Ngày sản xuất / Số lượng FIFO", "Còn thiếu"];
+      const rows = review.rows.flatMap((group) => {
+        const parent = group.request_type === "parent";
+        const row = { shortage: group.sync_error || group.shortage_qty > 0, cells: [
+          group.delivery_dates?.map(formatDate).join("\n") || "—",
+          parent ? `${group.itemcode} (mã mẹ)` : group.itemcode, group.product_name || "—", group.customer || "—", num(group.quantity),
+          parent ? "Chi tiết mã con bên dưới" : group.days.map((day) => `${productionDate(day.production_date)}: ${num(day.quantity)}`).join("\n") || "Không có tồn",
+          group.sync_error ? "Lệch số lượng mã con" : num(group.shortage_qty),
+        ] };
+        return parent ? [row, ...group.components.map((component) => ({
+          shortage: group.sync_error || component.shortage_qty > 0,
+          cells: ["", `↳ ${component.itemcode}`, component.product_name || "—", component.customer || "—", num(component.quantity),
+            component.days.map((day) => `${productionDate(day.production_date)}: ${num(day.quantity)}`).join("\n") || "Không có tồn",
+            num(component.shortage_qty)],
+        }))] : [row];
+      });
+      const png = renderReviewImage(columns, rows, "Review xuất kho theo FIFO", `${num(review.rows.length)} item · ${num(review.request_count)} yêu cầu chờ xuất`);
       await Promise.all([png, navigator.clipboard.write([new ClipboardItem({ "image/png": png })])]);
       setCopied("Đã sao chép ảnh bảng.");
     } catch (cause) {
@@ -157,7 +165,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
     return total + (state && !state.mismatch ? state.quantity : 0);
   }, 0);
   const shortSelectedCount = selectedRows.filter((row) => analysis?.groups.get(row.group_key)?.short).length;
-  const mismatchCount = selectedRows.filter((row) => analysis?.groups.get(row.group_key)?.mismatch).length;
+  const mismatchCount = selectedRows.filter((row) => row.request_type === "parent" && analysis?.groups.get(row.group_key)?.mismatch).length;
   const excessCount = selectedRows.filter((row) => {
     const state = analysis?.groups.get(row.group_key);
     return state && !state.mismatch && state.quantity > row.quantity;
@@ -171,18 +179,22 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
     if (!editing || invalidDraft) return;
     const saved = Object.fromEntries(Object.entries(draft).filter(([, amount]) => amount > 0));
     setPicked((old) => new Map(old).set(editorKey, saved));
-    setSavedLots(`Đã lưu ${editing.component.itemcode} của ${editing.group.itemcode}: chọn xuất ${num(draftTotal)}. Các mã con phải cùng số lượng quy đổi về mã mẹ.`);
+    setSavedLots(editing.group.request_type === "parent"
+      ? `Đã lưu ${editing.component.itemcode} của ${editing.group.itemcode}: chọn xuất ${num(draftTotal)}. Các mã con phải cùng số lượng quy đổi về mã mẹ.`
+      : `Đã lưu lô cho ${editing.component.itemcode}: chọn xuất ${num(draftTotal)}, ${draftExcess ? `vượt yêu cầu ${num(draftExcess)}` : `còn lại ${num(editing.component.quantity - draftTotal)}`}.`);
     editor.current?.close();
   }
   async function confirmBulk() {
     if (!bulkData || locked || !isInventoryDate(shipDate) || !analysis?.canProceed) return;
     const lots: BulkDeliveryInput["lots"] = [];
-    for (const group of selectedRows) for (const component of group.components) {
+    const executable = selectedRows.filter((group) => (analysis.groups.get(group.group_key)?.quantity ?? 0) > 0);
+    const executableKeys = new Set(executable.map((group) => group.group_key));
+    for (const group of executable) for (const component of group.components) {
       for (const [incoming_id, quantity] of Object.entries(picked.get(componentPickKey(group, component.itemcode)) ?? {})) {
         if (quantity > 0) lots.push({ incoming_id, quantity, group_key: group.group_key });
       }
     }
-    const selected = bulkData.requests.filter((row) => included.has(row.group_key)).map(({ id, version, components }) => ({ id, version, components }));
+    const selected = bulkData.requests.filter((row) => executableKeys.has(row.group_key)).map(({ id, version, components }) => ({ id, version, components }));
     setSubmitted(true);
     if (await onBulkShip({ group_model_version: 1, shipped_date: shipDate, requests: selected, lots })) dialog.current?.close();
   }
@@ -194,51 +206,73 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
       ref={dialog} onClose={() => request.current?.abort()} onCancel={(event) => { if (bulk && busy) event.preventDefault(); }}>
       <header className={bulk ? "warehouse-bulk-header" : undefined}>
         <div className="modal-heading">
-          <h2 id={titleId}>{bulk ? "Xuất hàng loạt theo mã mẹ" : "Review xuất kho theo mã mẹ"}</h2>
+          <h2 id={titleId}>{bulk ? "Xuất hàng loạt" : "Review xuất kho theo FIFO"}</h2>
           <button aria-label="Đóng" className="modal-close" disabled={bulk && busy} onClick={() => dialog.current?.close()} type="button">×</button>
         </div>
         {bulk ? <div className="warehouse-bulk-meta">
           <label>Ngày xuất<input type="date" value={shipDate} disabled={locked} onChange={(event) => setShipDate(event.target.value)} /></label>
-          {review ? <p className="muted">{num(review.request_count)} yêu cầu · Chọn {num(included.size)}/{num(review.rows.length)} nhóm mã · <strong>Chọn xuất {num(chosenTotal)} mã mẹ/mã hàng</strong></p> : null}
-          <button className="button button-secondary button-small" type="button" disabled={locked || !bulkData || !included.size}
-            onClick={() => { if (bulkData) { setPicked(suggestDeliveryGroups(bulkData, included)); setSavedLots("Đã khôi phục FIFO cho các nhóm đang chọn."); } }}>Khôi phục FIFO đã chọn</button>
+          {review ? <p className="muted">{num(review.request_count)} yêu cầu chờ xuất · Đã chọn {num(included.size)}/{num(review.rows.length)} item · <strong>Chọn xuất {num(chosenTotal)}</strong></p> : null}
+          {hasParents ? <button className="button button-secondary button-small" type="button" disabled={locked || !bulkData || !included.size}
+            onClick={() => { if (bulkData) { setPicked(suggestDeliveryGroups(bulkData, included)); setSavedLots("Đã khôi phục FIFO cho các nhóm đang chọn."); } }}>Khôi phục FIFO đã chọn</button> : null}
         </div> : null}
       </header>
       <div className={bulk ? "warehouse-bulk-body" : undefined}>
-        <p className="muted small">Chọn theo mã mẹ; các mã con xuất cùng tỷ lệ ghép cặp. Các tổ hợp khác nhau của cùng mã mẹ được giữ thành nhóm riêng. Tên và khách hàng của mỗi mã con được giữ riêng.</p>
+        {!bulk ? <p className="muted small">Gộp số còn phải giao của các yêu cầu đã lọc. Gợi ý dựa trên tồn hiện tại, chưa giữ lô hoặc trừ tồn.</p> : null}
+        {hasParents ? <p className="muted small">Riêng mã mẹ: chọn cả tổ hợp, các mã con phải xuất đồng bộ theo tỷ lệ ghép cặp.</p> : null}
         {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
         {!review && !error ? <p role="status" className="muted">Đang tính FIFO…</p> : null}
         {bulk && submitted && notice ? <p className="alert" role="status">{notice}</p> : null}
         {bulk && savedLots ? <p className="muted small" role="status">{savedLots}</p> : null}
         {review && review.request_count < requestedCount ? <p className="alert" role="status">Một số yêu cầu không còn chờ xuất. Tải lại danh sách để cập nhật.</p> : null}
+        {!bulk && review ? <p><strong>{num(review.rows.length)} item · {num(review.request_count)} yêu cầu chờ xuất</strong></p> : null}
         {review?.rows.length ? <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table">
-          <thead><tr>{bulk ? <th><input type="checkbox" ref={selectAll} aria-label="Chọn tất cả mã mẹ/mã hàng" checked={allSelected} disabled={locked}
+          <thead><tr>{bulk ? <th><input type="checkbox" ref={selectAll} aria-label="Chọn tất cả item xuất" checked={allSelected} disabled={locked}
             onChange={(event) => setIncluded(new Set(event.target.checked ? bulkData?.rows.map((row) => row.group_key) : []))} /></th> : null}
-            <th>{bulk ? "Ngày xuất" : "Ngày giao"}</th><th>Mã mẹ / Mã hàng</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Cần xuất</th>
-            {bulk ? <th>Chọn xuất</th> : null}<th>{bulk ? "Còn lại" : "Còn thiếu"}</th><th>Trạng thái</th></tr></thead>
+            <th>{bulk ? "Ngày xuất" : "Ngày giao"}</th><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng cần xuất</th>
+            {bulk ? <th>Chọn xuất</th> : null}<th>Ngày sản xuất / Số lượng {bulk ? "chọn xuất" : "FIFO"}</th>
+            <th>{bulk ? "Còn lại sau xuất" : "Còn thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
           <tbody>{review.rows.map((group) => {
+            const parent = group.request_type === "parent";
             const state = analysis?.groups.get(group.group_key);
             const checked = included.has(group.group_key);
+            const directComponent = !parent ? group.components[0] : null;
+            const selection = bulkData && directComponent
+              ? summarize(lotsFor(bulkData, directComponent.itemcode), picked.get(componentPickKey(group, directComponent.itemcode)) ?? {}) : null;
+            const days = selection?.days ?? group.days;
             const excess = state && !state.mismatch ? Math.max(0, state.quantity - group.quantity) : 0;
             const rowClass = bulk && !checked ? "warehouse-bulk-unselected"
               : group.sync_error || (bulk && (state?.short || state?.mismatch)) ? "warehouse-bulk-short"
                 : group.shortage_qty > 0 || excess > 0 ? "warehouse-outgoing-shortage" : undefined;
             return <Fragment key={group.group_key}>
               <tr className={rowClass}>
-                {bulk ? <td><input type="checkbox" aria-label={`Chọn xuất ${group.itemcode} ${group.group_key}`} checked={checked} disabled={locked}
+                {bulk ? <td><input type="checkbox" aria-label={parent ? `Chọn xuất ${group.itemcode} ${group.group_key}` : `Chọn xuất ${group.itemcode}`} checked={checked} disabled={locked}
                   onChange={(event) => { const value = event.target.checked; setIncluded((old) => {
                     const next = new Set(old); if (value) next.add(group.group_key); else next.delete(group.group_key); return next;
                   }); }} /></td> : null}
                 <td>{bulk ? (shipDate ? formatDate(shipDate) : "—") : group.delivery_dates?.map((value) => <div key={value}>{formatDate(value)}</div>)}</td>
-                <td><strong>{group.itemcode}</strong><small className="warehouse-review-lot-ids">{group.request_type === "parent" ? "Mã mẹ" : "Mã hàng thường"}</small></td>
+                <td>{parent ? <><strong>{group.itemcode}</strong><small className="warehouse-review-lot-ids">Mã mẹ</small>
+                  {group.sync_error || (bulk && checked && state?.mismatch) ? <small className="warehouse-bulk-stock-shortage">Mã con không đồng bộ</small> : null}</> : group.itemcode}</td>
                 <td>{group.product_name || "—"}</td><td>{group.customer || "—"}</td><td className="warehouse-review-number">{num(group.quantity)}</td>
                 {bulk ? <td className="warehouse-review-number"><strong>{state?.mismatch ? "Chưa đồng bộ" : num(state?.quantity ?? 0)}</strong>
                   {checked && excess > 0 ? <small className="warehouse-bulk-overage">Vượt {num(excess)}</small> : null}</td> : null}
-                <td className="warehouse-review-number">{bulk ? state?.mismatch ? "—" : num(Math.max(0, group.quantity - (state?.quantity ?? 0))) : num(group.shortage_qty)}</td>
-                <td>{group.sync_error ? "Lịch sử mã con không đồng bộ" : bulk && state?.mismatch && checked ? "Số lượng mã con không đồng bộ"
-                  : bulk && state?.short && checked ? "Mã con thiếu tồn" : !bulk && group.shortage_qty > 0 ? "Thiếu tồn" : bulk && !checked ? "Không chọn xuất" : "Đủ điều kiện"}</td>
+                <td>{parent ? "Chi tiết mã con bên dưới" : days.length ? <ul className="warehouse-outgoing-review-days">
+                  {days.map((day) => <li key={day.production_date ?? "undated"}><span>{productionDate(day.production_date)}
+                    {selection ? <small className="warehouse-review-lot-ids">{selection.byDate.get(day.production_date)?.lots
+                      .map((lot) => `#${lot.id}: ${num(lot.quantity)}`).join(" · ")}</small> : null}
+                  </span><strong>{num(day.quantity)}</strong></li>)}
+                </ul> : bulk && bulkData && lotsFor(bulkData, group.itemcode).length ? "Chưa chọn lô" : "Không có tồn"}</td>
+                <td className="warehouse-review-number">{bulk ? state?.mismatch ? "—" : num(Math.max(0, group.quantity - (state?.quantity ?? 0))) : num(group.shortage_qty)}
+                  {bulk && state?.short ? <small className="warehouse-bulk-stock-shortage">{parent ? "Mã con thiếu tồn"
+                    : group.shortage_qty > 0 ? `Tồn thiếu ${num(group.shortage_qty)}` : "Tồn thiếu khi tính chung các item đang chọn"}</small> : null}
+                </td>
+                {bulk ? <td>{parent ? "Sửa từng mã con bên dưới" : directComponent ? <button type="button"
+                  className="button button-secondary button-small warehouse-stock-eye" title="Sửa lô xuất"
+                  aria-label={`Sửa lô xuất ${group.itemcode}`} disabled={locked || !checked || !bulkData || !lotsFor(bulkData, group.itemcode).length}
+                  onClick={() => editLots(group, directComponent)}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m15 5 4 4M4 20l4.5-1L20 7.5 16.5 4 5 15.5 4 20Z" /></svg>
+                </button> : null}</td> : null}
               </tr>
-              <tr className={rowClass}><td colSpan={bulk ? 9 : 7} className="warehouse-parent-components-cell">
+              {parent ? <tr className={rowClass}><td colSpan={bulk ? 10 : 7} className="warehouse-parent-components-cell">
                 <table className="warehouse-table warehouse-parent-components" aria-label={`Mã thực xuất của ${group.itemcode}`}>
                   <thead><tr><th>Mã thực xuất</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Tỷ lệ / mã mẹ</th><th>Cần xuất</th>
                     {bulk ? <th>Chọn xuất</th> : null}<th>Ngày sản xuất / Số lượng {bulk ? "chọn" : "FIFO"}</th><th>{bulk ? "Còn lại" : "Thiếu"}</th>{bulk ? <th>Sửa lô</th> : null}</tr></thead>
@@ -260,17 +294,17 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
                     </tr>;
                   })}</tbody>
                 </table>
-              </td></tr>
+              </td></tr> : null}
             </Fragment>;
           })}</tbody>
         </table></div> : review ? <p className="scan-empty">Không còn yêu cầu chờ xuất trong kết quả đã lọc.</p> : null}
         {copied ? <p className="muted small" role="status">{copied}</p> : null}
       </div>
       <footer className={bulk ? "warehouse-bulk-footer" : undefined}>
-        {bulk && shortSelectedCount > 0 ? <p className="alert alert-error" role="alert">{num(shortSelectedCount)} nhóm đang chọn có mã con không đủ tồn. Bỏ chọn toàn bộ nhóm thiếu hàng để tiếp tục.</p> : null}
+        {bulk && shortSelectedCount > 0 ? <p className="alert alert-error" role="alert">{num(shortSelectedCount)} item đang chọn không đủ tồn kho. Bỏ tick các dòng có nhãn “Tồn thiếu” hoặc “Mã con thiếu tồn” để tiếp tục.</p> : null}
         {bulk && mismatchCount > 0 ? <p className="alert alert-error" role="alert">{num(mismatchCount)} nhóm có số lượng mã con không đồng bộ. Số lượng mỗi mã con chia tỷ lệ phải bằng nhau và là số nguyên dương.</p> : null}
         {bulk && analysis?.overdrawn ? <p className="alert alert-error" role="alert">Các nhóm đang lấy trùng số lượng vượt tồn một lô. Chỉnh lô hoặc khôi phục FIFO đã chọn.</p> : null}
-        {bulk && excessCount > 0 ? <p className="alert warehouse-bulk-warning" role="alert">{num(excessCount)} nhóm xuất vượt yêu cầu. Phần vượt được ghi đồng bộ vào các mã con của yêu cầu cuối trong nhóm.</p> : null}
+        {bulk && excessCount > 0 ? <p className="alert warehouse-bulk-warning" role="alert">{num(excessCount)} item đã chọn vượt số còn phải giao. Phần vượt sẽ ghi vào yêu cầu cuối của item theo thứ tự giao.{hasParents ? " Riêng mã mẹ, các mã con phải xuất vượt đồng bộ." : ""}</p> : null}
         <div className="modal-actions">
           <button className="button button-secondary" type="button" disabled={bulk && busy} onClick={() => dialog.current?.close()}>Đóng</button>
           {!bulk ? <button className="button button-primary" type="button" disabled={copying || !review?.rows.length} onClick={() => { void copyReview(); }}>{copying ? "Đang tạo ảnh…" : "Copy ảnh"}</button>
@@ -281,15 +315,18 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
       </footer>
     </dialog>
     <dialog aria-labelledby={editorTitle} className="modal-card warehouse-opening-dialog warehouse-lot-editor" ref={editor} onClose={() => setEditing(null)}>
-      <div className="modal-heading"><h2 id={editorTitle}>Chọn lô {editing?.component.itemcode} · {editing?.group.itemcode}</h2>
+      <div className="modal-heading"><h2 id={editorTitle}>Chọn lô xuất {editing?.component.itemcode}{editing?.group.request_type === "parent" ? ` · ${editing.group.itemcode}` : ""}</h2>
         <button aria-label="Đóng chọn lô" className="modal-close" type="button" onClick={() => editor.current?.close()}>×</button></div>
       {editing ? <>
-        <p className="muted small">Tỷ lệ {editing.component.factor} / mã mẹ. Tất cả mã con phải xuất đồng bộ. Tồn lô bên dưới đã trừ phần chọn ở các nhóm khác.</p>
-        <p>Cần xuất <strong>{num(editing.component.quantity)}</strong> · Đã chọn <strong>{num(draftTotal)}</strong> · Quy đổi mã mẹ <strong>{num(draftTotal / editing.component.factor)}</strong></p>
+        <p className="muted small">{editing.group.request_type === "parent"
+          ? `Tỷ lệ ${editing.component.factor} / mã mẹ. Tất cả mã con phải xuất đồng bộ. Tồn lô đã trừ phần chọn ở các nhóm khác.`
+          : "Bỏ tick để không lấy lô. Nhập số lượng nhỏ hơn tồn lô để chỉ lấy một phần."}</p>
+        <p>Cần xuất <strong>{num(editing.component.quantity)}</strong> · Đã chọn <strong>{num(draftTotal)}</strong>
+          {editing.group.request_type === "parent" ? <> · Quy đổi mã mẹ <strong>{num(draftTotal / editing.component.factor)}</strong></> : null}</p>
         {invalidDraft ? <p role="alert" className="alert alert-error">Số lấy phải là số nguyên và không vượt tồn lô khả dụng.</p> : null}
         {draftExcess > 0 && !invalidDraft ? <p role="alert" className="alert warehouse-bulk-warning">Đã vượt số lượng cần xuất: {num(draftExcess)}.</p> : null}
         <div className="scan-table-wrap warehouse-outgoing-review-table"><table className="warehouse-table">
-          <thead><tr><th>Chọn</th><th>Lô nhập</th><th>Ngày sản xuất</th><th>Ngày nhập</th><th>Tồn lô khả dụng</th><th>Số lượng lấy</th></tr></thead>
+          <thead><tr><th>Chọn</th><th>Lô nhập</th><th>Ngày sản xuất</th><th>Ngày nhập</th><th>Tồn lô</th><th>Số lượng lấy</th></tr></thead>
           <tbody>{editorLots.map((lot) => {
             const amount = draft[lot.incoming_id] ?? 0;
             return <tr key={lot.incoming_id}>

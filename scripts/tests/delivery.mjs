@@ -943,6 +943,15 @@ const doubleIds=(await db.query("select id from public.inv_delivery_requests whe
 const doublePreview=(await db.query("select public.preview_bulk_delivery($1::uuid[]) as data",[doubleIds])).rows[0].data;
 const doubleKeys=new Set(doublePreview.rows.map(g=>g.group_key));
 const doublePicks=suggestDeliveryGroups(doublePreview,doubleKeys);
+const directGroup=doublePreview.rows.find(g=>g.request_type==="origin");
+const parentGroup=doublePreview.rows.find(g=>g.request_type==="parent");
+const zeroDirect=new Map(doublePicks).set(componentPickKey(directGroup,directGroup.itemcode),{});
+assert.equal(analyzeDeliveryGroups(doublePreview,zeroDirect,doubleKeys).groups.get(directGroup.group_key).mismatch,false);
+assert.equal(analyzeDeliveryGroups(doublePreview,zeroDirect,doubleKeys).canProceed,true,"A regular item with no lots does not block a valid selected parent");
+const zeroParent=new Map(doublePicks).set(componentPickKey(parentGroup,parentGroup.components[0].itemcode),{});
+assert.equal(analyzeDeliveryGroups(doublePreview,zeroParent,doubleKeys).canProceed,false,"Only parent recipes require all their components to be picked together");
+const onlyDirect=new Set([directGroup.group_key]);
+assert.equal(analyzeDeliveryGroups(doublePreview,zeroDirect,onlyDirect).canProceed,false,"Cannot submit an empty regular shipment");
 for(const g of doublePreview.rows) for(const c of g.components) {
   doublePicks.set(componentPickKey(g,c.itemcode),{[String(c.itemcode==="GROUP-A"?groupLotA:groupLotB)]:c.factor*4});
 }

@@ -43,12 +43,14 @@ export function analyzeDeliveryGroups(data: BulkDeliveryPreview, picks: GroupPic
     const quantities = group.components.map((component) => Object.values(picks.get(componentPickKey(group, component.itemcode)) ?? {})
       .reduce((sum, amount) => sum + amount, 0) / component.factor);
     const quantity = quantities[0] ?? 0;
-    const mismatch = group.sync_error || !quantities.length || quantities.some((amount) => !Number.isSafeInteger(amount) || amount <= 0 || amount !== quantity);
+    const mismatch = group.request_type === "parent"
+      ? group.sync_error || !quantities.length || quantities.some((amount) => !Number.isSafeInteger(amount) || amount <= 0 || amount !== quantity)
+      : !Number.isSafeInteger(quantity) || quantity < 0;
     const short = group.components.some((component) => (demand.get(component.itemcode) ?? 0) > component.item_stock_qty);
     return [group.group_key, { quantity, mismatch, short }];
   }));
   const selected = data.rows.filter((group) => included.has(group.group_key));
-  return { groups, overdrawn, canProceed: selected.length > 0 && !overdrawn && selected.every((group) => {
+  return { groups, overdrawn, canProceed: selected.some((group) => (groups.get(group.group_key)?.quantity ?? 0) > 0) && !overdrawn && selected.every((group) => {
     const state = groups.get(group.group_key)!;
     return !state.mismatch && !state.short;
   }) };

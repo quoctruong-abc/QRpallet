@@ -1012,6 +1012,11 @@ xuất cũ đã lệch tỷ lệ. Dữ liệu lệch được cảnh báo và ch
 Các RPC cũ không còn cho xuất/hủy riêng mã con; retry của thao tác đã ghi
 vẫn trả kết quả cũ để tránh trừ tồn hai lần.
 
+Giao diện giữ bố cục cũ cho mã thường: một dòng chứa tên, khách hàng, số lượng,
+ngày sản xuất/FIFO và nút sửa lô. Chỉ mã mẹ mới có bảng mã con và kiểm tra
+đồng bộ tổ hợp. Bảng Review copy ảnh vẫn dùng các cột cũ; mã con được trình bày
+bên dưới mã mẹ, hàng thường không lặp thêm dòng chi tiết.
+
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
 ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị
