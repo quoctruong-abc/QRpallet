@@ -1036,6 +1036,23 @@ xuống dòng và khách hàng riêng của từng mã. Mã mẹ và các mã co
 theo logic chung; thay mã mẹ giữ nguyên mã con. Tên/khách có sẵn trong pallet
 data được bổ sung vào config khi lưu; không tạo item từ nội dung file lịch ERP.
 
+Migration `20261118120000_active_item_build_up.sql` thêm `item_build_up.active`
+và giới hạn mỗi mã mẹ có tối đa một bộ active. Dữ liệu cũ có một bộ duy nhất
+được đặt active; mã mẹ có nhiều bộ giữ deactive để người dùng chọn lần đầu.
+Xuất manual và ERP tự dùng bộ active, chỉ hiện chọn bộ khi chưa có active.
+Một lựa chọn ERP áp dụng chung cho các lịch mới của cùng mã mẹ trong file.
+Frontend gửi `needs_activation` và token active tại lúc tra cứu; backend kiểm
+tra lại dưới transaction lock, chỉ kích hoạt sau khi tạo lịch thành công.
+Thao tác lỗi rollback cả lịch lẫn active. Nếu người khác đã chọn cùng bộ thì
+tiếp tục, chọn bộ khác thì báo tra lại. Dùng bộ đã active không cập nhật thừa
+dòng ghép cặp; retry đã thành công và dời lịch cũ không đổi mặc định mới.
+
+**Cập nhật ghép cặp** hiện toàn bộ Active/Deactive và chọn mặc định bộ active.
+**Thêm bộ mới** hoặc xác nhận lưu một bộ có sẵn sẽ đặt bộ đó active, các bộ
+khác cùng mã mẹ deactive. Lịch cũ giữ snapshot mã con. Nạp file ghép cặp vẫn
+bổ sung tổ hợp deactive, không tự thay mặc định đã có hay chọn tùy tiện giữa
+nhiều bộ; người dùng chốt qua popup cập nhật hoặc tạo lịch đầu tiên.
+
 Migration `20261106150000_outgoing_receipt_history.sql` thêm lịch sử xuất
 trong **Receipt → Xuất kho**. Kết quả lọc theo ngày xuất thực tế và gộp theo
 ngày xuất / item; chi tiết dựa trên phiếu và lô thực xuất. **Review** hiển thị

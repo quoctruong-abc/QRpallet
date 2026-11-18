@@ -32,5 +32,8 @@ export async function POST(request: Request) {
   if (input.action === "lookup" && data.catalog_lookup_version !== 1) {
     return fail("Cần áp dụng migration 20261118110000_unified_warehouse_item_lookup.sql.", 503);
   }
+  if (input.action === "lookup" && data.build_up_active_version !== 1) {
+    return fail("Cần áp dụng migration 20261118120000_active_item_build_up.sql.", 503);
+  }
   return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
 }

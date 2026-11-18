@@ -3,7 +3,7 @@
 import { useEffect, useId, useState } from "react";
 import { isInventoryDate, todayInVietnam } from "@/lib/warehouse-receipt/incoming";
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
-import { MAX_DELIVERY_QUANTITY, selectDeliveryBuildUp, type ManualDeliveryInput, type ManualDeliveryItem } from "@/lib/warehouse-receipt/outgoing";
+import { MAX_DELIVERY_QUANTITY, deliveryBuildUpSelection, selectDeliveryBuildUp, type ManualDeliveryInput, type ManualDeliveryItem } from "@/lib/warehouse-receipt/outgoing";
 
 const num = (quantity: number) => quantity.toLocaleString("vi-VN");
 
@@ -63,6 +63,7 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
   const error = codeError || current?.error;
   const amount = Number(quantity);
   const options = item?.build_up_options;
+  const activeRecipe = options?.find((option) => option.active);
   const recipe = selectDeliveryBuildUp(options, choice?.code === code ? choice.token : undefined);
   const exceedsLimit = recipe?.components.some((component) => amount * component.factor > MAX_DELIVERY_QUANTITY);
   const invalidRecipe = recipe?.components.some((component) => component.lookup_error);
@@ -71,7 +72,8 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
 
   return <form className="warehouse-manual-delivery" onSubmit={(event) => {
     event.preventDefault();
-    if (canSubmit) onSubmit({ delivery_date: date, itemcode: code, ordered_qty: amount, build_up_token: recipe?.token ?? null });
+    if (canSubmit) onSubmit({ delivery_date: date, itemcode: code, ordered_qty: amount,
+      ...deliveryBuildUpSelection(options, choice?.code === code ? choice.token : undefined) });
   }}>
     <div className="warehouse-incoming-fields">
       <label>Ngày giao<input required type="date" value={date} disabled={locked} onChange={(event) => setDate(event.target.value)} /></label>
@@ -85,7 +87,7 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
         <div><dt>Khách hàng</dt><dd>{item ? item.customer || "Chưa có tên khách hàng" : "—"}</dd></div>
       </dl>
     </div>
-    {options && options.length > 1 ? <label>Tổ hợp mã con
+    {options?.length && !activeRecipe ? <label>Tổ hợp mã con
       <select required disabled={locked} value={recipe?.token ?? ""} onChange={(event) => setChoice({ code, token: event.target.value })}>
         <option value="">Chọn tổ hợp…</option>
         {options.map((option) => <option key={option.token} value={option.token}>{option.codes.filter(Boolean).join(" + ")}</option>)}
@@ -93,6 +95,7 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
     </label> : null}
     {recipe ? <div aria-live="polite">
       <p className="muted small">Mã mẹ {code} sẽ tách thành các mã con sau:</p>
+      <p className="muted small">{activeRecipe ? "Tự dùng bộ active." : "Bộ đã chọn sẽ trở thành active sau khi tạo lịch giao thành công."}</p>
       <div className="scan-table-wrap warehouse-delivery-components">
         <table className="warehouse-table" aria-label={`Mã con của ${code}`}>
           <thead><tr><th>Mã sản phẩm</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng yêu cầu</th><th>Tồn khả dụng</th><th>Thiếu dự kiến</th></tr></thead>
@@ -113,8 +116,8 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
     </div> : null}
     <div id={`${id}-lookup`} aria-live="polite">
       {error ? <p className="alert alert-error">{error}</p> : code && !current ? <p className="muted small">Đang tra cứu sản phẩm…</p> : null}
-      {current?.retryable ? <button type="button" className="button button-secondary button-small" disabled={locked}
-        onClick={() => { setLookup(null); setAttempt((value) => value + 1); }}>Thử tra cứu lại</button> : null}
+      {current?.retryable || item ? <button type="button" className="button button-secondary button-small" disabled={locked}
+        onClick={() => { setLookup(null); setChoice(null); setAttempt((value) => value + 1); }}>{item ? "Tra cứu lại" : "Thử tra cứu lại"}</button> : null}
     </div>
     <div className="warehouse-incoming-actions">
       <button type="submit" className="button button-primary" disabled={!canSubmit}>Thêm lịch giao</button>

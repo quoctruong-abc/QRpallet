@@ -6,7 +6,7 @@ import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 
 type CatalogItem = { product_name: string | null; customer: string | null; erp_name: string | null; netweight: number | null };
 type Children = [string | null, string | null, string | null];
-type Recipe = { id: string; children: Children };
+type Recipe = { id: string; active: boolean; children: Children };
 type Lookup = { catalog: CatalogItem | null; recipes: Recipe[];
   resolved?: { product_name: string | null; customer: string | null; declared: boolean; lookup_error: string | null } };
 type OnSaved = (itemcode: string) => void;
@@ -175,38 +175,42 @@ function BuildUpCodeRow({ label, code, lookup, disabled, required, onChange }: {
 function BuildUpEditor({ busy, setBusy, close }: EditorProps) {
   const [parent, setParent] = useState("");
   const [editedChildren, setEditedChildren] = useState<[string, string, string] | null>(null);
-  const [recipeId, setRecipeId] = useState("");
+  const [recipeId, setRecipeId] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const item = useCatalogLookup(parent, true, revision);
   const recipes = item.data?.recipes ?? [];
-  const replacement = recipes.length === 1 ? recipes[0] : recipes.find((recipe) => recipe.id === recipeId);
+  const selectedId = recipeId ?? recipes.find((recipe) => recipe.active)?.id ?? (recipes.length === 1 ? recipes[0].id : "");
+  const replacement = recipes.find((recipe) => recipe.id === selectedId);
   const childInputs = editedChildren ?? (replacement ? replacement.children.map((child) => child ?? "") as [string, string, string] : emptyChildren);
   const childOne = useCatalogLookup(childInputs[0], false, revision);
   const childTwo = useCatalogLookup(childInputs[1], false, revision);
   const childThree = useCatalogLookup(childInputs[2], false, revision);
   const childLookups = [childOne, childTwo, childThree];
   const children = childInputs.map((child, index) => child.trim() ? childLookups[index].code : null) as Children;
-  const canSave = !busy && Boolean(buildUpName(item)) && (recipes.length === 0 || Boolean(replacement))
+  const canSave = !busy && Boolean(buildUpName(item)) && (recipes.length === 0 || selectedId === "new" || Boolean(replacement))
     && children.some((child) => child !== null)
     && children.every((child, index) => child === null || Boolean(buildUpName(childLookups[index])));
 
   function changeParent(value: string) {
     if (editedChildren || children.some((child) => child !== null)) setEditedChildren(childInputs);
-    setParent(value); setRecipeId(""); setConfirming(false); setNotice(null);
+    setParent(value); setRecipeId(null); setConfirming(false); setNotice(null);
   }
 
   async function save() {
     if (!canSave || (replacement && !confirming)) return;
     setBusy(true); setNotice(null);
     try {
-      const saved = await catalogRequest<{ replaced: boolean }>("save_build_up", {
+      const saved = await catalogRequest<{ replaced: boolean; recipe_id: string }>("save_build_up", {
         itemcode: item.code, children,
+        create_new: !replacement,
         replace_id: replacement?.id ?? null, expected_children: replacement?.children ?? null,
       });
       setConfirming(false);
-      setNotice({ text: saved.replaced ? `Đã thay tổ hợp của mã mẹ ${item.code}.` : `Đã lưu tổ hợp cho mã mẹ ${item.code}.` });
+      setEditedChildren(childInputs);
+      setRecipeId(saved.recipe_id);
+      setNotice({ text: saved.replaced ? `Đã cập nhật và đặt active tổ hợp của mã mẹ ${item.code}.` : `Đã thêm bộ mới và đặt active cho mã mẹ ${item.code}.` });
       setRevision((value) => value + 1);
     } catch (cause) {
       setNotice({ text: cause instanceof Error ? cause.message : "Không lưu được tổ hợp.", error: true });
@@ -222,32 +226,34 @@ function BuildUpEditor({ busy, setBusy, close }: EditorProps) {
   }}>
     <div className="warehouse-catalog-fields">
       <BuildUpCodeRow label="mẹ" code={parent} lookup={item} disabled={busy || confirming} required onChange={changeParent} />
-      {recipes.length > 1 ? <label>Tổ hợp cần thay
-        <select value={recipeId} disabled={busy || confirming} required onChange={(event) => {
-          setRecipeId(event.target.value); setNotice(null);
+      {recipes.length > 0 ? <label>Tổ hợp ghép cặp
+        <select value={selectedId} disabled={busy || confirming} required onChange={(event) => {
+          setRecipeId(event.target.value); setEditedChildren(null); setNotice(null); setConfirming(false);
         }}>
-          <option value="">Chọn tổ hợp đang có</option>
-          {recipes.map((recipe) => <option value={recipe.id} key={recipe.id}>{recipeLabel(recipe.children)}</option>)}
+          <option value="">Chọn tổ hợp hoặc thêm mới</option>
+          <option value="new">Thêm bộ mới</option>
+          {recipes.map((recipe) => <option value={recipe.id} key={recipe.id}>{recipe.active ? "Active" : "Deactive"} · {recipeLabel(recipe.children)}</option>)}
         </select>
       </label> : null}
-      {replacement && !confirming ? <p className="muted small">Tổ hợp đang lưu: {recipeLabel(replacement.children)}. Hệ thống sẽ hỏi xác nhận trước khi thay.</p> : null}
+      {replacement && !confirming ? <p className="muted small">Tổ hợp đang lưu ({replacement.active ? "Active" : "Deactive"}): {recipeLabel(replacement.children)}. Xác nhận lưu sẽ đặt bộ này active và các bộ khác của mã mẹ deactive.</p> : null}
+      {!replacement && (selectedId === "new" || !recipes.length) ? <p className="muted small">Bộ mới sẽ active sau khi lưu thành công; các bộ khác của mã mẹ sẽ deactive.</p> : null}
       {childInputs.map((code, index) => <BuildUpCodeRow key={index} label={`con ${index + 1}`} code={code} lookup={childLookups[index]} disabled={busy || confirming}
         onChange={(value) => setEditedChildren(childInputs.map((child, i) => i === index ? value : child) as [string, string, string])} />)}
     </div>
     {notice ? <p className={`alert ${notice.error ? "alert-error" : "alert-success"}`} role={notice.error ? "alert" : "status"}>{notice.text}</p> : null}
     {confirming && replacement ? <div className="alert warehouse-bulk-warning" role="alert">
-      <strong>Xác nhận thay thế tổ hợp của {item.code}?</strong><br />
+      <strong>Xác nhận cập nhật và đặt active tổ hợp của {item.code}?</strong><br />
       Đang lưu: {recipeLabel(replacement.children)}<br />Thay bằng: {recipeLabel(children)}
     </div> : null}
     <div className="modal-actions">
       <button type="button" className="button button-secondary" disabled={busy} onClick={close}>Đóng</button>
       {notice?.error ? <button type="button" className="button button-secondary" disabled={busy} onClick={() => {
-        setNotice(null); setRecipeId(""); setRevision((value) => value + 1);
+        setNotice(null); setRecipeId(null); setRevision((value) => value + 1);
       }}>Tra lại mã mẹ</button> : null}
       {confirming ? <>
         <button type="button" className="button button-secondary" disabled={busy} onClick={() => setConfirming(false)}>Quay lại</button>
-        <button type="button" className="button button-primary" disabled={!canSave} onClick={() => { void save(); }}>{busy ? "Đang lưu…" : "Xác nhận thay thế"}</button>
-      </> : <button type="submit" className="button button-primary" disabled={!canSave}>{busy ? "Đang lưu…" : "Lưu ghép cặp"}</button>}
+        <button type="button" className="button button-primary" disabled={!canSave} onClick={() => { void save(); }}>{busy ? "Đang lưu…" : "Xác nhận lưu và đặt active"}</button>
+      </> : <button type="submit" className="button button-primary" disabled={!canSave}>{busy ? "Đang lưu…" : replacement ? "Lưu và đặt active" : "Thêm bộ và đặt active"}</button>}
     </div>
   </form>;
 }

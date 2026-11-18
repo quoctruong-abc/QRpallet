@@ -61,8 +61,10 @@ export type DeliveryRequestComponent = DeliveryComponent & {
   id: string; version: number; ordered_qty: number; shipped_qty: number;
   remaining_qty: number; cancelled: boolean; item_shortage_qty?: number;
 };
-export type DeliveryBuildUpOption = { token: string; codes: (string | null)[]; components: DeliveryComponent[] };
-export type ManualDeliveryInput = Pick<DeliveryInput, "itemcode" | "delivery_date" | "ordered_qty"> & { build_up_token?: string | null };
+export type DeliveryBuildUpOption = { token: string; active?: boolean; codes: (string | null)[]; components: DeliveryComponent[] };
+export type ManualDeliveryInput = Pick<DeliveryInput, "itemcode" | "delivery_date" | "ordered_qty"> & {
+  build_up_token?: string | null; needs_activation?: boolean; expected_active_token?: string | null;
+};
 export type ManualDeliveryItem = { product_name: string; customer: string | null; build_up_options?: DeliveryBuildUpOption[] };
 
 export function parseManualDeliveryInput(value: unknown): ManualDeliveryInput {
@@ -75,7 +77,13 @@ export function parseManualDeliveryInput(value: unknown): ManualDeliveryInput {
   }
   const token = row.build_up_token;
   if (token != null && (typeof token !== "string" || !/^\d+:[0-9a-f]{32}$/.test(token))) throw new Error("Tổ hợp mã con không hợp lệ.");
-  return { itemcode, delivery_date: row.delivery_date, ordered_qty: qty, ...(token === undefined ? {} : { build_up_token: token }) };
+  const expected = row.expected_active_token;
+  if (expected != null && (typeof expected !== "string" || !/^\d+:[0-9a-f]{32}$/.test(expected))) throw new Error("Thông tin bộ active không hợp lệ.");
+  if (row.needs_activation !== undefined && typeof row.needs_activation !== "boolean") throw new Error("Thông tin cập nhật active không hợp lệ.");
+  return { itemcode, delivery_date: row.delivery_date, ordered_qty: qty,
+    ...(token === undefined ? {} : { build_up_token: token }),
+    ...(expected === undefined ? {} : { expected_active_token: expected }),
+    ...(row.needs_activation === undefined ? {} : { needs_activation: row.needs_activation }) };
 }
 export type DeliveryCandidate = {
   id: string; delivery_date: string; ordered_qty: number; shipped_qty: number;
@@ -183,15 +191,25 @@ export type FifoPreview = {
 };
 
 export function selectDeliveryBuildUp(options: DeliveryBuildUpOption[] | undefined, token: string | undefined) {
-  return options?.length === 1 ? options[0] : options?.find((option) => option.token === token);
+  const active = options?.find((option) => option.active);
+  if (active) return active;
+  // Legacy stored previews did not contain active metadata.
+  if (options?.length === 1 && options[0].active === undefined) return options[0];
+  return options?.find((option) => option.token === token);
+}
+
+export function deliveryBuildUpSelection(options: DeliveryBuildUpOption[] | undefined, token: string | undefined) {
+  const active = options?.find((option) => option.active);
+  const chosen = selectDeliveryBuildUp(options, token);
+  return { build_up_token: chosen?.token ?? null, needs_activation: Boolean(chosen && !active), expected_active_token: active?.token ?? null };
 }
 
 // Aggregate real demand by stock item, including components shared by separate requests.
-export function previewDeliveryDemand(rows: DeliveryPreviewLine[], choices: Record<number, string>, recipeChoices: Record<number, string> = {}): DeliveryPreviewLine[] {
+export function previewDeliveryDemand(rows: DeliveryPreviewLine[], choices: Record<number, string>, recipeChoices: Record<string, string> = {}): DeliveryPreviewLine[] {
   const delta = new Map<string, number>();
   const parts = rows.map((row) => {
     const target = row.existing || row.candidates.find((candidate) => candidate.id === choices[row.excel_row]);
-    const recipe = !target && selectDeliveryBuildUp(row.build_up_options, recipeChoices[row.excel_row]);
+    const recipe = !target && selectDeliveryBuildUp(row.build_up_options, recipeChoices[row.itemcode] ?? recipeChoices[row.excel_row]);
     const split = target ? target.request_type === "parent" : Boolean(row.build_up_options?.length);
     const components: DeliveryComponent[] = split
       ? (target ? target.components : recipe ? recipe.components : undefined) ?? []

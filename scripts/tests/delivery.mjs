@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 require.extensions[".ts"] = (module, file) => module._compile(ts.transpileModule(readFileSync(file, "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, file);
-const { parseDeliverySheet, parseManualDeliveryInput, previewDeliveryDemand, deliveryPreviewErrors } = require("../../lib/warehouse-receipt/outgoing.ts");
+const { parseDeliverySheet, parseManualDeliveryInput, previewDeliveryDemand, deliveryPreviewErrors, selectDeliveryBuildUp, deliveryBuildUpSelection } = require("../../lib/warehouse-receipt/outgoing.ts");
 const { analyzeDeliveryGroups, componentPickKey, suggestDeliveryGroups } = require("../../lib/warehouse-receipt/delivery-groups.ts");
 const { expandMergedCells } = require("../../lib/excel-merged.ts");
 const { parseWarehouseMasterData } = require("../../lib/warehouse-receipt/master-data.ts");
@@ -1105,5 +1105,126 @@ await db.exec("set role authenticated");
 await assert.rejects(db.query("select * from public.warehouse_item_identity('LOOKUP-ERP')"),/permission denied/);
 await assert.rejects(db.query("select public.post_manual_delivery_catalog_v1($1,'{}')",[randomUUID()]),/permission denied/);
 console.log("PASS: unified catalog lookup, ERP-name priority, independent field fallbacks, optional customer intake, strict ERP/manual declarations, recipe checks and ERP evidence preservation.");
+
+await db.exec("reset role");
+const preActiveRecipes=(await db.query("select parent_itemcode,count(*)::int as count from public.item_build_up group by parent_itemcode")).rows;
+await migrate("20261118120000_active_item_build_up.sql");
+for(const before of preActiveRecipes){
+ const rows=(await db.query("select active from public.item_build_up where parent_itemcode=$1",[before.parent_itemcode])).rows;
+ assert.equal(rows.filter(r=>r.active).length,before.count===1?1:0);
+}
+await db.exec(`insert into public.item_pallet_config(itemcode,product_name) values
+ ('ACTIVE-P','Mẹ nhiều bộ'),('ACTIVE-A','Con A'),('ACTIVE-B','Con B'),
+ ('ACTIVE-C','Con C'),('ACTIVE-D','Con D'),('ACTIVE-ONLY','Chỉ một bộ mới');
+ insert into public.item_build_up(parent_itemcode,child_itemcode_1,child_itemcode_2) values
+ ('ACTIVE-P','ACTIVE-A','ACTIVE-B'),('ACTIVE-P','ACTIVE-C','ACTIVE-D'),('ACTIVE-ONLY','ACTIVE-A',null)`);
+await db.exec("set role authenticated");
+const activeRecipes=async code=>(await lookupBuild(code)).build_up_options;
+const activeRows=async code=>(await manageCatalog("lookup",{itemcode:code,recipes:true})).recipes;
+const initialActiveOptions=await activeRecipes("ACTIVE-P");
+assert.equal((await lookupBuild("ACTIVE-P")).build_up_active_version,1);
+assert.ok(initialActiveOptions.every(o=>o.active===false));
+assert.equal(selectDeliveryBuildUp(initialActiveOptions),undefined);
+assert.equal(selectDeliveryBuildUp(await activeRecipes("ACTIVE-ONLY")),undefined,"One inactive recipe still requires a first choice");
+const firstOption=initialActiveOptions[0],secondOption=initialActiveOptions[1];
+const needsActive=deliveryBuildUpSelection(initialActiveOptions,firstOption.token);
+assert.equal(needsActive.needs_activation,true);
+assert.equal(needsActive.expected_active_token,null);
+assert.equal(parseManualDeliveryInput({...input,...needsActive}).needs_activation,true);
+assert.equal(parseManualDeliveryInput({...input}).needs_activation,undefined,"Old retry payloads are preserved");
+assert.throws(()=>parseManualDeliveryInput({...input,needs_activation:"yes"}),/active không hợp lệ/);
+assert.throws(()=>parseManualDeliveryInput({...input,expected_active_token:"not-a-recipe"}),/active không hợp lệ/);
+await assert.rejects(postManual({...input,itemcode:"ACTIVE-P"}),/DELIVERY_BUILD_UP_CHOOSE/);
+const activeManualPayload={...input,itemcode:"ACTIVE-P",ordered_qty:1,...needsActive};
+const activeManualCommand=randomUUID();
+const activatedManual=await postManual(activeManualPayload,activeManualCommand);
+assert.equal((await activeRows("ACTIVE-P")).filter(r=>r.active).length,1);
+assert.equal((await activeRecipes("ACTIVE-P")).find(o=>o.active).token,firstOption.token);
+const afterFirst=await activeRecipes("ACTIVE-P");
+assert.equal(selectDeliveryBuildUp(afterFirst,secondOption.token).token,firstOption.token,"An active recipe is selected automatically");
+assert.equal(deliveryBuildUpSelection(afterFirst).needs_activation,false);
+await postManual({...input,itemcode:"ACTIVE-P",ordered_qty:1,...needsActive});
+await postManual({...input,itemcode:"ACTIVE-P",ordered_qty:1,...needsActive,needs_activation:false});
+await assert.rejects(postManual({...input,itemcode:"ACTIVE-P",build_up_token:secondOption.token,needs_activation:true,expected_active_token:null}),/DELIVERY_BUILD_UP_ACTIVE_CHANGED/);
+await assert.rejects(db.exec("update public.item_build_up set active=true where parent_itemcode='ACTIVE-P'"),/permission denied/);
+await db.exec("reset role");
+await assert.rejects(db.exec("update public.item_build_up set active=true where parent_itemcode='ACTIVE-P'"),/duplicate key/);
+await db.exec("set role authenticated");
+const editorLookup=await manageCatalog("lookup",{itemcode:"ACTIVE-P",recipes:true});
+assert.ok(editorLookup.recipes[0].active);
+const deactive=editorLookup.recipes.find(r=>!r.active);
+await manageCatalog("save_build_up",{itemcode:"ACTIVE-P",children:deactive.children,replace_id:deactive.id,expected_children:deactive.children});
+assert.equal((await activeRecipes("ACTIVE-P")).find(o=>o.active).token,secondOption.token);
+assert.deepEqual(await postManual(activeManualPayload,activeManualCommand),activatedManual,"Retry never reactivates an old default");
+assert.equal((await activeRecipes("ACTIVE-P")).find(o=>o.active).token,secondOption.token);
+const newRecipe=await manageCatalog("save_build_up",{itemcode:"ACTIVE-P",children:["ACTIVE-A","ACTIVE-D",null],create_new:true});
+assert.equal(newRecipe.active,true);
+assert.equal((await activeRows("ACTIVE-P")).filter(r=>r.active).length,1);
+const newActiveOptions=await activeRecipes("ACTIVE-P");
+assert.equal(newActiveOptions.find(o=>o.active).token.split(":")[0],newRecipe.recipe_id);
+const oldSnapshot=await buildRows(activatedManual.request_id);
+assert.deepEqual(oldSnapshot.map(r=>r.itemcode),firstOption.components.map(c=>c.itemcode),"Changing active never edits created requests");
+await assert.rejects(postManual({...input,itemcode:"ACTIVE-P",...deliveryBuildUpSelection(afterFirst)}),/DELIVERY_BUILD_UP_ACTIVE_CHANGED/);
+// ERP creates new schedules and activates once; repeated rows share one choice.
+const noActiveSingle=await activeRecipes("ACTIVE-ONLY");
+const erpSingleChoice=deliveryBuildUpSelection(noActiveSingle,noActiveSingle[0].token);
+const activeERPFile={rows:[line("ACTIVE-ERP1","ACTIVE-ONLY",1,"2026-11-18",{excel_row:1,...erpSingleChoice}),
+ line("ACTIVE-ERP2","ACTIVE-ONLY",2,"2026-11-18",{excel_row:2,...erpSingleChoice})]};
+const previewBeforeActive=await rpc("preview",activeERPFile);
+assert.equal(previewBeforeActive.build_up_active_version,1);
+assert.equal((await activeRows("ACTIVE-ONLY")).some(r=>r.active),false,"Preview does not activate");
+const activeERPCommand=randomUUID();
+const activeERPResult=await rpc("import",activeERPFile,activeERPCommand);
+assert.equal(activeERPResult.changed,2);
+assert.equal((await activeRows("ACTIVE-ONLY")).filter(r=>r.active).length,1);
+await db.exec("reset role");
+const activeXminBefore=(await db.query("select xmin::text as version from public.item_build_up where parent_itemcode='ACTIVE-ONLY' and active")).rows[0].version;
+await db.exec("set role authenticated");
+const autoDefault=await activeRecipes("ACTIVE-ONLY");
+assert.equal(deliveryBuildUpSelection(autoDefault).needs_activation,false);
+await rpc("import",{rows:[line("ACTIVE-ERP3","ACTIVE-ONLY",1,"2026-11-18",deliveryBuildUpSelection(autoDefault))]});
+await db.exec("reset role");
+assert.equal((await db.query("select xmin::text as version from public.item_build_up where parent_itemcode='ACTIVE-ONLY' and active")).rows[0].version,activeXminBefore,"Using active performs no default-row update");
+await db.exec(`insert into public.item_pallet_config(itemcode,product_name) values
+ ('ACTIVE-FAIL','Mẹ kiểm tra rollback'),('ACTIVE-FILE','Mẹ dùng trong file');
+ insert into public.item_build_up(parent_itemcode,child_itemcode_1) values
+ ('ACTIVE-FAIL','ACTIVE-A'),('ACTIVE-FAIL','ACTIVE-B'),('ACTIVE-FILE','ACTIVE-A'),('ACTIVE-FILE','ACTIVE-B')`);
+await db.exec("set role authenticated");
+const failChoices=await activeRecipes("ACTIVE-FAIL");
+const failSelection=deliveryBuildUpSelection(failChoices,failChoices[0].token);
+await assert.rejects(postManual({...input,itemcode:"ACTIVE-FAIL",ordered_qty:0,...failSelection}),/DELIVERY_INVALID_QUANTITY/);
+assert.ok((await activeRows("ACTIVE-FAIL")).every(r=>!r.active),"A failed manual post does not activate");
+await assert.rejects(rpc("import",{rows:[line("ACTIVE-FAIL1","ACTIVE-FAIL",1,"2026-11-18",failSelection),line("ACTIVE-FAIL2","NEVER-DECLARED-ACTIVE",1)]}),/DELIVERY_CATALOG_REJECTED/);
+assert.equal((await get("ACTIVE-FAIL1")).length,0);
+assert.ok((await activeRows("ACTIVE-FAIL")).every(r=>!r.active),"A rejected file does not activate a valid row");
+await postManual({...input,itemcode:"ACTIVE-FAIL",...failSelection,needs_activation:false});
+assert.equal((await activeRecipes("ACTIVE-FAIL")).find(o=>o.active).token,failChoices[0].token,"Backend derives activation even if a client flag is false");
+const fileChoices=await activeRecipes("ACTIVE-FILE");
+const fileRows=[line("ACTIVE-MULTI1","ACTIVE-FILE",1,"2026-11-18",{excel_row:1,...deliveryBuildUpSelection(fileChoices,fileChoices[0].token)}),
+ line("ACTIVE-MULTI2","ACTIVE-FILE",1,"2026-11-18",{excel_row:2,...deliveryBuildUpSelection(fileChoices,fileChoices[1].token)})];
+await assert.rejects(rpc("import",{rows:fileRows}),/DELIVERY_BUILD_UP_CONFLICT:ACTIVE-FILE/);
+assert.ok((await activeRows("ACTIVE-FILE")).every(r=>!r.active));
+assert.equal((await get("ACTIVE-MULTI1")).length,0);
+const mergedChoice=previewDeliveryDemand((await rpc("preview",{rows:fileRows})).rows,{1:"new",2:"new"},{"ACTIVE-FILE":fileChoices[1].token});
+assert.ok(mergedChoice.every(r=>r.preview_components[0].itemcode===fileChoices[1].components[0].itemcode),"A single frontend parent choice applies to every new ERP row");
+fileRows[0]={...fileRows[0],...deliveryBuildUpSelection(fileChoices,fileChoices[1].token)};
+const fileCommand=randomUUID();
+const fileResult=await rpc("import",{rows:fileRows},fileCommand);
+assert.equal((await activeRecipes("ACTIVE-FILE")).find(o=>o.active).token,fileChoices[1].token);
+const currentFileRecipes=(await manageCatalog("lookup",{itemcode:"ACTIVE-FILE",recipes:true})).recipes;
+const previouslyInactive=currentFileRecipes.find(r=>!r.active);
+await manageCatalog("save_build_up",{itemcode:"ACTIVE-FILE",replace_id:previouslyInactive.id,expected_children:previouslyInactive.children,children:previouslyInactive.children});
+const expectedDefault=(await activeRecipes("ACTIVE-FILE")).find(o=>o.active).token;
+assert.deepEqual(await rpc("import",{rows:fileRows},fileCommand),fileResult);
+assert.equal((await activeRecipes("ACTIVE-FILE")).find(o=>o.active).token,expectedDefault,"ERP retry never reactivates a previous choice");
+const historicalParent=(await get("ACTIVE-MULTI1")).find(r=>r.request_type==="parent");
+await rpc("import",{rows:[line("ACTIVE-MULTI1","ACTIVE-FILE",2,"2026-11-19",{target_id:historicalParent.id,expected_version:historicalParent.version,mode:"update"})]});
+assert.equal((await activeRecipes("ACTIVE-FILE")).find(o=>o.active).token,expectedDefault,"Rescheduling old orders does not replace the active recipe");
+assert.equal((await buildRows(historicalParent.id))[0].itemcode,fileChoices[1].components[0].itemcode);
+await assert.rejects(db.query("select public.delivery_activate_build_up('ACTIVE-P',$1,true)",[firstOption.token]),/permission denied/);
+await assert.rejects(db.query("select public.post_manual_delivery_before_active($1,'{}')",[randomUUID()]),/permission denied/);
+await assert.rejects(db.query("select public.manage_delivery_before_active('import',$1,'{}')",[randomUUID()]),/permission denied/);
+await assert.rejects(manageCatalog("save_build_up",{itemcode:"ACTIVE-P",children:["ACTIVE-A","ACTIVE-D",null],create_new:true}),/WAREHOUSE_CATALOG_DUPLICATE_RECIPE/);
+console.log("PASS: active recipe migration, default selection, manual/ERP activation, editor changes, uniqueness, stale snapshots and retries.");
 await db.close();
 console.log("PASS: merged parser, FIFO allocation, aggregate shortage, import/update dedupe, partial/done, cancellation, reschedule, units, rollback, access control and ledger consistency.");

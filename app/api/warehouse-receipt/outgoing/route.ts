@@ -12,10 +12,13 @@ const fail = (error: string, status = 400) => Response.json({ success: false, er
 const needsBuildUpMigration = () => fail("Cần chạy migration 20261116110000_delivery_build_up.sql để tách mã ghép cặp khi tạo lịch giao.", 503);
 const needsParentMigration = () => fail("Cần chạy migration 20261118100000_parent_delivery_workflow.sql để quản lý xuất theo mã mẹ.", 503);
 const needsCatalogMigration = () => fail("Cần chạy migration 20261118110000_unified_warehouse_item_lookup.sql để tra cứu danh mục kho.", 503);
+const needsActiveMigration = () => fail("Cần chạy migration 20261118120000_active_item_build_up.sql để dùng bộ ghép cặp active.", 503);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
+  if (message.startsWith("DELIVERY_BUILD_UP_ACTIVE_CHANGED:")) return fail(`Bộ active của mã ${message.slice("DELIVERY_BUILD_UP_ACTIVE_CHANGED:".length)} đã thay đổi. Tra cứu hoặc kiểm tra lại file trước khi xác nhận.`, 409);
+  if (message.startsWith("DELIVERY_BUILD_UP_CONFLICT:")) return fail(`Mã mẹ ${message.slice("DELIVERY_BUILD_UP_CONFLICT:".length)} đang chọn nhiều bộ khác nhau. Hãy dùng chung một bộ cho các lịch mới trong lần nạp.`, 409);
   if (message.startsWith("DELIVERY_CATALOG_REJECTED:")) {
     try {
       const rejection = JSON.parse(message.slice("DELIVERY_CATALOG_REJECTED:".length)) as {
@@ -92,6 +95,7 @@ export async function GET(request: Request) {
     const { data: item, error } = await db.rpc("lookup_delivery_build_up", { p_itemcode: itemcode });
     if (error) return dbError(error);
     if (item?.catalog_lookup_version !== 1) return needsCatalogMigration();
+    if (item?.build_up_active_version !== 1) return needsActiveMigration();
     if (item.lookup_error) return fail(item.lookup_error, 404);
     if (!item) return fail("Không tìm thấy item, vui lòng cập nhật database.", 404);
     return Response.json({ success: true, item }, { headers: { "Cache-Control": "no-store" } });
@@ -143,6 +147,7 @@ export async function POST(request: Request) {
       if (data?.model_version !== 2) return fail("Cần chạy migration 20261105140000_item_stock_summary.sql để chuyển mô hình tồn kho.", 503);
       if (data?.build_up_version !== 1) return needsBuildUpMigration();
       if (data?.catalog_lookup_version !== 1) return needsCatalogMigration();
+      if (data?.build_up_active_version !== 1) return needsActiveMigration();
       // A fingerprint identifies the parsed source, independent of uploaded filename.
       const fingerprint = createHash("sha256").update(JSON.stringify(parsed.rows)).digest("hex");
       return Response.json({ success: true, ...data, fingerprint, file_name: file.name });

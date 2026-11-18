@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { loadWarehouseRows, matchesWarehouseSearch, warehouseSearchTokens, WAREHOUSE_PAGE_SIZE } from "@/lib/warehouse-receipt/outgoing-list";
-import { MAX_DELIVERY_QUANTITY, deliveryPreviewErrors, previewDeliveryDemand, selectDeliveryBuildUp, type DeliveryPreviewLine, type DeliveryRequest } from "@/lib/warehouse-receipt/outgoing";
+import { MAX_DELIVERY_QUANTITY, deliveryBuildUpSelection, deliveryPreviewErrors, previewDeliveryDemand, type DeliveryPreviewLine, type DeliveryRequest } from "@/lib/warehouse-receipt/outgoing";
 import { WarehouseManualDelivery } from "./warehouse-manual-delivery";
 import { WarehouseDeliveryReview } from "./warehouse-delivery-review";
 
@@ -37,7 +37,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   const [sourcePreview, setPreview] = useState<DeliveryPreviewLine[] | null>(null);
   const [uploadError, setUploadError] = useState("");
   const [choices, setChoices] = useState<Record<number, string>>({});
-  const [recipeChoices, setRecipeChoices] = useState<Record<number, string>>({});
+  const [recipeChoices, setRecipeChoices] = useState<Record<string, string>>({});
   const preview = useMemo(() => sourcePreview ? previewDeliveryDemand(sourcePreview, choices, recipeChoices) : null, [sourcePreview, choices, recipeChoices]);
   const [selected, setSelected] = useState<DeliveryRequest | null>(null);
   const [mode, setMode] = useState<"cancel" | "history">("history");
@@ -175,7 +175,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
       return {
         excel_row: row.excel_row, delivery_date: row.delivery_date, purorder: row.purorder, sales_id: row.sales_id, itemcode: row.itemcode,
         product_name: row.product_name, customer: row.customer, unit: row.unit, unit_label: row.unit_label, ordered_qty: row.ordered_qty,
-        ...(choice === "new" ? { build_up_token: selectDeliveryBuildUp(row.build_up_options, recipeChoices[row.excel_row])?.token ?? null } : {}),
+        ...(choice === "new" ? deliveryBuildUpSelection(row.build_up_options, recipeChoices[row.itemcode]) : {}),
         mode: choice === "new" ? "new" : "update", target_id: target?.id ?? null, expected_version: target?.version ?? null,
       };
     });
@@ -332,11 +332,13 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
                 <option value="">Chọn lịch mới hoặc dời lịch…</option><option value="new">Tạo lịch giao mới</option>
                 {row.candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>Dời lịch {date(candidate.delivery_date)}{candidate.request_type !== "parent" ? ` — đã xuất ${num(candidate.shipped_qty)}` : ""}</option>)}
               </select> : "Thêm lịch mới"}
-              {choices[row.excel_row] === "new" && row.build_up_options && row.build_up_options.length > 1 ?
+              {choices[row.excel_row] === "new" && row.build_up_options?.some((option) => option.active)
+                ? <small className="muted">Tự dùng bộ active.</small> : null}
+              {choices[row.excel_row] === "new" && Boolean(row.build_up_options?.length) && !row.build_up_options?.some((option) => option.active) ?
                 <select aria-label={`Tổ hợp mã con dòng ${row.excel_row}`} disabled={locked}
-                  value={recipeChoices[row.excel_row] || ""} onChange={(event) => setRecipeChoices((old) => ({ ...old, [row.excel_row]: event.target.value }))}>
+                  value={recipeChoices[row.itemcode] || ""} onChange={(event) => setRecipeChoices((old) => ({ ...old, [row.itemcode]: event.target.value }))}>
                   <option value="">Chọn tổ hợp mã con…</option>
-                  {row.build_up_options.map((option) => <option key={option.token} value={option.token}>{option.codes.filter(Boolean).join(" + ")}</option>)}
+                  {row.build_up_options?.map((option) => <option key={option.token} value={option.token}>{option.codes.filter(Boolean).join(" + ")}</option>)}
                 </select> : null}
               {!row.existing?.cancelled && parts?.some((part) => part.requested_qty > MAX_DELIVERY_QUANTITY || part.requested_qty < Math.min(part.ordered_qty ?? 0, part.shipped_qty ?? 0))
                 ? <small role="alert">Số lượng mã con vượt giới hạn hoặc thấp hơn số đã xuất.</small> : null}
