@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { loadWarehouseRows, matchesWarehouseSearch, warehouseSearchTokens, WAREHOUSE_PAGE_SIZE } from "@/lib/warehouse-receipt/outgoing-list";
 import { MAX_DELIVERY_QUANTITY, previewDeliveryDemand, selectDeliveryBuildUp, type DeliveryPreviewLine, type DeliveryRequest } from "@/lib/warehouse-receipt/outgoing";
 import { WarehouseManualDelivery } from "./warehouse-manual-delivery";
@@ -309,22 +309,8 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
           <thead><tr><th>Dòng</th><th>Ngày giao</th><th>PO / Sales ID</th><th>Item</th><th>Tên sản phẩm</th><th>Khách hàng mã con</th><th>Yêu cầu trong file</th><th>Tồn hiện tại</th><th>Đã yêu cầu</th><th>Tồn khả dụng</th><th>Thiếu của item</th><th>Cách nạp</th></tr></thead>
           <tbody>{preview.map((row) => {
             const parts = row.preview_components;
-            const componentValue = (value: (part: NonNullable<typeof parts>[number]) => number, usual: number) =>
-              parts ? parts.length ? <><div aria-hidden="true">&nbsp;</div>{parts.map((part) => <div key={part.itemcode}>{num(value(part))}</div>)}</> : "—" : num(usual);
-            const componentText = (value: (part: NonNullable<typeof parts>[number]) => string | null | undefined, usual: string) =>
-              parts ? parts.length ? <><div aria-hidden="true">&nbsp;</div>{parts.map((part) => <div key={part.itemcode}>{value(part) || "—"}</div>)}</> : "—" : usual || "—";
-            return <tr key={row.excel_row} className={row.item_shortage_after > 0 ? "warehouse-outgoing-shortage" : undefined}>
-            <td>{row.excel_row}</td><td>{date(row.delivery_date)}</td><td>{row.purorder}<br />{row.sales_id}</td>
-            <td>{parts ? <><strong>Mã mẹ: {row.itemcode}</strong> × {num(row.ordered_qty)}
-              {parts.map((part) => <div key={part.itemcode}>{part.itemcode}</div>)}</> : row.itemcode}</td>
-            <td>{componentText((part) => part.product_name, row.product_name)}</td>
-            <td>{componentText((part) => part.customer, "")}</td>
-            <td>{componentValue((part) => part.requested_qty, row.ordered_qty)}</td>
-            <td>{componentValue((part) => part.item_stock_qty, row.item_stock_qty)}</td>
-            <td>{componentValue((part) => part.item_on_order_qty, row.item_on_order_qty)}</td>
-            <td>{componentValue((part) => part.item_stock_qty - part.item_on_order_qty, row.item_stock_qty - row.item_on_order_qty)}</td>
-            <td>{componentValue((part) => part.item_shortage_after, row.item_shortage_after)}</td>
-            <td>{row.existing ? (row.existing.cancelled ? "Đã hủy — bỏ qua" : row.existing.ordered_qty === row.ordered_qty ? "Không đổi — bỏ qua" : "Cập nhật số lượng") : row.candidates.length ?
+            const entries = parts?.length ? parts : [null];
+            const action = <>{row.existing ? (row.existing.cancelled ? "Đã hủy — bỏ qua" : row.existing.ordered_qty === row.ordered_qty ? "Không đổi — bỏ qua" : "Cập nhật số lượng") : row.candidates.length ?
               <select aria-label={`Cách nạp dòng ${row.excel_row}`} disabled={locked} onChange={(event) => setChoices((old) => ({ ...old, [row.excel_row]: event.target.value }))} value={choices[row.excel_row] || ""}>
                 <option value="">Chọn lịch mới hoặc dời lịch…</option><option value="new">Tạo lịch giao mới</option>
                 {row.candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>Dời lịch {date(candidate.delivery_date)}{candidate.request_type !== "parent" ? ` — đã xuất ${num(candidate.shipped_qty)}` : ""}</option>)}
@@ -336,9 +322,29 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
                   {row.build_up_options.map((option) => <option key={option.token} value={option.token}>{option.codes.filter(Boolean).join(" + ")}</option>)}
                 </select> : null}
               {!row.existing?.cancelled && parts?.some((part) => part.requested_qty > MAX_DELIVERY_QUANTITY || part.requested_qty < Math.min(part.ordered_qty ?? 0, part.shipped_qty ?? 0))
-                ? <small role="alert">Số lượng mã con vượt giới hạn hoặc thấp hơn số đã xuất.</small> : null}
-            </td>
-          </tr>;
+                ? <small role="alert">Số lượng mã con vượt giới hạn hoặc thấp hơn số đã xuất.</small> : null}</>;
+            return <Fragment key={row.excel_row}>{entries.map((part, index) => <tr
+              key={part?.itemcode ?? row.itemcode}
+              className={(part?.item_shortage_after ?? row.item_shortage_after) > 0 ? "warehouse-outgoing-shortage" : undefined}>
+              {index === 0 ? <>
+                <td rowSpan={entries.length}>{row.excel_row}</td>
+                <td rowSpan={entries.length}>{date(row.delivery_date)}</td>
+                <td rowSpan={entries.length}>{row.purorder}<br />{row.sales_id}
+                  {parts ? <p className="muted small"><strong>Mã mẹ: {row.itemcode}</strong><br />Số lượng: {num(row.ordered_qty)}</p> : null}
+                </td>
+              </> : null}
+              {parts && !part ? <td colSpan={8}>Chọn tổ hợp để xem các mã con.</td> : <>
+                <td><strong>{part?.itemcode ?? row.itemcode}</strong></td>
+                <td>{part ? part.product_name || "Chưa có tên sản phẩm" : row.product_name || "—"}</td>
+                <td>{part ? part.customer || "Chưa có tên khách hàng" : "—"}</td>
+                <td className="warehouse-delivery-number">{num(part?.requested_qty ?? row.ordered_qty)}</td>
+                <td className="warehouse-delivery-number">{num(part?.item_stock_qty ?? row.item_stock_qty)}</td>
+                <td className="warehouse-delivery-number">{num(part?.item_on_order_qty ?? row.item_on_order_qty)}</td>
+                <td className="warehouse-delivery-number">{num(part ? part.item_stock_qty - part.item_on_order_qty : row.item_stock_qty - row.item_on_order_qty)}</td>
+                <td className="warehouse-delivery-number">{num(part?.item_shortage_after ?? row.item_shortage_after)}</td>
+              </>}
+              {index === 0 ? <td rowSpan={entries.length}>{action}</td> : null}
+            </tr>)}</Fragment>;
           })}</tbody>
         </table></div>
         <p className="muted small">Tổng nhu cầu dự kiến cập nhật theo lựa chọn lịch mới / dời lịch; hệ thống kiểm tra lại khi xác nhận. Lượng yêu cầu mới phải bằng hoặc lớn hơn số đã xuất của lịch cũ.</p>

@@ -92,17 +92,22 @@ function ManualDeliveryForm({ locked, onSubmit, date, setDate }: FormProps & { d
     </label> : null}
     {recipe ? <div aria-live="polite">
       <p className="muted small">Mã mẹ {code} sẽ tách thành các mã con sau:</p>
-      <ul>{recipe.components.map((component) => {
-        const available = component.item_stock_qty - component.item_on_order_qty;
-        const needed = amount * component.factor;
-        return <li key={component.itemcode}>
-          <strong>{component.itemcode}</strong> · {component.product_name || "Chưa có tên sản phẩm"}
-          {" · Khách hàng: "}{component.customer || "Chưa có tên khách hàng"}
-          {" · Yêu cầu "}{amount > 0 ? num(needed) : "—"}
-          {" · Tồn khả dụng "}{num(available)}
-          {amount > 0 && needed > available ? <> · <strong>Thiếu dự kiến {num(needed - available)}</strong></> : null}
-        </li>;
-      })}</ul>
+      <div className="scan-table-wrap warehouse-delivery-components">
+        <table className="warehouse-table" aria-label={`Mã con của ${code}`}>
+          <thead><tr><th>Mã sản phẩm</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Số lượng yêu cầu</th><th>Tồn khả dụng</th><th>Thiếu dự kiến</th></tr></thead>
+          <tbody>{recipe.components.map((component) => {
+            const available = component.item_stock_qty - component.item_on_order_qty;
+            const needed = amount * component.factor;
+            const shortage = amount > 0 ? Math.max(0, needed - available) : null;
+            return <tr key={component.itemcode} className={shortage ? "warehouse-outgoing-shortage" : undefined}>
+              <td><strong>{component.itemcode}</strong></td><td>{component.product_name || "Chưa có tên sản phẩm"}</td>
+              <td>{component.customer || "Chưa có tên khách hàng"}</td>
+              <td>{amount > 0 ? num(needed) : "—"}</td><td>{num(available)}</td>
+              <td>{shortage === null ? "—" : shortage > 0 ? <strong>{num(shortage)} · Thiếu hàng</strong> : "0"}</td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
       {exceedsLimit ? <p role="alert" className="alert alert-error">Số lượng mã con vượt giới hạn. Hãy giảm số lượng mã mẹ.</p> : null}
     </div> : null}
     <div id={`${id}-lookup`} aria-live="polite">
