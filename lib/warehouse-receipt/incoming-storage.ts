@@ -33,15 +33,6 @@ export function incomingStoredRows(saved: StoredIncoming) {
     .concat((saved.remaining_rows ?? []).map((row) => ({ ...row, selected: false })));
 }
 
-export function startIncomingSubmission(saved: StoredIncoming, action: "post" | "propose", now = Date.now()): StoredIncoming {
-  if (saved.status === "pending") return saved;
-  const selected = saved.rows.filter((row, index) => saved.selected?.[index] !== false);
-  const remaining = saved.rows.filter((row, index) => saved.selected?.[index] === false);
-  if (!selected.length) throw new Error("Hãy chọn ít nhất một dòng nhập kho.");
-  return { request_id: saved.request_id, rows: selected, status: "pending", action, expiresAt: now + INCOMING_DRAFT_TTL,
-    ...(remaining.length ? { remaining_rows: remaining } : {}) };
-}
-
 export function completeIncomingSubmission(saved: StoredIncoming, requestId: string, now = Date.now()): StoredIncoming | null {
   const rows = saved.remaining_rows ?? [];
   return rows.length ? { request_id: requestId, rows, selected: rows.map(() => false), status: "draft", expiresAt: now + INCOMING_DRAFT_TTL } : null;

@@ -141,7 +141,7 @@ export function WarehouseIncomingProposals({ canEdit, profileId, revision }: { c
   }
 
   return <section className="scan-table-card warehouse-incoming-proposals">
-    <div className="warehouse-incoming-draft-heading"><h2>Đề xuất nhập kho chờ duyệt <span className="muted">({num(total)})</span></h2>
+    <div className="warehouse-incoming-draft-heading"><h2>Proposal nhập kho <span className="muted">({num(total)})</span></h2>
       <p className="muted small">Danh sách dùng chung. {canEdit ? `Đã chọn ${selected.length}/${rows.length} dòng trên trang; duyệt để ghi nhận tồn kho.` : "Supervisor có quyền edit-WH sẽ duyệt và ghi nhận tồn kho."}</p>
       <button className="button button-secondary button-small" disabled={busy || loading} type="button" onClick={() => setReload((value) => value + 1)}>Tải lại đề xuất</button>
     </div>

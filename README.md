@@ -646,8 +646,8 @@ WH-DDMMYY-002
 - Ngày nhập kho mặc định ngày lịch hiện tại tại `Asia/Ho_Chi_Minh` (không trừ
   cutoff 06:00); có thể sửa theo từng dòng và được giữ trong lúc nhập liên tiếp.
 - Không bắt buộc: WO, Ghi chú.
-- Nhập mã sản phẩm → Tab sang Số lượng → Enter để thêm vào danh sách và
-  quay về ô Mã sản phẩm. Tên sản phẩm và Khách hàng tự điền khi rời ô mã.
+- Nhập mã sản phẩm → Tab sang Số lượng → hoàn tất thông tin bắt buộc → Enter
+  để gửi Proposal và quay về ô Mã sản phẩm. Tên/khách hàng tự điền khi rời ô mã.
 - Nút Nạp nhập kho lần đầu chỉ hiển thị cho superadmin; xem mục 11.4.
 - Mã viết tắt có một dấu `*` được chèn số 0 cho đủ 13 ký tự, ví dụ
   `11011*209` → `1101100000209`. Mã không có `*` được giữ nguyên sau khi trim.
@@ -656,31 +656,31 @@ WH-DDMMYY-002
   `item_pallet_config` và fallback từng trường từ `pallet_data`. Tên sản xuất
   ưu tiên trước tên ERP. Khách hàng có thể trống; item chưa khai báo hoặc chưa
   có tên dùng được bị từ chối.
-- Thêm vào danh sách tạo bản nháp trên trình duyệt. Có thể nhập tiếp khi đang
-  tra cứu; tên/khách hàng được cập nhật nền. Cùng item dùng chung lookup/cache.
-- Mỗi dòng có checkbox, mặc định chọn tất cả; header có chọn/bỏ chọn tất cả.
-  Chỉ các dòng đã tick cần đủ dữ liệu và lookup thành công để Tiếp theo.
-  Các dòng chưa tick vẫn giữ nguyên sau khi gửi đề xuất hoặc nhập kho.
-- Sửa/Xóa danh sách chờ yêu cầu `edit-WH`; tra cứu lại cho phép `view-WH`.
-- User có `view-WH` nhấn **Gửi đề xuất nhập kho** ở bước kiểm tra. API
-  `/api/warehouse-receipt/incoming-proposals` gọi `propose_manual_inventory`;
-  chỉ lưu đề xuất, chưa tạo `inv_incoming` hoặc cộng tồn.
-- **Đề xuất nhập kho chờ duyệt** là danh sách dùng chung, có người đề xuất.
-  Supervisor có `view-WH` + `edit-WH` được sửa/xóa, tick chọn từng dòng và
-  **Duyệt và nhập kho** qua popup xác nhận. `approve_incoming_proposals` khóa
-  các dòng theo ID, kiểm tra version, rồi gọi `post_manual_inventory` trong
-  cùng transaction. Một dòng lỗi/stale rollback toàn bộ lần duyệt.
-- Người có `edit-WH` cũng được xác nhận nhập trực tiếp các dòng đã chọn trong
-  bản nháp của mình qua `/api/warehouse-receipt/incoming`. Người nhập được lấy
-  từ `auth.uid()`; tên/khách hàng được tra lại ở backend khi ghi tồn.
-- Các bản nháp lưu trong `localStorage` theo tài khoản, thời hạn 7 ngày kể từ
-  lần lưu gần nhất. Trạng thái tick và các dòng chưa chọn cũng được lưu. Khi
-  reload, các dòng chưa gửi được tra cứu lại. Đề xuất đã gửi lưu trong DB tới
-  khi supervisor duyệt/xóa; thời hạn 7 ngày chỉ áp dụng cho bản nháp trình duyệt.
-- Thao tác chưa rõ kết quả được khóa sửa và giữ UUID, payload cùng loại thao
-  tác (gửi đề xuất hoặc nhập trực tiếp) để retry, kể cả khi quyền thay đổi.
-  Thành công chỉ xóa các dòng đã gửi/nhập; nếu hết dòng thì xóa bộ nhớ nháp.
-  Thay đổi bản nháp ở tab khác yêu cầu tải lại để tránh ghi đè.
+- Form manual có **Gửi Proposal nhập kho**. Nhập mã → Tab sang số lượng →
+  hoàn tất thông tin bắt buộc rồi Enter để gửi trực tiếp một dòng vào Proposal.
+  Mã/tên/khách hàng được kiểm tra lại tại backend, kể cả khi lookup giao diện
+  đang chạy. Không còn danh sách chờ nhập local hoặc bước kiểm tra riêng.
+- Mọi tài khoản có `view-WH`, bao gồm supervisor, đều gửi qua
+  `/api/warehouse-receipt/incoming-proposals` và `propose_manual_inventory`;
+  thao tác này chỉ lưu đề xuất, chưa tạo `inv_incoming` hoặc cộng tồn.
+- **Proposal nhập kho** là danh sách dùng chung duy nhất, có người đề xuất.
+  Supervisor có `view-WH` + `edit-WH` được sửa/xóa, tick chọn từng dòng (mặc
+  định tick all), rồi **Duyệt và nhập kho** qua popup xác nhận. Các dòng chưa
+  chọn vẫn chờ duyệt. `approve_incoming_proposals` khóa ID/version và gọi
+  `post_manual_inventory` trong cùng transaction; một dòng lỗi rollback cả lần.
+- UUID và payload được lưu trước khi gửi, thời hạn 7 ngày, để retry cùng thao
+  tác khi mất kết nối. Form chỉ reset sau khi xác nhận gửi thành công. Lỗi dữ
+  liệu rõ ràng cho phép sửa nội dung form trước khi gửi lại.
+- Bản nháp từ giao diện cũ được giữ lại: một dòng được khôi phục vào form,
+  nhiều dòng có nút chuyển sang Proposal hoặc khôi phục từng dòng để sửa
+  thông tin trước khi gửi. Lần gửi/nhập cũ chưa rõ kết quả vẫn
+  giữ nguyên UUID, payload và loại thao tác, không chuyển một lần nhập kho cũ
+  thành đề xuất mới. `/api/warehouse-receipt/incoming` còn phục vụ retry cũ có
+  `edit-WH`; giao diện mới chỉ ghi tồn qua bước duyệt Proposal.
+- Thời hạn 7 ngày áp dụng cho bản lưu trình duyệt. Proposal đã gửi được lưu
+  trong DB tới khi supervisor duyệt/xóa. Bản lưu thay đổi ở tab khác yêu cầu
+  tải lại để tránh ghi đè. Thành công xóa phần đã gửi và giữ phần còn lại của
+  các bản lưu cũ, nếu có.
 
 Chạy script `supabase/migrations/20261022090000_warehouse_item_catalog.sql`
 trước khi dùng tra cứu. Script thêm `product_name`, `customer`, backfill một lần
