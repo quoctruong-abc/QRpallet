@@ -275,7 +275,9 @@ Raw PostgreSQL/Supabase error chỉ log server-side. Business error có chủ đ
 | `pallet.create` | Tạo pallet, in tem, tìm kiếm, in lại, gộp |
 | `pallet.edit` | Sửa/xóa pallet Production |
 | `scan.standard` | Scan, cancel scan, confirm batch + tạo phiếu |
-| `receipt.view` | Xem lịch sử/chi tiết/in lại phiếu |
+| `receipt.view` | Xem tab Receipt, lịch sử/chi tiết/in lại phiếu |
+| `view-WH` | Xem Xuất kho / Nhập kho / Đối soát; đề xuất nhập/xuất thủ công |
+| `edit-WH` | Kèm `view-WH`: duyệt, ghi nhận và chỉnh sửa kho |
 | `dashboard.view` | Dashboard + Check FIFO + Check item |
 
 Permission cũ không còn dùng:
@@ -608,15 +610,11 @@ Route:
 /warehouse-receipt
 ```
 
-Permission:
-
-```text
-receipt.view
-```
-
-Module có bốn tab theo thứ tự: **Xuất kho**, **Nhập kho**, **Đối soát**, **Receipt**.
-Mặc định mở tab Xuất kho. Tab Nhập kho có form nhập thủ công, danh sách chờ và
-xác nhận ghi nhận tồn kho; Xuất kho và Đối soát hiện là khung giao diện.
+Ba tab **Xuất kho**, **Nhập kho**, **Đối soát** yêu cầu `view-WH`. Tab **Receipt**
+giữ quyền `receipt.view` riêng. Chỉ render và tải dữ liệu của các tab được phép.
+Mặc định mở Xuất kho nếu có quyền kho; tài khoản chỉ xem Receipt mở Receipt.
+Nhập kho/Xuất kho thủ công cho phép user đề xuất bằng `view-WH`. Supervisor
+có thêm `edit-WH` mới ghi nhận tồn hoặc xuất thực tế. Đối soát chưa triển khai.
 Tích hợp dữ liệu sau confirm scan sẽ triển khai sau cùng.
 
 Toàn bộ chức năng phiếu nhập kho hiện tại nằm trong tab **Receipt**:
@@ -628,7 +626,7 @@ Toàn bộ chức năng phiếu nhập kho hiện tại nằm trong tab **Receip
 - tải Excel.
 
 Receipt chỉ tải dữ liệu khi mở tab lần đầu; bộ lọc và kết quả được giữ khi
-chuyển sang tab khác rồi quay lại. Route và permission hiện tại được giữ nguyên.
+chuyển sang tab khác rồi quay lại. Quyền Receipt độc lập với hai quyền kho mới.
 
 Không reverse sau `WHdone`.
 
@@ -644,42 +642,45 @@ WH-DDMMYY-002
 
 ### 11.1 Nhập kho thủ công
 
-- Bắt buộc: Ngày nhập kho, Mã sản phẩm (`itemcode`), Số lượng (số nguyên dương).
+- Bắt buộc: Ngày nhập kho, Ngày sản xuất, Mã sản phẩm (`itemcode`), Số lượng (số nguyên dương).
 - Ngày nhập kho mặc định ngày lịch hiện tại tại `Asia/Ho_Chi_Minh` (không trừ
   cutoff 06:00); có thể sửa theo từng dòng và được giữ trong lúc nhập liên tiếp.
-- Không bắt buộc: Ngày sản xuất, WO, Ghi chú.
+- Không bắt buộc: WO, Ghi chú.
 - Nhập mã sản phẩm → Tab sang Số lượng → Enter để thêm vào danh sách và
   quay về ô Mã sản phẩm. Tên sản phẩm và Khách hàng tự điền khi rời ô mã.
 - Nút Nạp nhập kho lần đầu chỉ hiển thị cho superadmin; xem mục 11.4.
 - Mã viết tắt có một dấu `*` được chèn số 0 cho đủ 13 ký tự, ví dụ
   `11011*209` → `1101100000209`. Mã không có `*` được giữ nguyên sau khi trim.
   Frontend và API cùng dùng quy tắc này; mã viết tắt không hợp lệ bị từ chối.
-- POST `/api/warehouse-receipt/item-lookup` yêu cầu `receipt.view`, tra chính xác
-  itemcode trong `item_pallet_config`. Khi thiếu tên/khách hàng, RPC lấy một cặp
-  đầy đủ từ `pallet_data`, ưu tiên bản còn hiệu lực rồi bản cập nhật mới nhất,
-  ghi bổ sung vào cấu hình và trả về. Giá trị cấu hình đã có được giữ lại.
-- Không có dữ liệu đủ hai trường: `Không tìm thấy item, vui lòng cập nhật database`.
-- Nút Thêm vào danh sách chỉ tạo dòng chờ trên giao diện, chưa ghi nhập kho.
-  Có thể thêm ngay khi chưa tra cứu xong; tên/khách hàng cập nhật nền vào từng
-  dòng chờ. Cùng itemcode dùng chung request đang chạy và kết quả thành công.
-- Danh sách có Sửa, Xóa và Thử lại khi tra cứu lỗi. Lưu sửa giữ nguyên dòng và
-  tra cứu lại theo mã mới; kết quả cũ không ghi đè dòng đã đổi mã hoặc đã xóa.
-- Dòng không tìm thấy item hoặc tra cứu lỗi được tô đỏ, kèm thông báo. Tiếp theo
-  bị khóa khi danh sách rỗng, có dòng đang tra cứu/lỗi hoặc đang sửa chưa lưu.
-  Khi tất cả dòng hợp lệ, Tiếp theo mở bước kiểm tra; Xác nhận nhập kho mới ghi
-  toàn bộ danh sách vào `inv_incoming`.
-- POST `/api/warehouse-receipt/incoming` kiểm tra quyền `receipt.view`, ngày và
-  dữ liệu, sau đó gọi RPC `post_manual_inventory(uuid,jsonb)` bằng JWT user.
-  RPC tự lấy người nhập từ `auth.uid()` và tên/khách hàng từ database, không
-  tin các trường này từ frontend. Một dòng lỗi sẽ rollback cả lần nhập.
-- Các dòng đã thêm vào danh sách chờ được lưu trong `localStorage` theo tài
-  khoản trên trình duyệt đang dùng. Thời hạn 7 ngày tính từ lần thêm, sửa,
-  xóa dòng gần nhất hoặc khi gửi xác nhận. Mở lại danh sách sẽ tra cứu lại
-  thông tin sản phẩm của các dòng chưa gửi. Bản nháp hết hạn sẽ được xóa
-  khi trang Nhập kho còn mở hoặc khi quay lại.
-- Nếu chưa rõ kết quả ghi nhận, danh sách được khóa sửa và giữ nguyên UUID
-  cùng dữ liệu đã gửi để thử lại. Xác nhận thành công hoặc xóa hết dòng chờ
-  sẽ xóa bản lưu. Nếu danh sách thay đổi ở tab khác, cần tải lại trang.
+- POST `/api/warehouse-receipt/item-lookup` yêu cầu `view-WH`; tra cứu chung qua
+  `item_pallet_config` và fallback từng trường từ `pallet_data`. Tên sản xuất
+  ưu tiên trước tên ERP. Khách hàng có thể trống; item chưa khai báo hoặc chưa
+  có tên dùng được bị từ chối.
+- Thêm vào danh sách tạo bản nháp trên trình duyệt. Có thể nhập tiếp khi đang
+  tra cứu; tên/khách hàng được cập nhật nền. Cùng item dùng chung lookup/cache.
+- Mỗi dòng có checkbox, mặc định chọn tất cả; header có chọn/bỏ chọn tất cả.
+  Chỉ các dòng đã tick cần đủ dữ liệu và lookup thành công để Tiếp theo.
+  Các dòng chưa tick vẫn giữ nguyên sau khi gửi đề xuất hoặc nhập kho.
+- Sửa/Xóa danh sách chờ yêu cầu `edit-WH`; tra cứu lại cho phép `view-WH`.
+- User có `view-WH` nhấn **Gửi đề xuất nhập kho** ở bước kiểm tra. API
+  `/api/warehouse-receipt/incoming-proposals` gọi `propose_manual_inventory`;
+  chỉ lưu đề xuất, chưa tạo `inv_incoming` hoặc cộng tồn.
+- **Đề xuất nhập kho chờ duyệt** là danh sách dùng chung, có người đề xuất.
+  Supervisor có `view-WH` + `edit-WH` được sửa/xóa, tick chọn từng dòng và
+  **Duyệt và nhập kho** qua popup xác nhận. `approve_incoming_proposals` khóa
+  các dòng theo ID, kiểm tra version, rồi gọi `post_manual_inventory` trong
+  cùng transaction. Một dòng lỗi/stale rollback toàn bộ lần duyệt.
+- Người có `edit-WH` cũng được xác nhận nhập trực tiếp các dòng đã chọn trong
+  bản nháp của mình qua `/api/warehouse-receipt/incoming`. Người nhập được lấy
+  từ `auth.uid()`; tên/khách hàng được tra lại ở backend khi ghi tồn.
+- Các bản nháp lưu trong `localStorage` theo tài khoản, thời hạn 7 ngày kể từ
+  lần lưu gần nhất. Trạng thái tick và các dòng chưa chọn cũng được lưu. Khi
+  reload, các dòng chưa gửi được tra cứu lại. Đề xuất đã gửi lưu trong DB tới
+  khi supervisor duyệt/xóa; thời hạn 7 ngày chỉ áp dụng cho bản nháp trình duyệt.
+- Thao tác chưa rõ kết quả được khóa sửa và giữ UUID, payload cùng loại thao
+  tác (gửi đề xuất hoặc nhập trực tiếp) để retry, kể cả khi quyền thay đổi.
+  Thành công chỉ xóa các dòng đã gửi/nhập; nếu hết dòng thì xóa bộ nhớ nháp.
+  Thay đổi bản nháp ở tab khác yêu cầu tải lại để tránh ghi đè.
 
 Chạy script `supabase/migrations/20261022090000_warehouse_item_catalog.sql`
 trước khi dùng tra cứu. Script thêm `product_name`, `customer`, backfill một lần
@@ -717,7 +718,8 @@ confirm scan chưa nối.
 Trigger lấy tên người nhập từ profile, không nhận tên tùy ý từ client. Khi tài
 khoản đổi tên hoặc bị xóa, tên snapshot vẫn được giữ. Backend dùng service role
 phải truyền ID profile đã xác thực khi insert; user không ghi trực tiếp bảng.
-Authenticated chỉ đọc khi có `receipt.view`; anon không được truy cập.
+Authenticated chỉ đọc khi có `view-WH`; anon không được truy cập. Ghi tồn
+phải qua RPC có `view-WH` + `edit-WH`.
 
 Index FIFO chỉ gồm dòng tồn > 0: `itemcode`, `coalesce(production_date,
 received_date)`, `received_date`, `id`. Ngày sản xuất thiếu vẫn giữ NULL trong
@@ -962,7 +964,8 @@ Bảng `item_build_up` giữ từng tổ hợp theo đúng vị trí cột, cho 
 mẹ có nhiều bộ mã con và không ghi trùng tổ hợp khi nạp lại.
 
 Migration `20261112120000_warehouse_catalog_editors.sql` thêm hai form
-Super Admin trong **Nhập kho**. **Cập nhật itemcode** lưu tên sản phẩm và
+trong **Nhập kho**; sau migration phân quyền WH, hai form này yêu cầu
+`view-WH` + `edit-WH`. **Cập nhật itemcode** lưu tên sản phẩm và
 khách hàng tùy chọn từ danh sách khách hàng đã có. **Cập nhật ghép cặp**
 tra tên từ danh mục; nếu mã mẹ đã có tổ hợp, người dùng chọn tổ hợp cần
 thay và xác nhận.
@@ -1069,10 +1072,34 @@ Các lần xuất được phân trang 50 dòng. Dữ liệu lấy từ yêu c�
 lưu, không quy đổi số xuất mã mẹ, không tra bộ active và không thay đổi FIFO,
 quy trình xác nhận, số liệu tồn hoặc dữ liệu xuất kho.
 
-API/RPC yêu cầu tài khoản hoạt động có `receipt.view`. `list_stock_summary`,
+API/RPC kho yêu cầu tài khoản hoạt động có `view-WH`; API/RPC lịch sử Receipt
+giữ `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.
 Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đầy đủ vẫn lưu trong DB.
 Chưa nối tự động confirm scan.
+
+Migration `20261118140000_warehouse_permissions.sql` đăng ký hai quyền kho,
+đổi guard API/RPC/RLS (kể cả các hàm private được delegate) và giữ Receipt riêng.
+Không tự sao chép quyền từ `receipt.view`; kể cả admin cần được cấp quyền kho
+mới, trừ Super Admin theo bypass hiện có. Admin Warehouse được quản lý hai quyền
+cho user cùng position; Super Admin được cấp cho mọi tài khoản được mapping.
+Chọn `edit-WH` trong Admin tự chọn kèm `view-WH`; bỏ `view-WH` bỏ cả `edit-WH`.
+
+`view-WH` cho manual nhập/xuất, tồn kho và Review. `edit-WH` bổ sung nạp ERP,
+xuất hàng loạt, hủy phần chờ, cập nhật item/ghép cặp, sửa/xóa và duyệt nhập kho.
+Nạp tồn đầu, master data và file ghép cặp vẫn dành riêng Super Admin.
+Xuất kho manual tạo lịch chờ/On order bằng `view-WH`; chỉ supervisor có
+`edit-WH` xuất hàng loạt mới trừ tồn, theo FIFO và đồng bộ mã con như trước.
+
+Migration `20261118150000_incoming_supervisor_approval.sql` tạo
+`inv_incoming_proposals` (payload gốc và người đề xuất để retry) cùng
+`inv_incoming_proposal_lines` (dòng pending/posted/cancelled, version và liên kết
+batch/dòng nhập sau duyệt). Không cấp direct DML cho authenticated. Danh sách
+chờ duyệt phân trang 100 dòng; checkbox duyệt áp dụng trên trang đang xem.
+Duyệt một phần giữ lại các dòng khác. UUID, actor và danh sách ID/version đã
+chọn được đối chiếu khi retry, đảm bảo không cộng tồn trùng và không tái tạo
+các đề xuất đã sửa/xóa/duyệt. Supervisor được chụp vào người nhập thực tế;
+người đề xuất vẫn được giữ riêng trong đề xuất.
 
 `npm run test:delivery` dùng PostgreSQL cục bộ qua PGlite, không kết nối Supabase
 thật. Kiểm tra cả chuyển đổi từ dữ liệu đã có, giữ nguyên lịch sử, On order vượt

@@ -1,13 +1,12 @@
-import { authorizeProfile } from "@/lib/auth";
+import { authorizeWarehouse } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 const actions = new Set(["lookup", "customers", "save_item", "save_build_up"]);
 const fail = (error: string, status: number) => Response.json({ success: false, error }, { status });
 
 export async function POST(request: Request) {
-  const auth = await authorizeProfile();
+  const auth = await authorizeWarehouse(true);
   if (!auth.ok) return fail(auth.error, auth.status);
-  if (auth.profile.role !== "superadmin") return fail("Chỉ Super Admin có quyền cập nhật danh mục kho.", 403);
   const input = await request.json().catch(() => null);
   if (!input || !actions.has(input.action) || !input.payload || typeof input.payload !== "object" || Array.isArray(input.payload)) {
     return fail("Dữ liệu không hợp lệ.", 400);
@@ -17,7 +16,7 @@ export async function POST(request: Request) {
   if (error || !data) {
     const message = error?.message ?? "";
     if (message.startsWith("WAREHOUSE_CATALOG_LOOKUP_REJECTED:")) return fail(message.slice("WAREHOUSE_CATALOG_LOOKUP_REJECTED:".length), 409);
-    if (message.includes("WAREHOUSE_CATALOG_FORBIDDEN")) return fail("Chỉ Super Admin có quyền cập nhật danh mục kho.", 403);
+    if (message.includes("WAREHOUSE_CATALOG_FORBIDDEN")) return fail("Bạn cần quyền view-WH và edit-WH để cập nhật danh mục kho.", 403);
     if (message.includes("WAREHOUSE_CATALOG_UNKNOWN_CUSTOMER")) return fail("Khách hàng không còn trong danh sách. Mở lại form để cập nhật.", 409);
     if (message.includes("WAREHOUSE_CATALOG_CONFIRM_REPLACEMENT")) return fail("Mã mẹ đã có tổ hợp. Hãy tra lại và chọn tổ hợp cần thay thế.", 409);
     if (message.includes("WAREHOUSE_CATALOG_STALE_RECIPE")) return fail("Tổ hợp đã thay đổi. Hãy tra lại trước khi thay thế.", 409);

@@ -14,7 +14,7 @@ const date = (v: string | null) => v ? v.split("-").reverse().join("/") : "—";
 const statusLabel = { pending: "Chờ xuất", partial: "Xuất một phần", done: "Done", cancelled: "Đã hủy" };
 const manualReference = (row: DeliveryRequest) => `NT-${(row.parent_request_id ?? row.id).slice(0, 8).toUpperCase()}`;
 
-export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
+export function WarehouseOutgoingClient({ profileId, canEdit }: { profileId: string; canEdit: boolean }) {
   const id = useId();
   const key = `warehouse-outgoing-command-v1:${profileId}`;
   const importDialog = useRef<HTMLDialogElement>(null);
@@ -87,6 +87,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
 
   async function execute(action: string, payload: Record<string, unknown>, retry?: Command) {
     if (busyRef.current || blocked || !ready) return;
+    if (action !== "manual" && !canEdit) return;
     if (pending && !retry) return;
     let command = retry;
     try {
@@ -148,6 +149,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
   }
 
   async function upload() {
+    if (!canEdit) return;
     if (!file || locked || busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
@@ -244,12 +246,12 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
 
   return <div className="warehouse-outgoing">
     <div className="warehouse-outgoing-toolbar">
-      <button className="button button-primary" disabled={locked} onClick={() => importDialog.current?.showModal()} type="button">Nạp lịch giao ERP</button>
+      {canEdit ? <button className="button button-primary" disabled={locked} onClick={() => importDialog.current?.showModal()} type="button">Nạp lịch giao ERP</button> : null}
       <button className="button button-secondary" disabled={loading} onClick={() => setRevision((value) => value + 1)} type="button">Tải lại</button>
     </div>
     <p className="muted small">On order là tổng số còn phải giao của từng item. Chỉ chọn lô FIFO và trừ tồn khi xác nhận xuất thực tế.</p>
     {notice ? <p role="status" className="alert">{notice}</p> : null}
-    {pending ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">{busy ? "Đang xử lý…" : "Thử lại thao tác chưa rõ kết quả"}</button> : null}
+    {pending && (canEdit || pending.action === "manual") ? <button className="button button-primary" disabled={busy} onClick={() => { void execute(pending.action, pending.payload, pending); }} type="button">{busy ? "Đang xử lý…" : "Thử lại thao tác chưa rõ kết quả"}</button> : null}
     {listError ? <p role="alert" className="alert alert-error">{listError}</p> : null}
     <WarehouseManualDelivery locked={locked} saved={manualSaved} onSubmit={(payload) => { void execute("manual", payload); }} />
     <WarehouseStockSummary revision={revision} />
@@ -270,7 +272,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
         </select>
       </label>
       <label className="warehouse-outgoing-checkbox"><input checked={manualOnly} onChange={(event) => { setManualOnly(event.target.checked); setOffset(0); }} type="checkbox" />Nhập tay</label>
-      <WarehouseDeliveryReview requests={filtered} disabled={busy || loading || Boolean(listError)} locked={locked}
+      <WarehouseDeliveryReview requests={filtered} disabled={busy || loading || Boolean(listError)} locked={locked} canEdit={canEdit}
         busy={busy} notice={notice}
         onBulkShip={async (payload) => (await execute("bulk_ship", payload)) === true}
         onBulkRetry={pending?.action === "bulk_ship" ? async () => (await execute(pending.action, pending.payload, pending)) === true : undefined} />
@@ -286,7 +288,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
           <td className="warehouse-outgoing-name">{row.product_name}{row.delivery_source !== "manual" && row.customer ? <small>{row.customer}</small> : null}</td><td>{row.system_customer_name || "—"}</td><td>{row.unit_label || "—"}</td>
           <td>{num(row.ordered_qty)}</td><td>{num(row.shipped_qty)}</td><td>{num(row.remaining_qty)}</td><td>{num(row.item_shortage_qty)}</td><td>{row.sync_error ? "Mã con không đồng bộ" : statusLabel[row.status]}</td>
           <td><div className="warehouse-incoming-row-actions">
-            {!row.cancelled && row.shipped_qty < row.ordered_qty ? <>
+            {canEdit && !row.cancelled && row.shipped_qty < row.ordered_qty ? <>
               <button className="button button-secondary button-small" disabled={locked} onClick={() => { void openAction(row, "cancel"); }} type="button">Hủy phần chờ</button>
             </> : null}
             <button className="button button-secondary button-small" onClick={() => { void openAction(row, "history"); }} type="button">Chi tiết</button>
@@ -395,7 +397,7 @@ export function WarehouseOutgoingClient({ profileId }: { profileId: string }) {
             <td>{issue.inv_delivery_issue_lines.map((line) => `#${line.incoming_id}: ${num(line.quantity)}`).join("; ")}</td></tr>)}</tbody></table></div> : <p className="muted">Chưa có lần xuất.</p>}
         <div className="modal-actions">
           <button className="button button-secondary" disabled={busy} onClick={() => actionDialog.current?.close()} type="button">Đóng</button>
-          {mode === "cancel" ? <button className="button button-primary" disabled={locked}
+          {mode === "cancel" && canEdit ? <button className="button button-primary" disabled={locked}
             onClick={() => { void execute("cancel", { id: selected.id, version: selected.version }); }}
             type="button">Xác nhận hủy phần chờ</button> : null}
         </div>

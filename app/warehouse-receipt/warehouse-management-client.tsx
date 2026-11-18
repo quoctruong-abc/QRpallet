@@ -16,9 +16,12 @@ const tabs = [
 
 type WarehouseTab = typeof tabs[number]["id"];
 
-export function WarehouseManagementClient({ isSuperAdmin, profileId }: { isSuperAdmin: boolean; profileId: string }) {
-  const [activeTab, setActiveTab] = useState<WarehouseTab>("outgoing");
-  const [receiptOpened, setReceiptOpened] = useState(false);
+export function WarehouseManagementClient({ isSuperAdmin, profileId, canViewWarehouse, canEditWarehouse, canViewReceipt }: {
+  isSuperAdmin: boolean; profileId: string; canViewWarehouse: boolean; canEditWarehouse: boolean; canViewReceipt: boolean;
+}) {
+  const visibleTabs = tabs.filter((tab) => tab.id === "receipt" ? canViewReceipt : canViewWarehouse);
+  const [activeTab, setActiveTab] = useState<WarehouseTab>(canViewWarehouse ? "outgoing" : "receipt");
+  const [receiptOpened, setReceiptOpened] = useState(!canViewWarehouse && canViewReceipt);
   const id = useId();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -30,14 +33,14 @@ export function WarehouseManagementClient({ isSuperAdmin, profileId }: { isSuper
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     let nextIndex: number;
     switch (event.key) {
-      case "ArrowRight": nextIndex = (index + 1) % tabs.length; break;
-      case "ArrowLeft": nextIndex = (index - 1 + tabs.length) % tabs.length; break;
+      case "ArrowRight": nextIndex = (index + 1) % visibleTabs.length; break;
+      case "ArrowLeft": nextIndex = (index - 1 + visibleTabs.length) % visibleTabs.length; break;
       case "Home": nextIndex = 0; break;
-      case "End": nextIndex = tabs.length - 1; break;
+      case "End": nextIndex = visibleTabs.length - 1; break;
       default: return;
     }
     event.preventDefault();
-    selectTab(tabs[nextIndex].id);
+    selectTab(visibleTabs[nextIndex].id);
     tabRefs.current[nextIndex]?.focus();
   }
 
@@ -48,8 +51,8 @@ export function WarehouseManagementClient({ isSuperAdmin, profileId }: { isSuper
         <p className="muted">Xuất kho, nhập kho, đối soát tồn kho và tra cứu receipt.</p>
       </header>
 
-      <div aria-label="Quản lý kho" className="warehouse-management-tabs" role="tablist">
-        {tabs.map((tab, index) => (
+      <div aria-label="Quản lý kho" className="warehouse-management-tabs" data-tab-count={visibleTabs.length} role="tablist">
+        {visibleTabs.map((tab, index) => (
           <button
             aria-controls={`${id}-panel-${tab.id}`}
             aria-selected={activeTab === tab.id}
@@ -68,7 +71,7 @@ export function WarehouseManagementClient({ isSuperAdmin, profileId }: { isSuper
         ))}
       </div>
 
-      {tabs.map((tab) => (
+      {visibleTabs.map((tab) => (
         <div
           aria-labelledby={`${id}-tab-${tab.id}`}
           className="warehouse-management-panel"
@@ -78,7 +81,7 @@ export function WarehouseManagementClient({ isSuperAdmin, profileId }: { isSuper
           role="tabpanel"
           tabIndex={0}
         >
-          {tab.id === "outgoing" ? <WarehouseOutgoingClient profileId={profileId} /> : tab.id === "incoming" ? <WarehouseIncomingClient isSuperAdmin={isSuperAdmin} profileId={profileId} /> : tab.id === "receipt" ? (
+          {tab.id === "outgoing" ? <WarehouseOutgoingClient profileId={profileId} canEdit={canEditWarehouse} /> : tab.id === "incoming" ? <WarehouseIncomingClient isSuperAdmin={isSuperAdmin} profileId={profileId} canEdit={canEditWarehouse} /> : tab.id === "receipt" ? (
             receiptOpened ? <WarehouseReceiptTabs active={activeTab === "receipt"} /> : null
           ) : (
             <section className="warehouse-management-placeholder">

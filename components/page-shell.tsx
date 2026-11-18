@@ -26,7 +26,7 @@ const modules: Array<{
     path: "/warehouse-receipt",
     label: "Quản lý kho",
     icon: "📦",
-    permissions: ["receipt.view"],
+    permissions: ["receipt.view", "view-WH"],
   },
 ];
 

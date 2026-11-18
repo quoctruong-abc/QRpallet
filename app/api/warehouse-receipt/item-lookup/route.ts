@@ -1,9 +1,9 @@
-import { authorizePermission } from "@/lib/auth";
+import { authorizeWarehouse } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 
 export async function POST(request: Request) {
-  const authorization = await authorizePermission("receipt.view");
+  const authorization = await authorizeWarehouse();
   if (!authorization.ok) {
     return Response.json({ success: false, error: authorization.error }, { status: authorization.status });
   }

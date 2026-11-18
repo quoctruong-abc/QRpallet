@@ -1,6 +1,6 @@
 import { PageShell } from "@/components/page-shell";
 import { requireAdmin } from "@/lib/auth";
-import { POSITION_LABELS, POSITION_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
+import { POSITION_LABELS, POSITION_PERMISSIONS, POSITION_GRANTABLE_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { PermissionKey, Position, PositionPageMapping, Profile } from "@/lib/types";
 import { CreateUserForm } from "./create-user-form";
@@ -25,7 +25,9 @@ const allPermissions: Array<{ key: PermissionKey; label: string }> = [
   { key: "pallet.create", label: "Tạo pallet" },
   { key: "pallet.edit", label: "Sửa pallet" },
   { key: "scan.standard", label: "Scan QR" },
-  { key: "receipt.view", label: "Truy cập Quản lý kho" },
+  { key: "receipt.view", label: "Xem Receipt" },
+  { key: "view-WH", label: "view-WH · Xem kho" },
+  { key: "edit-WH", label: "edit-WH · Chỉnh sửa kho" },
   { key: "dashboard.view", label: "Xem Dashboard" },
 ];
 
@@ -71,7 +73,7 @@ export default async function AdminPage() {
   const visiblePermissions = isSuperadmin
     ? allPermissions
     : allPermissions.filter((permission) =>
-        Boolean(profile.position && POSITION_PERMISSIONS[profile.position].includes(permission.key)),
+        Boolean(profile.position && POSITION_GRANTABLE_PERMISSIONS[profile.position].includes(permission.key)),
       );
 
   const mappingPositions = positions.map((position) => ({
@@ -181,7 +183,7 @@ export default async function AdminPage() {
                       permissions={visiblePermissions.map((permission) => ({
                         ...permission,
                         roleGranted: user.role === "admin" && (
-                          permission.key === "receipt.view" || permission.key === "dashboard.view"
+                          permission.key === "dashboard.view" || Boolean(user.position && POSITION_PERMISSIONS[user.position].includes(permission.key))
                         ),
                       }))}
                       userId={user.id}

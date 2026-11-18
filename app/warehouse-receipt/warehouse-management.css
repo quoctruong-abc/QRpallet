@@ -21,6 +21,8 @@
   font-weight: 750;
   cursor: pointer;
 }
+.warehouse-management-tabs[data-tab-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.warehouse-management-tabs[data-tab-count="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .warehouse-management-tab:hover { color: var(--primary); background: #eaf1ff; }
 .warehouse-management-tab[aria-selected="true"] {
   border-color: #b2ccff;
@@ -77,6 +79,7 @@
 .warehouse-incoming-draft-heading { display: grid; gap: 8px; padding: 20px; border-bottom: 1px solid var(--border); }
 .warehouse-incoming-draft-heading h2 { font-size: 1.05rem; }
 .warehouse-incoming-draft-heading p { margin: 0; }
+.warehouse-incoming-proposals .warehouse-incoming-draft-heading > .button { justify-self: start; }
 .warehouse-incoming-draft-note { max-width: 280px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .warehouse-table .warehouse-incoming-row-error td { background: #fef3f2; color: var(--danger); }
 .warehouse-incoming-row-message { display: block; margin-top: 6px; font-size: .78rem; line-height: 1.5; overflow-wrap: anywhere; }

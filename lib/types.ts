@@ -8,6 +8,8 @@ export type PermissionKey =
   | "pallet.edit"
   | "scan.standard"
   | "receipt.view"
+  | "view-WH"
+  | "edit-WH"
   | "dashboard.view";
 
 export type Profile = {

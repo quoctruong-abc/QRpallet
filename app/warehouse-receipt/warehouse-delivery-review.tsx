@@ -37,12 +37,13 @@ function summarize(lots: BulkDeliveryLot[], picks: PickAmounts) {
   return { quantity, byDate, days: Array.from(byDate, ([production_date, day]) => ({ production_date, quantity: day.quantity })) };
 }
 type Props = {
+  canEdit: boolean;
   requests: DeliveryRequest[]; disabled: boolean; locked: boolean; busy: boolean; notice: string;
   onBulkShip: (payload: BulkDeliveryInput) => Promise<boolean>; onBulkRetry?: () => Promise<boolean>;
 };
 type Editing = { group: DeliveryGroup; component: DeliveryReviewComponent };
 
-export function WarehouseDeliveryReview({ requests, disabled, locked, busy, notice, onBulkShip, onBulkRetry }: Props) {
+export function WarehouseDeliveryReview({ requests, disabled, locked, busy, notice, onBulkShip, onBulkRetry, canEdit }: Props) {
   const titleId = useId();
   const editorTitle = useId();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -68,6 +69,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
   const hasParents = review?.rows.some((row) => row.request_type === "parent") ?? false;
 
   async function openReview(forBulk: boolean) {
+    if (forBulk && !canEdit) return;
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
@@ -189,7 +191,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
     editor.current?.close();
   }
   async function confirmBulk() {
-    if (!bulkData || locked || !isInventoryDate(shipDate) || !analysis?.canProceed) return;
+    if (!canEdit || !bulkData || locked || !isInventoryDate(shipDate) || !analysis?.canProceed) return;
     const lots: BulkDeliveryInput["lots"] = [];
     const executable = selectedRows.filter((group) => (analysis.groups.get(group.group_key)?.quantity ?? 0) > 0);
     const executableKeys = new Set(executable.map((group) => group.group_key));
@@ -205,7 +207,7 @@ export function WarehouseDeliveryReview({ requests, disabled, locked, busy, noti
 
   return <>
     <button className="button button-secondary" type="button" disabled={disabled || !requests.length} onClick={() => { void openReview(false); }}>Review</button>
-    <button className="button button-primary" type="button" disabled={disabled || locked || !requests.length} onClick={() => { void openReview(true); }}>Xuất hàng loạt</button>
+    {canEdit ? <button className="button button-primary" type="button" disabled={disabled || locked || !requests.length} onClick={() => { void openReview(true); }}>Xuất hàng loạt</button> : null}
     <dialog aria-labelledby={titleId} className={`modal-card warehouse-opening-dialog warehouse-outgoing-review-dialog${bulk ? " warehouse-bulk-dialog" : ""}`}
       ref={dialog} onClose={() => request.current?.abort()} onCancel={(event) => { if (bulk && busy) event.preventDefault(); }}>
       <header className={bulk ? "warehouse-bulk-header" : undefined}>

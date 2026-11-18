@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
-import { POSITION_PERMISSIONS } from "@/lib/routes";
+import { POSITION_GRANTABLE_PERMISSIONS } from "@/lib/routes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isValidUsername, normalizeUsername, usernameToInternalEmail } from "@/lib/username";
 import type { AppRole, PermissionKey, Position } from "@/lib/types";
@@ -12,7 +12,7 @@ export type AdminActionState = { error: string; success: string };
 const validRoles: AppRole[] = ["superadmin", "admin", "user"];
 const validPositions: Position[] = ["planning", "production", "warehouse"];
 const validPermissions = new Set<PermissionKey>([
-  ...Object.values(POSITION_PERMISSIONS).flat(),
+  ...Object.values(POSITION_GRANTABLE_PERMISSIONS).flat(),
   "dashboard.view",
 ]);
 
@@ -204,9 +204,10 @@ export async function updateUserPermissions(
   const targetPosition = target.position as Position | null;
   const manageablePermissions = actor.role === "superadmin"
     ? validPermissions
-    : new Set<PermissionKey>(targetPosition ? POSITION_PERMISSIONS[targetPosition] : []);
+    : new Set<PermissionKey>(targetPosition ? POSITION_GRANTABLE_PERMISSIONS[targetPosition] : []);
 
   const allowed = requested.filter((permission) => manageablePermissions.has(permission));
+  if (allowed.includes("edit-WH") && !allowed.includes("view-WH")) allowed.push("view-WH");
 
   const { data: existingRows, error: existingError } = await adminClient
     .from("user_permissions")

@@ -3,16 +3,18 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 import { isInventoryDate, MAX_MANUAL_INCOMING_ROWS, parseManualIncomingRequest, todayInVietnam, type ManualIncomingLine } from "@/lib/warehouse-receipt/incoming";
-import { incomingStorageKey, INCOMING_DRAFT_TTL, parseStoredIncoming, type StoredIncoming } from "@/lib/warehouse-receipt/incoming-storage";
+import { incomingStorageKey, incomingStoredRows, startIncomingSubmission, completeIncomingSubmission, INCOMING_DRAFT_TTL, parseStoredIncoming, type StoredIncoming } from "@/lib/warehouse-receipt/incoming-storage";
 import { WarehouseItemBuildUp, WarehouseMasterData } from "./warehouse-master-data";
 import { WarehouseCatalogEditors } from "./warehouse-catalog-editors";
 import { WarehouseOpeningInventory } from "./warehouse-opening-inventory";
 import { WarehouseActionConfirmation } from "./warehouse-action-confirmation";
+import { WarehouseIncomingProposals } from "./warehouse-incoming-proposals";
 
 type ItemDetails = { itemcode: string; product_name: string; customer: string };
 type LookupResult = { ok: true; item: ItemDetails } | { ok: false; error: string; aborted?: boolean };
 type IncomingDraft = ItemDetails & {
   id: number;
+  selected: boolean;
   received_date: string;
   production_date: string;
   wo: string;
@@ -31,11 +33,12 @@ function postingRows(drafts: IncomingDraft[]): ManualIncomingLine[] {
   }));
 }
 
-export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAdmin: boolean; profileId: string }) {
+export function WarehouseIncomingClient({ isSuperAdmin, profileId, canEdit }: { isSuperAdmin: boolean; profileId: string; canEdit: boolean }) {
   const id = useId();
   const storageKey = incomingStorageKey(profileId);
   const itemInputRef = useRef<HTMLInputElement>(null);
   const quantityInputRef = useRef<HTMLInputElement>(null);
+  const selectAllRef = useRef<HTMLInputElement>(null);
   const requests = useRef(new Map<string, { promise: Promise<LookupResult>; controller: AbortController }>());
   const itemCache = useRef(new Map<string, ItemDetails>());
   const formVersion = useRef(0);
@@ -62,10 +65,16 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
   const [storageReady, setStorageReady] = useState(false);
   const [storageConflict, setStorageConflict] = useState(false);
   const submission = savedList?.status === "pending" ? savedList : null;
+  const proposalMode = submission ? submission.action === "propose" : !canEdit;
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [saveNotice, setSaveNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [recoveryBlocked, setRecoveryBlocked] = useState(false);
+  const [proposalRevision, setProposalRevision] = useState(0);
+  const selectedDrafts = drafts.filter((row) => row.selected);
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = selectedDrafts.length > 0 && selectedDrafts.length < drafts.length;
+  }, [selectedDrafts.length, drafts.length]);
 
   useEffect(() => {
     mounted.current = true;
@@ -234,10 +243,10 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
           return;
         }
         const pending = stored.status === "pending";
-        const restored = stored.rows.map((row, index): IncomingDraft => ({
+        const restored = incomingStoredRows(stored).map((row, index): IncomingDraft => ({
           ...row, production_date: row.production_date || "", wo: row.wo || "",
           product_name: legacyDrafts?.[index]?.product_name ?? "", customer: legacyDrafts?.[index]?.customer ?? "",
-          id: nextDraftId.current++, lookupStatus: pending ? "ready" : "loading",
+          id: nextDraftId.current++, lookupStatus: pending && row.selected ? "ready" : "loading",
           lookupError: "", lookupVersion: nextLookupVersion.current++,
         }));
         setSavedList(stored);
@@ -245,9 +254,8 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
         setReviewing(pending);
         if (pending) {
           setSaveNotice({ type: "error", text: "Có lần nhập kho chưa xác nhận được kết quả. Nhấn Thử lại ghi nhận để kiểm tra; hệ thống sẽ không ghi trùng." });
-        } else {
-          for (const row of restored) void resolveDraft(row);
         }
+        for (const row of restored) if (row.lookupStatus === "loading") void resolveDraft(row);
       } catch {
         setRecoveryBlocked(true);
         setSaveNotice({ type: "error", text: "Không thể đọc danh sách đã lưu. Vui lòng kiểm tra lần nhập trước và quyền lưu dữ liệu của trình duyệt." });
@@ -287,7 +295,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
       return false;
     }
     const record: StoredIncoming | null = next.length ? {
-      request_id: window.crypto.randomUUID(), rows: postingRows(next),
+      request_id: window.crypto.randomUUID(), rows: postingRows(next), selected: next.map((row) => row.selected),
       status: "draft", expiresAt: Date.now() + INCOMING_DRAFT_TTL,
     } : null;
     if (!writeSavedList(record)) return false;
@@ -297,7 +305,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
       const byId = new Map(current.map((row) => [row.id, row]));
       return next.map((row) => {
         const latest = byId.get(row.id);
-        return latest?.lookupVersion === row.lookupVersion ? latest : row;
+        return latest?.lookupVersion === row.lookupVersion ? { ...latest, selected: row.selected } : row;
       });
     });
     return true;
@@ -306,6 +314,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
   function saveDraft(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!storageReady || storageConflict || savingRef.current || submission || recoveryBlocked) return;
+    if (editingId !== null && !canEdit) return;
     setFormError("");
     if (editingId === null && drafts.length >= MAX_MANUAL_INCOMING_ROWS) {
       setFormError(`Mỗi lần ghi nhận tối đa ${MAX_MANUAL_INCOMING_ROWS} dòng.`);
@@ -337,6 +346,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
       product_name: cached?.product_name ?? "",
       customer: cached?.customer ?? "",
       id: editingId ?? nextDraftId.current++,
+      selected: editingId === null ? true : drafts.find((row) => row.id === editingId)?.selected ?? true,
       received_date: receivedDate,
       production_date: productionDate,
       wo: wo.trim(),
@@ -353,6 +363,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
   }
 
   function editDraft(draft: IncomingDraft) {
+    if (!canEdit || storageConflict || savingRef.current || submission) return;
     changeItemcode(draft.itemcode);
     setProductionDate(draft.production_date);
     setReceivedDate(draft.received_date);
@@ -367,6 +378,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
   }
 
   function removeDraft(draftId: number) {
+    if (!canEdit) return;
     if (!persistDrafts(drafts.filter((row) => row.id !== draftId))) return;
     if (editingId === draftId) clearForm();
     setReviewing(false);
@@ -378,10 +390,11 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
     void resolveDraft(next);
   }
 
-  const loadingCount = drafts.filter((row) => row.lookupStatus === "loading").length;
-  const errorCount = drafts.filter((row) => row.lookupStatus === "error").length;
-  const missingProductionDates = drafts.filter((row) => !isInventoryDate(row.production_date)).length;
-  const canProceed = storageReady && !storageConflict && !recoveryBlocked && drafts.length > 0
+  const loadingCount = selectedDrafts.filter((row) => row.lookupStatus === "loading").length;
+  const errorCount = selectedDrafts.filter((row) => row.lookupStatus === "error").length;
+  const missingProductionDates = selectedDrafts.filter((row) => !isInventoryDate(row.production_date)).length;
+  const canProceed = storageReady && !storageConflict && !recoveryBlocked && selectedDrafts.length > 0
+    && (!submission || (submission.action ?? "post") === "propose" || canEdit)
     && loadingCount === 0 && errorCount === 0 && editingId === null && (missingProductionDates === 0 || Boolean(submission));
 
   function clearLegacySubmission() {
@@ -398,9 +411,7 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
       expireSavedList(Boolean(submission));
       return;
     }
-    const pending: StoredIncoming = submission ?? {
-      ...savedList, status: "pending", expiresAt: Date.now() + INCOMING_DRAFT_TTL,
-    };
+    const pending = startIncomingSubmission(savedList, canEdit ? "post" : "propose");
     if (legacyRaw.current) {
       // Retry an older tab's request only while that exact session record still exists.
       try {
@@ -420,13 +431,14 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
     setSaving(true);
     setSaveNotice(null);
     try {
-      const response = await fetch("/api/warehouse-receipt/incoming", {
+      const proposing = pending.action === "propose";
+      const response = await fetch(proposing ? "/api/warehouse-receipt/incoming-proposals" : "/api/warehouse-receipt/incoming", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ profile_id: profileId, request_id: pending.request_id, rows: pending.rows }),
       });
       const result = await response.json();
       if (!response.ok || !result.success) {
-        if ([400, 404].includes(response.status) && writeSavedList({ ...pending, status: "draft" })) {
+        if ([400, 404].includes(response.status) && writeSavedList({ request_id: pending.request_id, rows: postingRows(drafts), selected: drafts.map((row) => row.selected), expiresAt: pending.expiresAt, status: "draft" })) {
           clearLegacySubmission();
           const missing = response.status === 404 && typeof result.itemcode === "string" ? result.itemcode : null;
           if (missing) itemCache.current.delete(missing);
@@ -443,11 +455,15 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
       }
       if (result.batch?.batch_id !== pending.request_id || result.batch.row_count !== pending.rows.length) throw new Error("Chưa xác nhận được kết quả nhập kho. Vui lòng thử lại.");
       clearLegacySubmission();
-      if (!writeSavedList(null)) return;
-      setDrafts([]);
+      const remainder = completeIncomingSubmission(pending, window.crypto.randomUUID());
+      if (!writeSavedList(remainder)) return;
+      const remainingDrafts = drafts.filter((row) => !row.selected);
+      setDrafts(remainingDrafts);
+      for (const row of remainingDrafts) if (row.lookupStatus === "loading") void resolveDraft(row);
       setReviewing(false);
       clearForm();
-      setSaveNotice({ type: "success", text: `Đã ghi nhận nhập kho ${result.batch.row_count} dòng, tổng số lượng ${Number(result.batch.total_quantity).toLocaleString("vi-VN")}.` });
+      if (proposing) setProposalRevision((value) => value + 1);
+      setSaveNotice({ type: "success", text: `${proposing ? "Đã gửi đề xuất chờ supervisor duyệt" : "Đã ghi nhận nhập kho"} ${result.batch.row_count} dòng, tổng số lượng ${Number(result.batch.total_quantity).toLocaleString("vi-VN")}.${remainder ? " Các dòng chưa chọn vẫn được giữ trong danh sách." : ""}` });
     } catch (error) {
       setSaveNotice({ type: "error", text: error instanceof Error ? error.message : "Chưa xác nhận được kết quả nhập kho. Vui lòng thử lại." });
     } finally {
@@ -464,9 +480,9 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
         <div className="warehouse-incoming-heading">
           <div><h2>{editingId === null ? "Nhập kho thủ công" : `Sửa dòng ${editingId}`}</h2>
           <p className="muted small">Nhập mã sản phẩm, số lượng và ngày sản xuất, rồi nhấn Enter để thêm dòng.</p></div>
-          {isSuperAdmin ? <div className="warehouse-incoming-admin-actions">
-            <WarehouseCatalogEditors onSaved={invalidateCatalogItem} />
-            <WarehouseOpeningInventory /><WarehouseMasterData /><WarehouseItemBuildUp />
+          {canEdit || isSuperAdmin ? <div className="warehouse-incoming-admin-actions">
+            {canEdit ? <WarehouseCatalogEditors onSaved={invalidateCatalogItem} /> : null}
+            {isSuperAdmin ? <><WarehouseOpeningInventory /><WarehouseMasterData /><WarehouseItemBuildUp /></> : null}
           </div> : null}
         </div>
         <form onSubmit={saveDraft}>
@@ -516,24 +532,25 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
 
       <section className="scan-table-card">
         <div className="warehouse-incoming-draft-heading">
-          <h2>{reviewing ? "Kiểm tra danh sách nhập kho" : "Danh sách chờ nhập"} <span className="muted">({drafts.length})</span></h2>
-          <p className="muted small">Danh sách được lưu trên trình duyệt này trong 7 ngày kể từ lần lưu gần nhất và tự xóa khi xác nhận nhập kho thành công.</p>
+          <h2>{reviewing ? "Kiểm tra danh sách nhập kho" : "Danh sách chờ nhập"} <span className="muted">({reviewing ? selectedDrafts.length : drafts.length})</span></h2>
+          <p className="muted small">Đã chọn {selectedDrafts.length}/{drafts.length} dòng. Bản nháp lưu 7 ngày; các dòng chưa chọn được giữ lại sau khi gửi hoặc ghi nhận.</p>
           {!reviewing && missingProductionDates ? <p className="warehouse-incoming-row-message" role="status">{missingProductionDates} dòng chưa có ngày sản xuất. Hãy sửa các dòng này trước khi tiếp tục.</p> : null}
           {!reviewing ? <p aria-live="polite" className={errorCount ? "warehouse-incoming-row-message" : "muted small"}>
-            {errorCount ? `${errorCount} dòng chưa tra cứu thành công. Sửa mã hoặc thử lại trước khi tiếp tục.` : loadingCount ? `Đang cập nhật thông tin cho ${loadingCount} dòng...` : editingId !== null ? "Lưu thay đổi hoặc hủy sửa trước khi tiếp tục." : drafts.length ? "Tất cả dòng đã có thông tin sản phẩm." : ""}
+            {errorCount ? `${errorCount} dòng đã chọn chưa tra cứu thành công. Sửa mã hoặc thử lại trước khi tiếp tục.` : loadingCount ? `Đang cập nhật thông tin cho ${loadingCount} dòng đã chọn...` : editingId !== null ? "Lưu thay đổi hoặc hủy sửa trước khi tiếp tục." : selectedDrafts.length ? "Các dòng đã chọn đã có thông tin sản phẩm." : ""}
           </p> : null}
         </div>
         {drafts.length ? <div className="scan-table-wrap"><table className="warehouse-table">
-          <thead><tr><th>Ngày nhập kho</th><th>Mã sản phẩm</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Ngày sản xuất</th><th>WO</th><th>Số lượng</th><th>Ghi chú</th>{!reviewing ? <th>Thao tác</th> : null}</tr></thead>
-          <tbody>{drafts.map((draft) => <tr className={draft.lookupStatus === "error" ? "warehouse-incoming-row-error" : undefined} key={draft.id}>
+          <thead><tr>{!reviewing ? <th><input ref={selectAllRef} type="checkbox" aria-label="Chọn tất cả dòng chờ nhập" checked={drafts.length > 0 && selectedDrafts.length === drafts.length} disabled={storageConflict || saving || Boolean(submission)} onChange={(event) => { persistDrafts(drafts.map((row) => ({ ...row, selected: event.target.checked }))); }} /></th> : null}<th>Ngày nhập kho</th><th>Mã sản phẩm</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>Ngày sản xuất</th><th>WO</th><th>Số lượng</th><th>Ghi chú</th>{!reviewing ? <th>Thao tác</th> : null}</tr></thead>
+          <tbody>{(reviewing ? selectedDrafts : drafts).map((draft) => <tr className={draft.lookupStatus === "error" ? "warehouse-incoming-row-error" : undefined} key={draft.id}>
+            {!reviewing ? <td><input type="checkbox" aria-label={`Chọn dòng ${draft.id} - ${draft.itemcode}`} checked={draft.selected} disabled={storageConflict || saving || Boolean(submission)} onChange={(event) => { persistDrafts(drafts.map((row) => row.id === draft.id ? { ...row, selected: event.target.checked } : row)); }} /></td> : null}
             <td>{draft.received_date.split("-").reverse().join("/")}</td>
             <td><strong>{draft.itemcode}</strong>{draft.lookupStatus !== "ready" ? <span className="warehouse-incoming-row-message" role="status">{draft.lookupStatus === "loading" ? "Đang tra cứu..." : draft.lookupError}</span> : null}</td>
             <td>{draft.product_name || "—"}</td><td>{draft.customer || "—"}</td>
             <td>{draft.production_date ? draft.production_date.split("-").reverse().join("/") : <span className="warehouse-required">Thiếu ngày sản xuất</span>}</td><td>{draft.wo || "—"}</td>
             <td>{draft.quantity.toLocaleString("vi-VN")}</td><td className="warehouse-incoming-draft-note">{draft.note || "—"}</td>
             {!reviewing ? <td><div className="warehouse-incoming-row-actions">
-              <button aria-label={`Sửa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" disabled={storageConflict} onClick={() => editDraft(draft)} type="button">Sửa</button>
-              <button aria-label={`Xóa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" disabled={storageConflict} onClick={() => removeDraft(draft.id)} type="button">Xóa</button>
+              {canEdit ? <><button aria-label={`Sửa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" disabled={storageConflict} onClick={() => editDraft(draft)} type="button">Sửa</button>
+              <button aria-label={`Xóa dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" disabled={storageConflict} onClick={() => removeDraft(draft.id)} type="button">Xóa</button></> : null}
               {draft.lookupStatus === "error" ? <button aria-label={`Tra cứu lại dòng ${draft.id} - ${draft.itemcode}`} className="button button-secondary button-small" onClick={() => retryDraft(draft)} type="button">Thử lại</button> : null}
             </div></td> : null}
           </tr>)}</tbody>
@@ -541,17 +558,18 @@ export function WarehouseIncomingClient({ isSuperAdmin, profileId }: { isSuperAd
         <div className="warehouse-incoming-next">
           {reviewing ? <>
             <button className="button button-secondary" disabled={saving || Boolean(submission)} onClick={() => setReviewing(false)} type="button">Quay lại chỉnh sửa</button>
-            <button className="button button-primary" disabled={saving || !canProceed} onClick={() => { if (canProceed && !saving) setConfirming(true); }} type="button">{saving ? "Đang ghi nhận..." : submission ? "Thử lại ghi nhận" : "Xác nhận nhập kho"}</button>
+            <button className="button button-primary" disabled={saving || !canProceed} onClick={() => { if (canProceed && !saving) setConfirming(true); }} type="button">{saving ? "Đang xử lý..." : submission ? "Thử lại thao tác" : canEdit ? "Xác nhận nhập kho" : "Gửi đề xuất nhập kho"}</button>
           </> : <button aria-describedby={`${id}-proceed-note`} className="button button-primary" disabled={!canProceed} onClick={() => { if (canProceed) setReviewing(true); }} type="button">Tiếp theo</button>}
-          <p className="muted small" id={`${id}-proceed-note`}>{reviewing ? "Xác nhận để lưu toàn bộ danh sách vào tồn kho." : "Chỉ tiếp tục khi tất cả dòng tra cứu thành công và đã lưu chỉnh sửa."}</p>
+          <p className="muted small" id={`${id}-proceed-note`}>{reviewing ? proposalMode ? "Gửi các dòng đã chọn để supervisor duyệt. Tồn kho được cập nhật khi duyệt." : "Chỉ ghi nhận các dòng đã chọn vào tồn kho." : "Chọn các dòng cần nhập. Chỉ các dòng đã chọn cần tra cứu thành công và đủ ngày sản xuất."}</p>
         </div>
       </section>
-      <WarehouseActionConfirmation open={confirming} title={submission ? "Xác nhận thử lại nhập kho?" : "Xác nhận nhập kho?"}
-        confirmLabel={submission ? "Đồng ý thử lại" : "Đồng ý nhập kho"} busy={saving} disabled={!canProceed}
+      <WarehouseActionConfirmation open={confirming} title={submission ? "Xác nhận thử lại thao tác?" : canEdit ? "Xác nhận nhập kho?" : "Gửi đề xuất nhập kho?"}
+        confirmLabel={submission ? "Đồng ý thử lại" : canEdit ? "Đồng ý nhập kho" : "Gửi đề xuất"} busy={saving} disabled={!canProceed}
         onCancel={() => setConfirming(false)} onConfirm={async () => { await postInventory(); setConfirming(false); }}>
-        <p>{submission ? "Kiểm tra và tiếp tục lần nhập kho đã lưu bằng cùng mã thao tác?" : "Ghi nhận toàn bộ danh sách đã kiểm tra vào tồn kho?"}</p>
-        <p><strong>{drafts.length.toLocaleString("vi-VN")}</strong> dòng · Tổng số lượng <strong>{drafts.reduce((total, row) => total + row.quantity, 0).toLocaleString("vi-VN")}</strong></p>
+        <p>{submission ? "Kiểm tra và tiếp tục lần gửi đã lưu bằng cùng mã thao tác?" : canEdit ? "Ghi nhận các dòng đã chọn vào tồn kho?" : "Gửi các dòng đã chọn vào danh sách chờ supervisor duyệt?"}</p>
+        <p><strong>{selectedDrafts.length.toLocaleString("vi-VN")}</strong> dòng · Tổng số lượng <strong>{selectedDrafts.reduce((total, row) => total + row.quantity, 0).toLocaleString("vi-VN")}</strong></p>
       </WarehouseActionConfirmation>
+      <WarehouseIncomingProposals canEdit={canEdit} profileId={profileId} revision={proposalRevision} />
     </div>
   );
 }

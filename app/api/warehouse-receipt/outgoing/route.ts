@@ -1,6 +1,6 @@
 import readExcel from "read-excel-file/node";
 import { createHash } from "node:crypto";
-import { authorizePermission } from "@/lib/auth";
+import { authorizeWarehouse, hasPermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { readMergeRanges, expandMergedCells } from "@/lib/excel-merged";
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
@@ -17,6 +17,7 @@ const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}
 
 function dbError(error: { code?: string; message?: string }) {
   const message = error.message || "";
+  if (message.includes("DELIVERY_NOT_AUTHORIZED")) return fail("Bạn không có quyền thực hiện chức năng kho này.", 403);
   if (message.startsWith("DELIVERY_BUILD_UP_ACTIVE_CHANGED:")) return fail(`Bộ active của mã ${message.slice("DELIVERY_BUILD_UP_ACTIVE_CHANGED:".length)} đã thay đổi. Tra cứu hoặc kiểm tra lại file trước khi xác nhận.`, 409);
   if (message.startsWith("DELIVERY_BUILD_UP_CONFLICT:")) return fail(`Mã mẹ ${message.slice("DELIVERY_BUILD_UP_CONFLICT:".length)} đang chọn nhiều bộ khác nhau. Hãy dùng chung một bộ cho các lịch mới trong lần nạp.`, 409);
   if (message.startsWith("DELIVERY_CATALOG_REJECTED:")) {
@@ -84,7 +85,7 @@ function dbError(error: { code?: string; message?: string }) {
 }
 
 export async function GET(request: Request) {
-  const auth = await authorizePermission("receipt.view");
+  const auth = await authorizeWarehouse();
   if (!auth.ok) return fail(auth.error, auth.status);
   const db = await createClient();
   const url = new URL(request.url);
@@ -128,10 +129,11 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizePermission("receipt.view");
+  const auth = await authorizeWarehouse();
   if (!auth.ok) return fail(auth.error, auth.status);
   const db = await createClient();
   if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
+    if (!hasPermission(auth.profile, "edit-WH")) return fail("Bạn cần quyền edit-WH để nạp lịch giao ERP.", 403);
     const form = await request.formData().catch(() => null);
     const file = form?.get("file");
     if (!(file instanceof File) || !file.name.toLowerCase().endsWith(".xlsx") || !file.size || file.size > 4 * 1024 * 1024) return fail("Chọn file .xlsx không quá 4 MB.");
@@ -156,6 +158,7 @@ export async function POST(request: Request) {
     }
   }
   const body = await request.json().catch(() => null);
+  if (!["review", "manual"].includes(body?.action) && !hasPermission(auth.profile, "edit-WH")) return fail("Bạn cần quyền edit-WH để duyệt hoặc thay đổi dữ liệu kho.", 403);
   if (body?.action === "review" || body?.action === "bulk_preview") {
     const ids: unknown = body.request_ids;
     if (!Array.isArray(ids) || !ids.length || ids.length > MAX_DELIVERY_REVIEW_REQUESTS || !ids.every(uuid)) {
