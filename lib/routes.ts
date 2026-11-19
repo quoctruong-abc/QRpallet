@@ -22,12 +22,11 @@ export const PAGE_PERMISSIONS: Record<string, PermissionKey[]> = {
 export const POSITION_PERMISSIONS: Record<Position, PermissionKey[]> = {
   planning: ["planning.upload", "planning.change", "receipt.view"],
   production: ["pallet.create", "pallet.edit", "receipt.view"],
-  warehouse: ["scan.standard", "receipt.view"],
+  warehouse: ["scan.standard", "receipt.view", "view-WH", "edit-WH"],
 };
 
-// Warehouse access is explicitly assigned, including for department admins.
-// Warehouse admins can manage these grants for users in their department.
+// Department admins inherit these defaults. Users still need explicit grants;
+// Warehouse admins can manage warehouse grants only for their own department.
 export const POSITION_GRANTABLE_PERMISSIONS: Record<Position, PermissionKey[]> = {
   ...POSITION_PERMISSIONS,
-  warehouse: [...POSITION_PERMISSIONS.warehouse, "view-WH", "edit-WH"],
 };

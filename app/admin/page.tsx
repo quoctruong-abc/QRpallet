@@ -94,7 +94,7 @@ export default async function AdminPage() {
             <p className="muted admin-intro">
               {isSuperadmin
                 ? "Quản lý tài khoản, position mapping và permission. Admin và Super Admin được xem Dashboard mặc định; user chỉ được xem khi Super Admin cấp quyền Xem Dashboard."
-                : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Dashboard là quyền mặc định của Admin; quyền Dashboard của user chỉ do Super Admin quản lý.`}
+                : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Dashboard là quyền mặc định của Admin; quyền Dashboard của user chỉ do Super Admin quản lý.${profile.position === "warehouse" ? " Admin Warehouse có mặc định view-WH và edit-WH; bạn có thể cấp hoặc thu hồi hai quyền này cho user cùng bộ phận." : ""}`}
             </p>
           </div>
           <div className="stat-card admin-stat-card">

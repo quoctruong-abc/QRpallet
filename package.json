@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test:delivery": "node scripts/tests/delivery.mjs",
+    "test:warehouse-admin": "node scripts/tests/warehouse-admin-permissions.mjs",
     "test:pallet-itemcode": "node scripts/tests/pallet-itemcode-db.mjs && node scripts/tests/pallet-itemcode.mjs && node scripts/tests/pallet-config.mjs",
     "test:pallet-new-wo:postgres": "node scripts/tests/pallet-new-wo-postgres.mjs",
     "test:scan-stock": "node scripts/tests/scan-stock.mjs && node scripts/tests/scan-confirm-api.mjs",

@@ -1136,9 +1136,13 @@ mất HTTP response, không tự backfill stock cho receipt cũ.
 
 Migration `20261118140000_warehouse_permissions.sql` đăng ký hai quyền kho,
 đổi guard API/RPC/RLS (kể cả các hàm private được delegate) và giữ Receipt riêng.
-Không tự sao chép quyền từ `receipt.view`; kể cả admin cần được cấp quyền kho
-mới, trừ Super Admin theo bypass hiện có. Admin Warehouse được quản lý hai quyền
-cho user cùng position; Super Admin được cấp cho mọi tài khoản được mapping.
+Không tự sao chép quyền từ `receipt.view`. **Admin Warehouse mặc định có cả
+`view-WH` và `edit-WH`**, áp dụng cho tài khoản hiện có và tạo mới, đồng bộ ở app,
+proxy và RPC database qua migration `20261119130000_warehouse_admin_default_permissions.sql`.
+User kho vẫn cần cấp quyền rõ ràng. Admin Warehouse được cấp/thu hồi hai quyền
+cho user cùng position, không quản lý admin khác hoặc user bộ phận khác;
+Super Admin được cấp cho mọi tài khoản được mapping. Admin Planning/Production
+không mặc định có quyền kho; các quyền Super Admin cấp riêng vẫn được giữ.
 Chọn `edit-WH` trong Admin tự chọn kèm `view-WH`; bỏ `view-WH` bỏ cả `edit-WH`.
 
 `view-WH` cho manual nhập/xuất, tồn kho và Review. `edit-WH` bổ sung nạp ERP,
