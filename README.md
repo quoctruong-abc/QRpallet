@@ -428,6 +428,16 @@ itemcode
 quantity_per_pallet
 ```
 
+Trong **Cài đặt pallet**, sau khi tìm itemcode sẽ hiện tên sản phẩm (ưu tiên
+`product_name`, fallback `ERP_name`) và khách hàng hiện tại. Có thể lưu đồng thời
+số lượng pallet chẵn và khách hàng mới vào `item_pallet_config`. Dropdown khách
+hàng lấy các tên không trống, đã trim/lọc trùng từ toàn bộ `pallet_data`; giữ được
+khách hàng hiện tại nếu tên này chưa có trong lịch sử. Không ghi lại pallet cũ.
+
+Migration `20261119110000_pallet_config_customers.sql` thêm RPC đọc danh sách và
+lưu cấu hình với quyền `pallet.create`, kiểm tra khách hàng ở server và giữ thứ
+tự khóa chung với các luồng cập nhật danh mục. Không kích hoạt scan nhập tồn.
+
 ### 8.4 Edit pallet
 
 Chỉ khi:

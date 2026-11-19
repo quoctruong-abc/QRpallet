@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { OldWoPrintDialog } from "./old-wo-print-dialog";
 import { WoReceiptDialog } from "./wo-receipt-dialog";
@@ -36,6 +36,8 @@ export type ActivePallet = {
 type Props = { rows: PlanItem[]; pallets: ActivePallet[] };
 type PalletConfig = {
   itemcode: string;
+  product_name: string;
+  customer: string;
   quantity_per_pallet: number | null;
   updated_at: string;
 };
@@ -131,6 +133,10 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [configSearch, setConfigSearch] = useState("");
   const [configRows, setConfigRows] = useState<PalletConfig[]>([]);
   const [configQuantities, setConfigQuantities] = useState<Record<string, string>>({});
+  const [configCustomers, setConfigCustomers] = useState<Record<string, string>>({});
+  const [customerOptions, setCustomerOptions] = useState<string[]>([]);
+  const configLookup = useRef<AbortController | null>(null);
+  useEffect(() => () => configLookup.current?.abort(), []);
   const [configSearched, setConfigSearched] = useState(false);
   const [configSearching, setConfigSearching] = useState(false);
   const [historyDays, setHistoryDays] = useState(1);
@@ -143,7 +149,9 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   function closeDialog() {
-    if (pending || reprintingPalletId !== null) return;
+    if (pending || reprintingPalletId !== null || (dialog === "config" && updatingItemcode !== null)) return;
+    configLookup.current?.abort();
+    setConfigSearching(false);
     setDialog(null);
     setSelectedPallet(null);
     setMessage(null);
@@ -188,7 +196,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     const entered = window.prompt(`Nhập số lượng mỗi pallet cho item ${row.itemcode}:`);
     if (entered === null) return;
     const quantityPerPallet = Number(entered.trim());
-    if (!Number.isInteger(quantityPerPallet) || quantityPerPallet <= 0) {
+    if (!Number.isInteger(quantityPerPallet) || quantityPerPallet <= 0 || quantityPerPallet > 2147483647) {
       window.alert("Số lượng mỗi pallet phải là số nguyên lớn hơn 0.");
       return;
     }
@@ -211,22 +219,30 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   }
 
   function openPalletSettings() {
+    configLookup.current?.abort();
     setSelectedRow(null);
     setConfigSearch("");
     setConfigRows([]);
     setConfigQuantities({});
+    setConfigCustomers({});
+    setCustomerOptions([]);
+    setConfigSearching(false);
     setConfigSearched(false);
     setMessage(null);
     setDialog("config");
   }
 
   async function searchPalletConfigs() {
+    if (updatingItemcode !== null) return;
     const itemcode = configSearch.trim();
     if (!itemcode) {
       setMessage({ type: "error", text: "Vui lòng nhập Itemcode cần tìm." });
       return;
     }
 
+    configLookup.current?.abort();
+    const controller = new AbortController();
+    configLookup.current = controller;
     setConfigSearching(true);
     setConfigSearched(false);
     setMessage(null);
@@ -234,8 +250,10 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       const params = new URLSearchParams({ itemcode });
       const response = await fetch(`/api/pallet-label/config?${params.toString()}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
       const result = await response.json();
+      if (controller.signal.aborted) return;
       if (!response.ok || !result.success) {
         throw new Error(result.error ?? "Không thể tải cấu hình pallet.");
       }
@@ -245,20 +263,24 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       setConfigQuantities(Object.fromEntries(
         configs.map((config) => [config.itemcode, config.quantity_per_pallet === null ? "" : String(config.quantity_per_pallet)]),
       ));
+      setConfigCustomers(Object.fromEntries(configs.map((config) => [config.itemcode, config.customer])));
+      setCustomerOptions(result.customers as string[]);
       setConfigSearched(true);
     } catch (error) {
+      if (controller.signal.aborted) return;
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Không thể tải cấu hình pallet.",
       });
     } finally {
-      setConfigSearching(false);
+      if (!controller.signal.aborted) setConfigSearching(false);
     }
   }
 
   async function savePalletConfig(config: PalletConfig) {
+    if (updatingItemcode !== null || configSearching) return;
     const quantityPerPallet = Number(configQuantities[config.itemcode]);
-    if (!Number.isInteger(quantityPerPallet) || quantityPerPallet <= 0) {
+    if (!Number.isInteger(quantityPerPallet) || quantityPerPallet <= 0 || quantityPerPallet > 2147483647) {
       setMessage({ type: "error", text: "Số lượng pallet chẵn phải là số nguyên lớn hơn 0." });
       return;
     }
@@ -272,6 +294,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         body: JSON.stringify({
           itemcode: config.itemcode,
           quantity_per_pallet: quantityPerPallet,
+          customer: configCustomers[config.itemcode] ?? config.customer,
         }),
       });
       const result = await response.json();
@@ -280,11 +303,12 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       }
 
       setConfigRows((current) => current.map((row) => row.itemcode === config.itemcode
-        ? { ...row, quantity_per_pallet: quantityPerPallet, updated_at: new Date().toISOString() }
+        ? { ...row, quantity_per_pallet: result.quantity_per_pallet, customer: result.customer, updated_at: result.updated_at }
         : row));
+      setConfigCustomers((current) => ({ ...current, [config.itemcode]: result.customer }));
       setMessage({
         type: "success",
-        text: `Đã cập nhật ${config.itemcode}: ${quantityPerPallet.toLocaleString("vi-VN")} pcs/pallet chẵn.`,
+        text: `Đã cập nhật số lượng pallet chẵn và khách hàng cho ${config.itemcode}.`,
       });
       router.refresh();
     } catch (error) {
@@ -491,6 +515,11 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
 
   return <>
     <style>{`
+      .pallet-config-modal { width: min(1280px, calc(100vw - 36px)); }
+      .pallet-config-table { width: 100%; min-width: 1000px; }
+      .pallet-config-table td:nth-child(2) { min-width: 220px; max-width: 340px; overflow-wrap: anywhere; }
+      .pallet-config-table select { min-width: 210px; width: 100%; }
+      .pallet-config-table input { min-width: 120px; width: 100%; }
       .pallet-wo-cell { display: inline-flex; align-items: center; gap: 7px; }
       .pallet-wo-eye-button { width: 30px; height: 30px; display: inline-grid; place-items: center; padding: 0; border: 1px solid #d0d5dd; border-radius: 9px; color: #344054; background: #fff; cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease, transform .15s ease; }
       .pallet-wo-eye-button:hover { border-color: #84adff; color: #175cd3; background: #eff8ff; transform: translateY(-1px); }
@@ -560,8 +589,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     {oldWoPrintOpen ? <OldWoPrintDialog onClose={() => setOldWoPrintOpen(false)} onPrintCompensation={openCompensationPrint} /> : null}
     {woReceiptOpen ? <WoReceiptDialog onClose={() => setWoReceiptOpen(false)} /> : null}
 
-    {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className="modal-card modal-card-wide" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : dialog === "config" ? "Cài đặt pallet" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2>{dialog === "create" && selectedRow ? <p className="pallet-modal-order">SL đặt hàng: <strong>{formatNumber(selectedRow.quanorder)}</strong></p> : null}</div><button className="modal-close" onClick={closeDialog}>×</button></div>
+    {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className={`modal-card modal-card-wide ${dialog === "config" ? "pallet-config-modal" : ""}`} onMouseDown={(event) => event.stopPropagation()}>
+      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : dialog === "config" ? "Cài đặt pallet" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2>{dialog === "create" && selectedRow ? <p className="pallet-modal-order">SL đặt hàng: <strong>{formatNumber(selectedRow.quanorder)}</strong></p> : null}</div><button aria-label="Đóng" className="modal-close" disabled={dialog === "config" && updatingItemcode !== null} onClick={closeDialog}>×</button></div>
 
       {dialog === "create" && selectedRow ? <>
         <div className="pallet-choice-grid">
@@ -603,19 +632,25 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
 
       {dialog === "config" ? <>
         <div className="form-grid pallet-search-grid">
-          <label className="form-full">Tìm theo Itemcode<input autoFocus value={configSearch} onChange={(event) => setConfigSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void searchPalletConfigs(); }} placeholder="Nhập Itemcode cần chỉnh sửa" /></label>
+          <label className="form-full">Tìm theo Itemcode<input autoFocus disabled={configSearching || updatingItemcode !== null} maxLength={200} value={configSearch} onChange={(event) => { setConfigSearch(event.target.value); setConfigSearched(false); }} onKeyDown={(event) => { if (event.key === "Enter") void searchPalletConfigs(); }} placeholder="Nhập Itemcode cần chỉnh sửa" /></label>
           <div className="pallet-search-actions form-full">
-            <button className="button button-primary" disabled={configSearching} onClick={() => void searchPalletConfigs()}>{configSearching ? "Đang tìm..." : "Tìm kiếm"}</button>
+            <button className="button button-primary" disabled={configSearching || updatingItemcode !== null} onClick={() => void searchPalletConfigs()}>{configSearching ? "Đang tìm..." : "Tìm kiếm"}</button>
           </div>
         </div>
-        <p className="muted small">Số lượng mới chỉ áp dụng cho các tem pallet chẵn được tạo sau khi cập nhật.</p>
-        {configSearched ? <div className="table-wrap"><table><thead><tr><th>Itemcode</th><th>Số lượng hiện tại</th><th>Số lượng pallet chẵn mới</th><th>Thao tác</th></tr></thead><tbody>
+        <p className="muted small">Khách hàng được chọn từ dữ liệu pallet, đã lọc trùng. Thay đổi áp dụng vào cấu hình sản phẩm; các tem đã tạo giữ nguyên thông tin.</p>
+        {configSearched ? <div className="table-wrap"><table className="pallet-config-table"><thead><tr><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>SL pallet chẵn hiện tại</th><th>SL pallet chẵn mới</th><th>Thao tác</th></tr></thead><tbody>
           {configRows.length ? configRows.map((config) => <tr key={config.itemcode}>
             <td><strong>{config.itemcode}</strong></td>
+            <td>{config.product_name || "—"}</td>
+            <td><select aria-label={`Khách hàng cho ${config.itemcode}`} disabled={updatingItemcode !== null} value={configCustomers[config.itemcode] ?? config.customer} onChange={(event) => setConfigCustomers((current) => ({ ...current, [config.itemcode]: event.target.value }))}>
+              <option value="" disabled={Boolean(config.customer)}>Chưa có khách hàng</option>
+              {config.customer && !customerOptions.includes(config.customer) ? <option value={config.customer}>{config.customer} (hiện tại)</option> : null}
+              {customerOptions.map((customer) => <option key={customer} value={customer}>{customer}</option>)}
+            </select></td>
             <td>{formatNumber(config.quantity_per_pallet)}</td>
-            <td><input aria-label={`Số lượng pallet chẵn mới cho ${config.itemcode}`} min="1" step="1" type="number" value={configQuantities[config.itemcode] ?? ""} onChange={(event) => setConfigQuantities((current) => ({ ...current, [config.itemcode]: event.target.value }))} /></td>
+            <td><input aria-label={`Số lượng pallet chẵn mới cho ${config.itemcode}`} disabled={updatingItemcode !== null} min="1" max="2147483647" step="1" type="number" value={configQuantities[config.itemcode] ?? ""} onChange={(event) => setConfigQuantities((current) => ({ ...current, [config.itemcode]: event.target.value }))} /></td>
             <td><button className="button button-primary button-small" disabled={updatingItemcode !== null} onClick={() => void savePalletConfig(config)}>{updatingItemcode === config.itemcode ? "Đang lưu..." : "Lưu"}</button></td>
-          </tr>) : <tr><td colSpan={4}>Không tìm thấy Itemcode trong cấu hình pallet.</td></tr>}
+          </tr>) : <tr><td colSpan={6}>Không tìm thấy Itemcode trong cấu hình pallet.</td></tr>}
         </tbody></table></div> : null}
       </> : null}
 

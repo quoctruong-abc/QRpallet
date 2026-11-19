@@ -7,15 +7,21 @@ try {
   const f = await fixture(db);
   await db.exec(`reset role; alter table public.pallet_data add column quanorder numeric, add column machine text,
     add column created_by uuid, add column even_pallet boolean default false, add column note text;`);
+  await db.exec(`alter table public.item_pallet_config add column updated_at timestamptz not null default now();
+    create trigger item_pallet_config_set_updated_at before update on public.item_pallet_config
+    for each row execute function public.set_updated_at();`);
   const before = (await db.query('select count(*)::int n from public.pallet_data')).rows[0].n;
   await db.exec(await sql('supabase/migrations/20261119090000_prepare_scan_stock_bridge.sql'));
   await db.exec(await sql('supabase/migrations/20261119100000_pallet_itemcode_work_orders.sql'));
+  await db.exec(await sql('supabase/migrations/20261119110000_pallet_config_customers.sql'));
   assert.equal((await db.query('select count(*)::int n from public.pallet_data')).rows[0].n, before, 'Migration is read-only with respect to business data');
   assert.equal((await db.query('select public.scan_stock_preflight() report')).rows[0].report.ready_to_activate, true, 'Lookup RPC does not conflict with the held scan activation guards');
   assert.equal((await db.query("select count(*)::int n from pg_trigger where tgname in ('scan_stock_receive','scan_stock_receipt_complete')")).rows[0].n, 0, 'Scan activation remains off');
   const lookup = async (code = 'ITEM') => (await db.query('select * from public.pallet_itemcode_work_orders($1)', [code])).rows;
   await f.as();
   await assert.rejects(lookup(), /NOT_AUTHORIZED/, 'Scan permission alone cannot use the print lookup');
+  await assert.rejects(db.query('select public.pallet_customer_options()'), /NOT_AUTHORIZED/);
+  await assert.rejects(db.query("select public.pallet_config_save('CFG',100)"), /NOT_AUTHORIZED/);
   await db.exec('reset role');
   await db.exec("insert into public.permissions values('pallet.create','pallet','Create labels')");
   await db.query("insert into public.user_permissions values($1,'pallet.create',$1)", [f.actor]);
@@ -57,12 +63,38 @@ try {
   assert.equal((await lookup('NEW'))[0].wo, 'NEW-WO', 'A newly printed item enters the regular WO lookup');
   await db.exec('reset role');
   assert.equal((await db.query('select count(*)::int n from public.inv_incoming')).rows[0].n, 0, 'Printing a label does not activate the stock bridge');
+  await db.exec(`insert into public.pallet_data(pallet_id,itemcode,wo,quantity,customer) values
+    ('CUSTOMER-SPACE','DONOR','CUSTOMERS',1,' Customer '),('CUSTOMER-BLANK','DONOR','CUSTOMERS',1,' '),('CUSTOMER-NULL','DONOR','CUSTOMERS',1,null);
+    insert into public.item_pallet_config(itemcode,quantity_per_pallet,product_name,"ERP_name",customer,netweight) values
+    ('CFG',100,'Production label','ERP label','Legacy Only',0.5),('CFG-LEGACY',100,'Legacy item','ERP','Legacy Only',1),
+    ('CFG-EMPTY',100,'Empty customer','ERP',null,1);`);
+  const historyBefore = (await db.query('select id,customer from public.pallet_data order by id')).rows;
+  await f.as();
+  const options = (await db.query('select public.pallet_customer_options() result')).rows[0].result.customers;
+  assert.deepEqual(options, ['Customer', 'Other customer'], 'Trim, deduplicate and exclude blanks using pallet history, not config');
+  const save = async (code, quantity, customer) => (await db.query('select public.pallet_config_save($1,$2,$3) result', [code, quantity, customer])).rows[0].result;
+  const saved = await save('CFG', 150, ' Other customer ');
+  assert.equal(saved.quantity_per_pallet, 150); assert.equal(saved.customer, 'Other customer');
+  await save('CFG', 200, null);
+  for (const [qty, customer, error] of [[250, 'Invented customer', /UNKNOWN_CUSTOMER/], [250, '', /CUSTOMER_REQUIRED/], [0, 'Customer', /CONFIG_INVALID/]]) {
+    await assert.rejects(save('CFG', qty, customer), error);
+  }
+  assert.equal((await save('CFG-LEGACY', 120, 'Legacy Only')).customer, 'Legacy Only', 'Keep an existing customer absent from history');
+  assert.equal((await save('CFG-EMPTY', 120, '')).customer, '', 'Quantity-only edits still work for an item with no customer');
+  await db.exec('reset role');
+  const cfg = (await db.query("select * from public.item_pallet_config where itemcode='CFG'")).rows[0];
+  assert.equal(cfg.quantity_per_pallet, 200, 'Rejected customer changes do not partially save quantity');
+  assert.equal(cfg.customer, 'Other customer'); assert.equal(cfg.product_name, 'Production label');
+  assert.equal(cfg.ERP_name, 'ERP label'); assert.equal(Number(cfg.netweight), 0.5);
+  assert.deepEqual((await db.query('select id,customer from public.pallet_data order by id')).rows, historyBefore, 'Settings never rewrite historical pallet customer snapshots');
   await db.exec('reset role');
   await db.query('update public.profiles set is_active=false where id=$1', [f.actor]);
   await f.as(); await assert.rejects(lookup(), /NOT_AUTHORIZED/);
   await db.exec('reset role; set role anon');
   await assert.rejects(lookup(), /permission denied/);
-  console.log('PASS DB: read-only migration, pallet.create permission, active/version totals, WHdone progress, archived WO discovery, item isolation, order/date sorting and inactive/anonymous denial.');
+  await assert.rejects(db.query('select public.pallet_customer_options()'), /permission denied/);
+  await assert.rejects(db.query("select public.pallet_config_save('CFG',100)"), /permission denied/);
+  console.log('PASS DB: pallet WO lookup, customer options from history, atomic quantity/customer settings, catalog metadata preservation, unchanged pallet snapshots, permission guards and dormant scan activation.');
 } finally {
   await db.close();
 }
