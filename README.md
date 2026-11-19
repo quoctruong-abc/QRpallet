@@ -1117,6 +1117,11 @@ Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đ�
 
 ### Chuẩn bị nối confirm scan vào tồn kho — CHƯA BẬT
 
+Trước go-live có bộ [kiểm tra và reset dữ liệu kho thử](supabase/operations/WAREHOUSE_CLEANUP.md):
+11 bảng ledger được xử lý cùng transaction, giữ master/production/receipt cũ,
+chặn sau kích hoạt hoặc có nguồn scan. Các file chỉ nằm ở `supabase/operations`,
+không chạy qua migration và không tự phân biệt test với dữ liệu thật.
+
 Migration `20261119090000_prepare_scan_stock_bridge.sql` chỉ thêm source scan,
 unique ID nguồn và các hàm nội bộ/read-only recovery. Nó không gắn trigger,
 không sửa RPC confirm và không nhập lại pallet WHdone cũ. App mới vẫn chạy khi
