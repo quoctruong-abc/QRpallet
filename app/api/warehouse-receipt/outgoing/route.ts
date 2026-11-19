@@ -1,0 +1,195 @@
+import readExcel from "read-excel-file/node";
+import { createHash } from "node:crypto";
+import { authorizeWarehouse, hasPermission } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { readMergeRanges, expandMergedCells } from "@/lib/excel-merged";
+import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
+import { MAX_DELIVERY_REVIEW_REQUESTS, parseDeliverySheet, parseManualDeliveryInput, type ManualDeliveryInput } from "@/lib/warehouse-receipt/outgoing";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
+const fail = (error: string, status = 400) => Response.json({ success: false, error }, { status });
+const needsBuildUpMigration = () => fail("Cần chạy migration 20261116110000_delivery_build_up.sql để tách mã ghép cặp khi tạo lịch giao.", 503);
+const needsParentMigration = () => fail("Cần chạy migration 20261118100000_parent_delivery_workflow.sql để quản lý xuất theo mã mẹ.", 503);
+const needsCatalogMigration = () => fail("Cần chạy migration 20261118110000_unified_warehouse_item_lookup.sql để tra cứu danh mục kho.", 503);
+const needsActiveMigration = () => fail("Cần chạy migration 20261118120000_active_item_build_up.sql để dùng bộ ghép cặp active.", 503);
+const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
+function dbError(error: { code?: string; message?: string }) {
+  const message = error.message || "";
+  if (message.includes("DELIVERY_NOT_AUTHORIZED")) return fail("Bạn không có quyền thực hiện chức năng kho này.", 403);
+  if (message.startsWith("DELIVERY_BUILD_UP_ACTIVE_CHANGED:")) return fail(`Bộ active của mã ${message.slice("DELIVERY_BUILD_UP_ACTIVE_CHANGED:".length)} đã thay đổi. Tra cứu hoặc kiểm tra lại file trước khi xác nhận.`, 409);
+  if (message.startsWith("DELIVERY_BUILD_UP_CONFLICT:")) return fail(`Mã mẹ ${message.slice("DELIVERY_BUILD_UP_CONFLICT:".length)} đang chọn nhiều bộ khác nhau. Hãy dùng chung một bộ cho các lịch mới trong lần nạp.`, 409);
+  if (message.startsWith("DELIVERY_CATALOG_REJECTED:")) {
+    try {
+      const rejection = JSON.parse(message.slice("DELIVERY_CATALOG_REJECTED:".length)) as {
+        errors: { row?: number; itemcode: string; parent_itemcode?: string; reason: string }[];
+      };
+      return Response.json({ success: false, errors: rejection.errors, error: [
+        "Không thể tạo lịch xuất. Cần khai báo đầy đủ item trước khi nạp lịch.",
+        ...rejection.errors.map((row) => `${row.row ? `Dòng ${row.row}: ` : ""}${row.parent_itemcode ? `Mã mẹ ${row.parent_itemcode} / ` : ""}${row.reason}`),
+      ].join("\n") }, { status: 409 });
+    } catch { return fail("Item chưa được khai báo hoặc thiếu tên sản phẩm. Vui lòng cập nhật danh mục trước khi tạo lịch.", 409); }
+  }
+  const buildUpIssue = message.match(/^DELIVERY_BUILD_UP_(CHOOSE|CHANGED):(.+)$/);
+  if (buildUpIssue) return fail(buildUpIssue[1] === "CHOOSE"
+    ? `Mã ${buildUpIssue[2]} có nhiều tổ hợp. Hãy chọn tổ hợp mã con trước khi xác nhận.`
+    : `Ghép cặp của mã ${buildUpIssue[2]} đã thay đổi. Hãy tra cứu hoặc kiểm tra lại file.`, 409);
+  if (["PGRST202", "42883"].includes(error.code ?? "") && message.includes("lookup_delivery_build_up")) return needsBuildUpMigration();
+  if (["PGRST202", "42883"].includes(error.code ?? "") && message.includes("delivery_request_details")) return needsParentMigration();
+  const shortItem = message.match(/^DELIVERY_BULK_SHORT_STOCK:(.+)$/)?.[1];
+  if (shortItem) return fail(`Item ${shortItem} không còn đủ tồn để xuất. Mở lại Xuất hàng loạt và bỏ tick dòng thiếu tồn.`, 409);
+  if (error.code === "PGRST202" && /preview_bulk_delivery|post_bulk_delivery/.test(message)) {
+    return fail("Cần chạy migration 20261106130000_bulk_delivery_lots.sql để xuất hàng loạt.", 503);
+  }
+  if (error.code === "PGRST202" && message.includes("review_delivery_fifo")) {
+    return fail("Cần chạy migration 20261106120000_review_delivery_fifo.sql để xem Review FIFO.", 503);
+  }
+  if (error.code === "PGRST202" && /lookup_manual_delivery_item|post_manual_delivery/.test(message)) {
+    return fail("Cần chạy migration 20261106110000_manual_delivery.sql để nhập lịch giao thủ công.", 503);
+  }
+  if (error.code === "PGRST202" && message.includes("list_stock_production_dates")) {
+    return fail("Cần chạy migration 20261106100000_stock_fifo_overship.sql để xem tồn theo ngày sản xuất.", 503);
+  }
+  if (["PGRST202", "42883", "42P01", "42703"].includes(error.code ?? "")) {
+    return fail("Supabase chưa có cấu trúc Xuất kho. Cần chạy migration 20261105140000_item_stock_summary.sql.", 503);
+  }
+  const messages: [string, string][] = [
+    ["DELIVERY_SELECT_PARENT", "Cần chọn mã mẹ để xuất hoặc hủy cả tổ hợp. Tải lại danh sách để cập nhật."],
+    ["DELIVERY_COMPONENTS_OUT_OF_SYNC", "Lịch sử mã con không đồng bộ theo tỷ lệ ghép cặp. Cần đối chiếu trước khi xuất tiếp."],
+    ["DELIVERY_COMPONENT_QTY_MISMATCH", "Không thể xuất: số lượng các mã con không đồng bộ. Số xuất chia tỷ lệ phải bằng nhau và là số nguyên dương."],
+    ["DELIVERY_NOT_AUTHORIZED", "Bạn không có quyền xuất kho."],
+    ["DELIVERY_STALE", "Dữ liệu đã thay đổi. Tải lại danh sách và kiểm tra trước khi xác nhận."],
+    ["DELIVERY_COMMAND_CONFLICT", "Mã thao tác đã dùng cho nội dung khác. Tải lại trang để kiểm tra kết quả."],
+    ["DELIVERY_INSUFFICIENT_STOCK", "Tồn thực tế không đủ số thực xuất. Tải lại gợi ý FIFO và kiểm tra số lượng."],
+    ["DELIVERY_BULK_OVER_DEMAND", "Không thể ghi nhận số lượng này. Để xuất vượt yêu cầu, cần áp dụng migration 20261106140000_bulk_delivery_overship.sql."],
+    ["DELIVERY_BULK_LOT_MISMATCH", "Có lô không thuộc các item đang được chọn xuất."],
+    ["DELIVERY_BULK_QTY_LIMIT", "Số đã xuất của một yêu cầu vượt giới hạn lưu trữ. Hãy giảm số lượng chọn xuất."],
+    ["DELIVERY_BELOW_SHIPPED", "Không thể giảm số yêu cầu thấp hơn số đã xuất hoặc số yêu cầu hiện tại nếu đã xuất vượt."],
+    ["DELIVERY_CHOOSE_SCHEDULE", "Chọn tạo lịch mới hoặc dời lịch cũ cho dòng có ngày giao khác."],
+    ["DELIVERY_DUPLICATE_TARGET", "Hai dòng đang cùng cập nhật một lịch giao. Kiểm tra lại lựa chọn dời lịch."],
+    ["DELIVERY_DATE_CONFLICT", "Ngày mới trùng với một lịch đã có. Không thể dời lịch vào ngày đó."],
+    ["DELIVERY_CANCELLED", "Yêu cầu đã hủy, không thể tiếp tục xuất hoặc chỉnh sửa."],
+    ["DELIVERY_DONE", "Yêu cầu đã hoàn tất và không còn phần chờ xuất."],
+    ["DELIVERY_ITEM_NOT_FOUND", "Không tìm thấy item, vui lòng cập nhật database."],
+    ["DELIVERY_SHIP_CHILDREN_ONLY", "Mã mẹ chỉ dùng để theo dõi. Hãy chọn các mã con để xuất hàng."],
+    ["DELIVERY_EDIT_PARENT_ONLY", "Cần cập nhật lịch theo mã mẹ để giữ đúng số lượng mã con."],
+    ["DELIVERY_DUPLICATE_KEY", "File có dòng trùng PO, Sales ID, Itemcode và ngày giao."],
+  ];
+  const known = messages.find(([key]) => message.includes(key));
+  if (known) return fail(known[1], 409);
+  if (message.includes("DELIVERY_INVALID") || ["22P02", "22003", "22007", "22008", "23514", "P0002"].includes(error.code ?? "")) return fail("Thông tin xuất kho không hợp lệ. Kiểm tra số lượng, ngày và dòng đang chọn.");
+  if (error.code === "23505") return fail("Lịch giao đã tồn tại. Tải lại danh sách để kiểm tra.", 409);
+  console.error("Delivery API failed", error);
+  return fail("Chưa xác nhận được kết quả. Giữ nguyên thao tác và bấm Thử lại để tránh ghi trùng.", 500);
+}
+
+export async function GET(request: Request) {
+  const auth = await authorizeWarehouse();
+  if (!auth.ok) return fail(auth.error, auth.status);
+  const db = await createClient();
+  const url = new URL(request.url);
+  if (url.searchParams.get("view") === "manual-item") {
+    let itemcode: string;
+    try { itemcode = normalizeWarehouseItemcode(url.searchParams.get("itemcode") || ""); }
+    catch (error) { return fail(error instanceof Error ? error.message : "Mã sản phẩm không hợp lệ."); }
+    const { data: item, error } = await db.rpc("lookup_delivery_build_up", { p_itemcode: itemcode });
+    if (error) return dbError(error);
+    if (item?.catalog_lookup_version !== 1) return needsCatalogMigration();
+    if (item?.build_up_active_version !== 1) return needsActiveMigration();
+    if (item.lookup_error) return fail(item.lookup_error, 404);
+    if (!item) return fail("Không tìm thấy item, vui lòng cập nhật database.", 404);
+    return Response.json({ success: true, item }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (url.searchParams.get("view") === "production-dates") {
+    const itemcode = (url.searchParams.get("itemcode") || "").trim();
+    if (!itemcode || itemcode.length > 200) return fail("Mã sản phẩm không hợp lệ.");
+    const { data, error } = await db.rpc("list_stock_production_dates", { p_itemcode: itemcode });
+    if (error) return dbError(error);
+    return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
+  }
+  const id = url.searchParams.get("id");
+  if (id) {
+    if (!uuid(id)) return fail("Mã yêu cầu không hợp lệ.");
+    const { data, error } = await db.rpc("delivery_request_details", { p_id: id });
+    if (error) return dbError(error);
+    return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
+  }
+  const offset = Number(url.searchParams.get("offset") || 0);
+  if (!Number.isSafeInteger(offset) || offset < 0) return fail("Trang không hợp lệ.");
+  const p_search = (url.searchParams.get("search") || "").trim().slice(0, 200);
+  const summary = url.searchParams.get("view") === "summary";
+  const { data, error } = summary
+    ? await db.rpc("list_stock_summary", { p_offset: offset, p_search, p_shortage_only: url.searchParams.get("shortage") === "true" })
+    : await db.rpc("list_delivery", { p_offset: offset, p_search, p_closed: url.searchParams.get("closed") === "true" });
+  if (error) return dbError(error);
+  if (data?.model_version !== 2) return fail("Cần chạy migration 20261105140000_item_stock_summary.sql để chuyển mô hình tồn kho.", 503);
+  if (!summary && data?.group_model_version !== 1) return needsParentMigration();
+  return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
+}
+
+export async function POST(request: Request) {
+  const auth = await authorizeWarehouse();
+  if (!auth.ok) return fail(auth.error, auth.status);
+  const db = await createClient();
+  if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
+    if (!hasPermission(auth.profile, "edit-WH")) return fail("Bạn cần quyền edit-WH để nạp lịch giao ERP.", 403);
+    const form = await request.formData().catch(() => null);
+    const file = form?.get("file");
+    if (!(file instanceof File) || !file.name.toLowerCase().endsWith(".xlsx") || !file.size || file.size > 4 * 1024 * 1024) return fail("Chọn file .xlsx không quá 4 MB.");
+    try {
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const sheets = await readExcel(buffer, { trim: false });
+      const sheet = sheets.find((s) => s.sheet.trim().toLowerCase() === "srithai_sales_delivery_schedule");
+      if (!sheet) return fail("Không tìm thấy sheet Srithai_Sales_Delivery_Schedule.");
+      const parsed = parseDeliverySheet(expandMergedCells(sheet.data, readMergeRanges(buffer, sheet.sheet)));
+      if (parsed.errors.length) return Response.json({ success: false, error: "File có dòng không hợp lệ.", errors: parsed.errors.slice(0, 100) }, { status: 422 });
+      const { data, error } = await db.rpc("manage_delivery", { p_action: "preview", p_command_id: null, p_payload: { rows: parsed.rows } });
+      if (error) return dbError(error);
+      if (data?.model_version !== 2) return fail("Cần chạy migration 20261105140000_item_stock_summary.sql để chuyển mô hình tồn kho.", 503);
+      if (data?.build_up_version !== 1) return needsBuildUpMigration();
+      if (data?.catalog_lookup_version !== 1) return needsCatalogMigration();
+      if (data?.build_up_active_version !== 1) return needsActiveMigration();
+      // A fingerprint identifies the parsed source, independent of uploaded filename.
+      const fingerprint = createHash("sha256").update(JSON.stringify(parsed.rows)).digest("hex");
+      return Response.json({ success: true, ...data, fingerprint, file_name: file.name });
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : "Không đọc được file ERP.");
+    }
+  }
+  const body = await request.json().catch(() => null);
+  if (!["review", "manual"].includes(body?.action) && !hasPermission(auth.profile, "edit-WH")) return fail("Bạn cần quyền edit-WH để duyệt hoặc thay đổi dữ liệu kho.", 403);
+  if (body?.action === "review" || body?.action === "bulk_preview") {
+    const ids: unknown = body.request_ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > MAX_DELIVERY_REVIEW_REQUESTS || !ids.every(uuid)) {
+      return fail("Danh sách Review không hợp lệ hoặc quá lớn. Hãy lọc theo ngày giao hoặc khách hàng rồi thử lại.");
+    }
+    const { data, error } = await db.rpc(body.action === "review" ? "review_delivery_fifo" : "preview_bulk_delivery", { p_request_ids: ids });
+    if (error) return dbError(error);
+    if (data?.group_model_version !== 1) return needsParentMigration();
+    return Response.json({ success: true, ...data }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (!body || !["manual", "import", "edit", "cancel", "reserve", "ship", "bulk_ship"].includes(body.action) || !uuid(body.command_id) || !body.payload || typeof body.payload !== "object") return fail("Yêu cầu không hợp lệ.");
+  if (body.profile_id !== auth.profile.id) return fail("Tài khoản đã thay đổi. Tải lại trang trước khi tiếp tục.", 403);
+  try {
+    if (body.action === "bulk_ship") {
+      const { data, error } = await db.rpc("post_bulk_delivery", { p_command_id: body.command_id, p_payload: body.payload });
+      if (error) return dbError(error);
+      return Response.json({ success: true, result: data });
+    }
+    if (body.action === "manual") {
+      let payload: ManualDeliveryInput;
+      try { payload = parseManualDeliveryInput(body.payload); }
+      catch (error) { return fail(error instanceof Error ? error.message : "Lịch giao không hợp lệ."); }
+      const { data, error } = await db.rpc("post_manual_delivery", { p_command_id: body.command_id, p_payload: payload });
+      if (error) return dbError(error);
+      return Response.json({ success: true, result: data });
+    }
+    const { data, error } = await db.rpc("manage_delivery", { p_action: body.action, p_command_id: body.command_id, p_payload: body.payload });
+    if (error) return dbError(error);
+    return Response.json({ success: true, result: data });
+  } catch (error) {
+    console.error("Delivery transport failed", error);
+    return fail("Chưa xác nhận được kết quả. Giữ nguyên thao tác và bấm Thử lại để tránh ghi trùng.", 500);
+  }
+}

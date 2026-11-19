@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { PlanItem } from "./pallet-label-client";
+import { ItemcodePrintPanel } from "./itemcode-print-panel";
 
 type OldWoPallet = {
   pallet_id: string;
@@ -54,6 +55,7 @@ function statusLabel(status: string) {
     case "processingwh": return "Đang nhập kho";
     case "whdone": return "Đã nhập kho";
     case "deleted": return "Đã xóa";
+    case "historical": return "Phiên bản lịch sử";
     default: return status || "—";
   }
 }
@@ -78,6 +80,8 @@ function ProgressBar({ value, total }: { value: number; total: number | null }) 
 
 export function OldWoPrintDialog({ onClose, onPrintCompensation }: Props) {
   const router = useRouter();
+  const [tab, setTab] = useState<"wo" | "itemcode">("wo");
+  const [creatingItem, setCreatingItem] = useState(false);
   const [searchWo, setSearchWo] = useState("");
   const [workOrder, setWorkOrder] = useState<PlanItem | null>(null);
   const [pallets, setPallets] = useState<OldWoPallet[]>([]);
@@ -85,26 +89,36 @@ export function OldWoPrintDialog({ onClose, onPrintCompensation }: Props) {
   const [searched, setSearched] = useState(false);
   const [reprintingPalletId, setReprintingPalletId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const lookup = useRef<AbortController | null>(null);
+  const busy = creatingItem || reprintingPalletId !== null;
+  useEffect(() => () => lookup.current?.abort(), []);
 
-  async function searchOldWo() {
-    const wo = searchWo.trim();
+  function resetResult() {
+    lookup.current?.abort();
+    setSearching(false); setSearched(false); setWorkOrder(null); setPallets([]); setMessage(null);
+  }
+
+  async function searchOldWo(value = searchWo, itemcode = "") {
+    const wo = value.trim();
     if (!wo) {
       setMessage({ type: "error", text: "Vui lòng nhập số WO cần tìm." });
       return;
     }
 
+    resetResult();
+    const controller = new AbortController();
+    lookup.current = controller;
     setSearching(true);
-    setSearched(false);
-    setWorkOrder(null);
-    setPallets([]);
-    setMessage(null);
 
     try {
       const params = new URLSearchParams({ wo });
+      if (itemcode) params.set("itemcode", itemcode);
       const response = await fetch(`/api/pallet-label/old-wo?${params.toString()}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
       const result = await response.json();
+      if (controller.signal.aborted) return;
       if (!response.ok || !result.success) {
         throw new Error(result.error ?? "Không thể tải dữ liệu WO cũ.");
       }
@@ -113,13 +127,14 @@ export function OldWoPrintDialog({ onClose, onPrintCompensation }: Props) {
       setPallets(result.pallets as OldWoPallet[]);
       setSearched(true);
     } catch (error) {
+      if (controller.signal.aborted) return;
       setSearched(true);
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Không thể tải dữ liệu WO cũ.",
       });
     } finally {
-      setSearching(false);
+      if (!controller.signal.aborted) setSearching(false);
     }
   }
 
@@ -169,14 +184,24 @@ export function OldWoPrintDialog({ onClose, onPrintCompensation }: Props) {
   }
 
   function handleBackdropMouseDown(event: MouseEvent<HTMLDivElement>) {
-    if (event.target === event.currentTarget && !reprintingPalletId) onClose();
+    if (event.target === event.currentTarget && !busy) onClose();
   }
 
   return (
     <div className="modal-backdrop old-wo-print-backdrop" onMouseDown={handleBackdropMouseDown}>
       <style>{`
         .old-wo-print-backdrop { z-index: 1050; }
-        .old-wo-print-modal { width: min(1180px, calc(100% - 24px)); max-height: 92vh; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; }
+        .old-wo-print-modal { width: min(1280px, calc(100% - 24px)); max-height: 92vh; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; }
+        .old-wo-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+        .old-wo-tabs button { min-width: 120px; }
+        .old-wo-item-table-wrap { overflow: auto; max-height: 340px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 16px; }
+        .old-wo-item-table { width: 100%; min-width: 940px; margin: 0; }
+        .old-wo-item-table th { position: sticky; top: 0; background: #f8fafc; z-index: 1; }
+        .old-wo-item-table td:nth-child(2) { min-width: 220px; }
+        .old-wo-selected-row { background: #eff8ff; }
+        .old-wo-item-table .old-wo-progress { min-width: 150px; }
+        .old-wo-item-fields { margin: 0; padding: 0; border: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+        .old-wo-item-fields label { display: grid; gap: 6px; }
         .old-wo-search { display: grid; grid-template-columns: minmax(240px, 1fr) auto; gap: 10px; align-items: end; margin-bottom: 16px; }
         .old-wo-search label { display: grid; gap: 6px; }
         .old-wo-search label span { color: var(--muted); font-size: .76rem; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
@@ -208,33 +233,40 @@ export function OldWoPrintDialog({ onClose, onPrintCompensation }: Props) {
           .old-wo-info-grid { grid-template-columns: 1fr 1fr; }
           .old-wo-info-item-product { grid-column: 1 / -1; }
           .old-wo-progress-grid { grid-template-columns: 1fr; }
+          .old-wo-item-fields { grid-template-columns: 1fr 1fr; }
           .old-wo-footer .button { flex: 1; }
         }
       `}</style>
 
-      <div className="modal-card old-wo-print-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div aria-modal="true" aria-label="In tem ngày cũ" role="dialog" className="modal-card old-wo-print-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-heading">
           <div><p className="eyebrow">PALLET</p><h2>In tem ngày cũ</h2></div>
-          <button className="modal-close" disabled={reprintingPalletId !== null} onClick={onClose} type="button">×</button>
+          <button aria-label="Đóng" className="modal-close" disabled={busy} onClick={onClose} type="button">×</button>
         </div>
 
-        <div className="old-wo-search">
+        <div className="old-wo-tabs" role="tablist" aria-label="Cách tìm tem ngày cũ">
+          {(["wo", "itemcode"] as const).map((value) => <button id={`old-print-tab-${value}`} aria-controls="old-print-panel" aria-selected={tab === value} role="tab" className={`button button-${tab === value ? "primary" : "secondary"}`} disabled={busy} onClick={() => { resetResult(); setTab(value); }} type="button" key={value}>{value === "wo" ? "WO" : "itemcode"}</button>)}
+        </div>
+
+        <div className="old-wo-result" id="old-print-panel" role="tabpanel" aria-labelledby={`old-print-tab-${tab}`}>
+        {tab === "wo" ? <div className="old-wo-search">
           <label>
             <span>Tìm theo WO</span>
             <input
               autoFocus
               value={searchWo}
-              onChange={(event) => setSearchWo(event.target.value)}
+              disabled={busy}
+              onChange={(event) => { setSearchWo(event.target.value); resetResult(); }}
               onKeyDown={handleSearchKeyDown}
               placeholder="Nhập chính xác số WO"
             />
           </label>
-          <button className="button button-primary" disabled={searching} onClick={() => void searchOldWo()} type="button">
+          <button className="button button-primary" disabled={searching || busy} onClick={() => void searchOldWo()} type="button">
             {searching ? "Đang tìm..." : "Tìm kiếm"}
           </button>
-        </div>
+        </div> : <ItemcodePrintPanel disabled={reprintingPalletId !== null || searching} onReset={resetResult} onSelectWo={(wo, itemcode) => void searchOldWo(wo, itemcode)} onBusyChange={setCreatingItem} />}
 
-        <div className="old-wo-result">
+          {searching ? <p role="status" className="muted">Đang tải thông tin WO...</p> : null}
           {message ? <p className={`alert alert-${message.type}`}>{message.text}</p> : null}
 
           {workOrder ? <>
@@ -270,7 +302,7 @@ export function OldWoPrintDialog({ onClose, onPrintCompensation }: Props) {
                         className="button button-primary button-small"
                         disabled={pallet.is_deleted || reprintingPalletId !== null}
                         onClick={() => void reprintPallet(pallet.pallet_id)}
-                        title={pallet.is_deleted ? "Không thể in lại pallet đã xóa" : undefined}
+                        title={pallet.is_deleted ? "Không thể in lại pallet đã xóa hoặc phiên bản lịch sử" : undefined}
                         type="button"
                       >
                         {reprintingPalletId === pallet.pallet_id ? "Đang mở..." : "In lại"}
@@ -280,14 +312,14 @@ export function OldWoPrintDialog({ onClose, onPrintCompensation }: Props) {
                 </tbody>
               </table>
             </div>
-          </> : searched && !message ? <div className="old-wo-empty">Không tìm thấy dữ liệu WO.</div> : !searching && !message ? <div className="old-wo-empty">Nhập WO để tải thông tin và lịch sử pallet đã in.</div> : null}
+          </> : searched && !message ? <div className="old-wo-empty">Không tìm thấy dữ liệu WO.</div> : tab === "wo" && !searching && !message ? <div className="old-wo-empty">Nhập WO để tải thông tin và lịch sử pallet đã in.</div> : null}
         </div>
 
         <div className="modal-actions old-wo-footer">
-          <button className="button button-secondary" disabled={reprintingPalletId !== null} onClick={onClose} type="button">Hủy</button>
+          <button className="button button-secondary" disabled={busy} onClick={onClose} type="button">Hủy</button>
           <button
             className="button button-primary"
-            disabled={!workOrder || reprintingPalletId !== null}
+            disabled={!workOrder || busy || searching}
             onClick={() => workOrder && onPrintCompensation(workOrder)}
             type="button"
           >

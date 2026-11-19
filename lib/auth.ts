@@ -167,6 +167,15 @@ export async function authorizePermission(permission: PermissionKey): Promise<Ap
   return authorization;
 }
 
+export async function authorizeWarehouse(edit = false): Promise<ApiAuthorization> {
+  const authorization = await authorizePermission("view-WH");
+  if (!authorization.ok) return authorization;
+  if (edit && !hasPermission(authorization.profile, "edit-WH")) {
+    return { ok: false, status: 403, error: "Bạn cần quyền edit-WH để thực hiện chức năng này." };
+  }
+  return authorization;
+}
+
 export async function authorizeAnyPermission(
   permissions: PermissionKey[],
 ): Promise<ApiAuthorization> {

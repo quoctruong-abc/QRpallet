@@ -34,8 +34,8 @@ export function UserPermissionEditor({
 
   function togglePermission(permission: PermissionKey, checked: boolean) {
     setSelected((current) => checked
-      ? Array.from(new Set([...current, permission]))
-      : current.filter((item) => item !== permission));
+      ? Array.from(new Set([...current, permission, ...(permission === "edit-WH" ? ["view-WH" as const] : [])]))
+      : current.filter((item) => item !== permission && !(permission === "view-WH" && item === "edit-WH")));
   }
 
   return (

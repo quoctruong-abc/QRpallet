@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { OldWoPrintDialog } from "./old-wo-print-dialog";
 import { WoReceiptDialog } from "./wo-receipt-dialog";
 import { WoPalletHistoryDialog } from "./wo-pallet-history-dialog";
+import { useMachineWoSelection } from "./use-machine-wo-selection";
 
 export type PlanItem = {
   machine: string;
@@ -35,7 +36,9 @@ export type ActivePallet = {
 type Props = { rows: PlanItem[]; pallets: ActivePallet[] };
 type PalletConfig = {
   itemcode: string;
-  quantity_per_pallet: number;
+  product_name: string;
+  customer: string;
+  quantity_per_pallet: number | null;
   updated_at: string;
 };
 type Mode = "full" | "partial";
@@ -88,6 +91,11 @@ function ProjectedQuantityProgress({
         <span className="quantity-progress-added" style={{ width: `${projectedWidth}%` }} />
       </div>
       <small>{validTotal ? `Sau khi tạo: ${Math.round((projected / total) * 100)}%` : "Chưa có order"}</small>
+      {validTotal && projected > total ? (
+        <p role="alert" style={{ color: "#dc2626", fontWeight: 600, margin: 0 }}>
+          Đã vượt số lượng WO, hãy xác nhận kĩ
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -106,7 +114,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const machines = useMemo(() => Array.from(new Set(validRows.map((row) => row.machine))).sort((a, b) => a.localeCompare(b, "vi")), [validRows]);
   const allWos = useMemo(() => Array.from(new Set(validRows.map((row) => row.wo))).sort((a, b) => a.localeCompare(b, "vi")), [validRows]);
 
-  const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
+  const { selectedMachine, selectedWos, selectMachine, selectWo } = useMachineWoSelection(validRows);
+  const [viewAllMachine, setViewAllMachine] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<PlanItem | null>(null);
   const [selectedPallet, setSelectedPallet] = useState<ActivePallet | null>(null);
   const [historyWo, setHistoryWo] = useState<string | null>(null);
@@ -124,6 +133,10 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [configSearch, setConfigSearch] = useState("");
   const [configRows, setConfigRows] = useState<PalletConfig[]>([]);
   const [configQuantities, setConfigQuantities] = useState<Record<string, string>>({});
+  const [configCustomers, setConfigCustomers] = useState<Record<string, string>>({});
+  const [customerOptions, setCustomerOptions] = useState<string[]>([]);
+  const configLookup = useRef<AbortController | null>(null);
+  useEffect(() => () => configLookup.current?.abort(), []);
   const [configSearched, setConfigSearched] = useState(false);
   const [configSearching, setConfigSearching] = useState(false);
   const [historyDays, setHistoryDays] = useState(1);
@@ -135,10 +148,10 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const [updatingItemcode, setUpdatingItemcode] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  const visibleRows = selectedMachine ? validRows.filter((row) => row.machine === selectedMachine) : [];
-
   function closeDialog() {
-    if (pending || reprintingPalletId !== null) return;
+    if (pending || reprintingPalletId !== null || (dialog === "config" && updatingItemcode !== null)) return;
+    configLookup.current?.abort();
+    setConfigSearching(false);
     setDialog(null);
     setSelectedPallet(null);
     setMessage(null);
@@ -183,7 +196,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     const entered = window.prompt(`Nhập số lượng mỗi pallet cho item ${row.itemcode}:`);
     if (entered === null) return;
     const quantityPerPallet = Number(entered.trim());
-    if (!Number.isInteger(quantityPerPallet) || quantityPerPallet <= 0) {
+    if (!Number.isInteger(quantityPerPallet) || quantityPerPallet <= 0 || quantityPerPallet > 2147483647) {
       window.alert("Số lượng mỗi pallet phải là số nguyên lớn hơn 0.");
       return;
     }
@@ -206,22 +219,30 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   }
 
   function openPalletSettings() {
+    configLookup.current?.abort();
     setSelectedRow(null);
     setConfigSearch("");
     setConfigRows([]);
     setConfigQuantities({});
+    setConfigCustomers({});
+    setCustomerOptions([]);
+    setConfigSearching(false);
     setConfigSearched(false);
     setMessage(null);
     setDialog("config");
   }
 
   async function searchPalletConfigs() {
+    if (updatingItemcode !== null) return;
     const itemcode = configSearch.trim();
     if (!itemcode) {
       setMessage({ type: "error", text: "Vui lòng nhập Itemcode cần tìm." });
       return;
     }
 
+    configLookup.current?.abort();
+    const controller = new AbortController();
+    configLookup.current = controller;
     setConfigSearching(true);
     setConfigSearched(false);
     setMessage(null);
@@ -229,8 +250,10 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       const params = new URLSearchParams({ itemcode });
       const response = await fetch(`/api/pallet-label/config?${params.toString()}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
       const result = await response.json();
+      if (controller.signal.aborted) return;
       if (!response.ok || !result.success) {
         throw new Error(result.error ?? "Không thể tải cấu hình pallet.");
       }
@@ -238,22 +261,26 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       const configs = result.configs as PalletConfig[];
       setConfigRows(configs);
       setConfigQuantities(Object.fromEntries(
-        configs.map((config) => [config.itemcode, String(config.quantity_per_pallet)]),
+        configs.map((config) => [config.itemcode, config.quantity_per_pallet === null ? "" : String(config.quantity_per_pallet)]),
       ));
+      setConfigCustomers(Object.fromEntries(configs.map((config) => [config.itemcode, config.customer])));
+      setCustomerOptions(result.customers as string[]);
       setConfigSearched(true);
     } catch (error) {
+      if (controller.signal.aborted) return;
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Không thể tải cấu hình pallet.",
       });
     } finally {
-      setConfigSearching(false);
+      if (!controller.signal.aborted) setConfigSearching(false);
     }
   }
 
   async function savePalletConfig(config: PalletConfig) {
+    if (updatingItemcode !== null || configSearching) return;
     const quantityPerPallet = Number(configQuantities[config.itemcode]);
-    if (!Number.isInteger(quantityPerPallet) || quantityPerPallet <= 0) {
+    if (!Number.isInteger(quantityPerPallet) || quantityPerPallet <= 0 || quantityPerPallet > 2147483647) {
       setMessage({ type: "error", text: "Số lượng pallet chẵn phải là số nguyên lớn hơn 0." });
       return;
     }
@@ -267,6 +294,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         body: JSON.stringify({
           itemcode: config.itemcode,
           quantity_per_pallet: quantityPerPallet,
+          customer: configCustomers[config.itemcode] ?? config.customer,
         }),
       });
       const result = await response.json();
@@ -275,11 +303,12 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       }
 
       setConfigRows((current) => current.map((row) => row.itemcode === config.itemcode
-        ? { ...row, quantity_per_pallet: quantityPerPallet, updated_at: new Date().toISOString() }
+        ? { ...row, quantity_per_pallet: result.quantity_per_pallet, customer: result.customer, updated_at: result.updated_at }
         : row));
+      setConfigCustomers((current) => ({ ...current, [config.itemcode]: result.customer }));
       setMessage({
         type: "success",
-        text: `Đã cập nhật ${config.itemcode}: ${quantityPerPallet.toLocaleString("vi-VN")} pcs/pallet chẵn.`,
+        text: `Đã cập nhật số lượng pallet chẵn và khách hàng cho ${config.itemcode}.`,
       });
       router.refresh();
     } catch (error) {
@@ -486,11 +515,21 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
 
   return <>
     <style>{`
+      .pallet-config-modal { width: min(1280px, calc(100vw - 36px)); }
+      .pallet-config-table { width: 100%; min-width: 1000px; }
+      .pallet-config-table td:nth-child(2) { min-width: 220px; max-width: 340px; overflow-wrap: anywhere; }
+      .pallet-config-table select { min-width: 210px; width: 100%; }
+      .pallet-config-table input { min-width: 120px; width: 100%; }
       .pallet-wo-cell { display: inline-flex; align-items: center; gap: 7px; }
       .pallet-wo-eye-button { width: 30px; height: 30px; display: inline-grid; place-items: center; padding: 0; border: 1px solid #d0d5dd; border-radius: 9px; color: #344054; background: #fff; cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease, transform .15s ease; }
       .pallet-wo-eye-button:hover { border-color: #84adff; color: #175cd3; background: #eff8ff; transform: translateY(-1px); }
       .pallet-wo-eye-button:focus-visible { outline: 3px solid rgba(47, 128, 237, .22); outline-offset: 1px; }
       .pallet-wo-eye-button svg { width: 17px; height: 17px; }
+      .pallet-machine-heading { justify-content: flex-start; flex-wrap: wrap; gap: 16px; }
+      .pallet-machine-wo-controls { min-width: 0; margin-bottom: 16px; }
+      .pallet-machine-wo-controls label { display: grid; gap: 8px; min-width: 0; }
+      .pallet-machine-wo-controls select { width: 100%; min-width: 0; }
+      .pallet-machine-hint { margin: 0 0 14px; }
     `}</style>
     <div className="feature-toolbar pallet-main-toolbar">
       <button className="button button-secondary" onClick={() => setOldWoPrintOpen(true)}>In tem ngày cũ</button>
@@ -503,22 +542,43 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
       {machines.map((machine) => {
         const active = machine === selectedMachine;
         const machineRows = validRows.filter((row) => row.machine === machine);
-        const woCount = new Set(machineRows.map((row) => row.wo)).size;
+        const machineWos = Array.from(new Set(machineRows.map((row) => row.wo))).sort((a, b) => a.localeCompare(b, "vi"));
+        const woOptions = machineWos.map((wo) => ({
+          wo,
+          label: `${wo} | ${machineRows.filter((row) => row.wo === wo).map((row) =>
+            `${row.itemcode} | ${row.product_name || "—"} | ${row.customer || "—"}`).join(" / ")}`,
+        }));
+        const selectedWo = selectedWos[machine] ?? "";
+        const viewAll = viewAllMachine === machine;
+        const visibleRows = viewAll ? machineRows : machineRows.filter((row) => row.wo === selectedWo);
+        const woCount = machineWos.length;
         const hasMissingConfig = machineRows.some((row) => row.quantity_per_pallet === null);
         return <div className="machine-grid-item" key={machine}>
-          <button type="button" className={`machine-card machine-card-simple ${active ? "machine-card-active" : ""}`} onClick={() => setSelectedMachine((current) => current === machine ? null : machine)}>
+          <button type="button" aria-expanded={active} className={`machine-card machine-card-simple ${active ? "machine-card-active" : ""}`} onClick={() => { selectMachine(active ? null : machine); setViewAllMachine(null); }}>
             <span className="machine-icon machine-icon-large" style={{ position: "relative" }}>🏭{hasMissingConfig ? <span aria-label="Có itemcode chưa cấu hình số lượng pallet" title="Có itemcode chưa cấu hình số lượng pallet" style={{ color: "#dc2626", fontSize: "1rem", fontWeight: 800, marginLeft: "0.2rem" }}>!</span> : null}</span>
             <span className="machine-card-copy"><strong>{machine}</strong><small>{woCount} WO</small></span>
           </button>
 
           {active ? <section className="panel pallet-table-panel machine-detail-panel">
-            <div className="section-heading"><div><p className="eyebrow">MACHINE</p><h2>{machine}</h2></div></div>
+            <div className="section-heading pallet-machine-heading">
+              <div><p className="eyebrow">MACHINE</p><h2>{machine}</h2></div>
+              <button type="button" className="button button-secondary" aria-pressed={viewAll} onClick={() => setViewAllMachine(viewAll ? null : machine)}>{viewAll ? "Về WO đã chọn" : "Xem hết"}</button>
+            </div>
+            <div className="pallet-machine-wo-controls">
+              <label>Chọn WO · Itemcode · Tên sản phẩm · Khách hàng
+                <select aria-label={`Chọn WO cho máy ${machine}`} title={woOptions.find((option) => option.wo === selectedWo)?.label} value={selectedWo} onChange={(event) => { selectWo(machine, event.target.value); setViewAllMachine(null); }}>
+                  <option value="">Chọn WO để in tem</option>
+                  {woOptions.map((option) => <option key={option.wo} value={option.wo}>{option.label}</option>)}
+                </select>
+              </label>
+            </div>
+            {viewAll ? <p className="muted pallet-machine-hint">Đang xem tất cả WO của máy {machine}. Chọn WO để quay lại in tem.</p> : null}
             <div className="table-wrap"><table className="pallet-table">
-              <thead><tr><th>In tem</th><th>Itemcode</th><th>WO</th><th>Product name</th><th>Customer</th><th>Quan order</th><th>Đã chạy</th><th>Đã nhập kho</th></tr></thead>
+              <thead><tr>{!viewAll ? <th>In tem</th> : null}<th>Itemcode</th><th>WO</th><th>Product name</th><th>Customer</th><th>Quan order</th><th>Đã chạy</th><th>Đã nhập kho</th></tr></thead>
               <tbody>{visibleRows.map((row) => <tr key={`${row.machine}-${row.wo}-${row.itemcode}`}>
-                <td><div className="action-row"><button className="button button-primary button-small" onClick={() => openCreate(row)}>In tem</button>{row.quantity_per_pallet === null ? <button className="button button-secondary button-small" disabled={updatingItemcode === row.itemcode} onClick={() => updatePalletConfig(row)}>{updatingItemcode === row.itemcode ? "Đang cập nhật..." : "Cập nhật"}</button> : null}</div></td>
+                {!viewAll ? <td><div className="action-row"><button className="button button-primary button-small" onClick={() => openCreate(row)}>In tem</button>{row.quantity_per_pallet === null ? <button className="button button-secondary button-small" disabled={updatingItemcode === row.itemcode} onClick={() => updatePalletConfig(row)}>{updatingItemcode === row.itemcode ? "Đang cập nhật..." : "Cập nhật"}</button> : null}</div></td> : null}
                 <td><strong>{row.itemcode}</strong></td><td><span className="pallet-wo-cell"><span className="badge">{row.wo}</span><button aria-label={`Xem lịch sử in tem của WO ${row.wo}`} className="pallet-wo-eye-button" onClick={() => setHistoryWo(row.wo)} title="Xem lịch sử in tem của WO" type="button"><svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><circle cx="12" cy="12" r="2.75" stroke="currentColor" strokeWidth="1.8"/></svg></button></span></td><td>{row.product_name || "—"}</td><td>{row.customer || "—"}</td><td>{formatNumber(row.quanorder)}</td><td><QuantityProgress value={row.produced_quantity} total={row.quanorder} /></td><td><QuantityProgress value={row.warehouse_quantity} total={row.quanorder} /></td>
-              </tr>)}</tbody>
+              </tr>)}{!viewAll && !selectedWo ? <tr><td colSpan={8} className="muted">Vui lòng chọn WO để in tem, hoặc bấm “Xem hết” để xem toàn bộ kế hoạch của máy.</td></tr> : null}</tbody>
             </table></div>
           </section> : null}
         </div>;
@@ -529,8 +589,8 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     {oldWoPrintOpen ? <OldWoPrintDialog onClose={() => setOldWoPrintOpen(false)} onPrintCompensation={openCompensationPrint} /> : null}
     {woReceiptOpen ? <WoReceiptDialog onClose={() => setWoReceiptOpen(false)} /> : null}
 
-    {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className="modal-card modal-card-wide" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : dialog === "config" ? "Cài đặt pallet" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2>{dialog === "create" && selectedRow ? <p className="pallet-modal-order">SL đặt hàng: <strong>{formatNumber(selectedRow.quanorder)}</strong></p> : null}</div><button className="modal-close" onClick={closeDialog}>×</button></div>
+    {dialog ? <div className="modal-backdrop" onMouseDown={closeDialog}><div className={`modal-card modal-card-wide ${dialog === "config" ? "pallet-config-modal" : ""}`} onMouseDown={(event) => event.stopPropagation()}>
+      <div className="modal-heading"><div><p className="eyebrow">PALLET</p><h2>{dialog === "created" ? "Tạo tem thành công" : dialog === "merge" ? "Gộp WO" : dialog === "delete" ? "Xóa pallet" : dialog === "history" ? "Lịch sử in tem" : dialog === "config" ? "Cài đặt pallet" : selectedRow ? `${selectedRow.wo} · ${selectedRow.itemcode}` : "Pallet"}</h2>{dialog === "create" && selectedRow ? <p className="pallet-modal-order">SL đặt hàng: <strong>{formatNumber(selectedRow.quanorder)}</strong></p> : null}</div><button aria-label="Đóng" className="modal-close" disabled={dialog === "config" && updatingItemcode !== null} onClick={closeDialog}>×</button></div>
 
       {dialog === "create" && selectedRow ? <>
         <div className="pallet-choice-grid">
@@ -572,19 +632,25 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
 
       {dialog === "config" ? <>
         <div className="form-grid pallet-search-grid">
-          <label className="form-full">Tìm theo Itemcode<input autoFocus value={configSearch} onChange={(event) => setConfigSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void searchPalletConfigs(); }} placeholder="Nhập Itemcode cần chỉnh sửa" /></label>
+          <label className="form-full">Tìm theo Itemcode<input autoFocus disabled={configSearching || updatingItemcode !== null} maxLength={200} value={configSearch} onChange={(event) => { setConfigSearch(event.target.value); setConfigSearched(false); }} onKeyDown={(event) => { if (event.key === "Enter") void searchPalletConfigs(); }} placeholder="Nhập Itemcode cần chỉnh sửa" /></label>
           <div className="pallet-search-actions form-full">
-            <button className="button button-primary" disabled={configSearching} onClick={() => void searchPalletConfigs()}>{configSearching ? "Đang tìm..." : "Tìm kiếm"}</button>
+            <button className="button button-primary" disabled={configSearching || updatingItemcode !== null} onClick={() => void searchPalletConfigs()}>{configSearching ? "Đang tìm..." : "Tìm kiếm"}</button>
           </div>
         </div>
-        <p className="muted small">Số lượng mới chỉ áp dụng cho các tem pallet chẵn được tạo sau khi cập nhật.</p>
-        {configSearched ? <div className="table-wrap"><table><thead><tr><th>Itemcode</th><th>Số lượng hiện tại</th><th>Số lượng pallet chẵn mới</th><th>Thao tác</th></tr></thead><tbody>
+        <p className="muted small">Khách hàng được chọn từ dữ liệu pallet, đã lọc trùng. Thay đổi áp dụng vào cấu hình sản phẩm; các tem đã tạo giữ nguyên thông tin.</p>
+        {configSearched ? <div className="table-wrap"><table className="pallet-config-table"><thead><tr><th>Itemcode</th><th>Tên sản phẩm</th><th>Khách hàng</th><th>SL pallet chẵn hiện tại</th><th>SL pallet chẵn mới</th><th>Thao tác</th></tr></thead><tbody>
           {configRows.length ? configRows.map((config) => <tr key={config.itemcode}>
             <td><strong>{config.itemcode}</strong></td>
+            <td>{config.product_name || "—"}</td>
+            <td><select aria-label={`Khách hàng cho ${config.itemcode}`} disabled={updatingItemcode !== null} value={configCustomers[config.itemcode] ?? config.customer} onChange={(event) => setConfigCustomers((current) => ({ ...current, [config.itemcode]: event.target.value }))}>
+              <option value="" disabled={Boolean(config.customer)}>Chưa có khách hàng</option>
+              {config.customer && !customerOptions.includes(config.customer) ? <option value={config.customer}>{config.customer} (hiện tại)</option> : null}
+              {customerOptions.map((customer) => <option key={customer} value={customer}>{customer}</option>)}
+            </select></td>
             <td>{formatNumber(config.quantity_per_pallet)}</td>
-            <td><input aria-label={`Số lượng pallet chẵn mới cho ${config.itemcode}`} min="1" step="1" type="number" value={configQuantities[config.itemcode] ?? ""} onChange={(event) => setConfigQuantities((current) => ({ ...current, [config.itemcode]: event.target.value }))} /></td>
+            <td><input aria-label={`Số lượng pallet chẵn mới cho ${config.itemcode}`} disabled={updatingItemcode !== null} min="1" max="2147483647" step="1" type="number" value={configQuantities[config.itemcode] ?? ""} onChange={(event) => setConfigQuantities((current) => ({ ...current, [config.itemcode]: event.target.value }))} /></td>
             <td><button className="button button-primary button-small" disabled={updatingItemcode !== null} onClick={() => void savePalletConfig(config)}>{updatingItemcode === config.itemcode ? "Đang lưu..." : "Lưu"}</button></td>
-          </tr>) : <tr><td colSpan={4}>Không tìm thấy Itemcode trong cấu hình pallet.</td></tr>}
+          </tr>) : <tr><td colSpan={6}>Không tìm thấy Itemcode trong cấu hình pallet.</td></tr>}
         </tbody></table></div> : null}
       </> : null}
 

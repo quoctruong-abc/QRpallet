@@ -1,6 +1,6 @@
 import { PageShell } from "@/components/page-shell";
 import { requireAdmin } from "@/lib/auth";
-import { POSITION_LABELS, POSITION_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
+import { POSITION_LABELS, POSITION_PERMISSIONS, POSITION_GRANTABLE_PERMISSIONS, POSITION_ROUTES } from "@/lib/routes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { PermissionKey, Position, PositionPageMapping, Profile } from "@/lib/types";
 import { CreateUserForm } from "./create-user-form";
@@ -16,7 +16,7 @@ const pages = [
   { path: "/planning-inject", label: "Planning Inject" },
   { path: "/pallet-label", label: "Xuất tem pallet" },
   { path: "/scan-qr", label: "Scan QR" },
-  { path: "/warehouse-receipt", label: "Xem phiếu nhập kho" },
+  { path: "/warehouse-receipt", label: "Quản lý kho" },
 ] as const;
 
 const allPermissions: Array<{ key: PermissionKey; label: string }> = [
@@ -25,7 +25,9 @@ const allPermissions: Array<{ key: PermissionKey; label: string }> = [
   { key: "pallet.create", label: "Tạo pallet" },
   { key: "pallet.edit", label: "Sửa pallet" },
   { key: "scan.standard", label: "Scan QR" },
-  { key: "receipt.view", label: "Xem phiếu nhập kho" },
+  { key: "receipt.view", label: "Xem Receipt" },
+  { key: "view-WH", label: "view-WH · Xem kho" },
+  { key: "edit-WH", label: "edit-WH · Chỉnh sửa kho" },
   { key: "dashboard.view", label: "Xem Dashboard" },
 ];
 
@@ -71,7 +73,7 @@ export default async function AdminPage() {
   const visiblePermissions = isSuperadmin
     ? allPermissions
     : allPermissions.filter((permission) =>
-        Boolean(profile.position && POSITION_PERMISSIONS[profile.position].includes(permission.key)),
+        Boolean(profile.position && POSITION_GRANTABLE_PERMISSIONS[profile.position].includes(permission.key)),
       );
 
   const mappingPositions = positions.map((position) => ({
@@ -92,7 +94,7 @@ export default async function AdminPage() {
             <p className="muted admin-intro">
               {isSuperadmin
                 ? "Quản lý tài khoản, position mapping và permission. Admin và Super Admin được xem Dashboard mặc định; user chỉ được xem khi Super Admin cấp quyền Xem Dashboard."
-                : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Dashboard là quyền mặc định của Admin; quyền Dashboard của user chỉ do Super Admin quản lý.`}
+                : `Tạo và quản lý user thuộc position ${profile.position ? POSITION_LABELS[profile.position] : "—"}. Dashboard là quyền mặc định của Admin; quyền Dashboard của user chỉ do Super Admin quản lý.${profile.position === "warehouse" ? " Admin Warehouse có mặc định view-WH và edit-WH; bạn có thể cấp hoặc thu hồi hai quyền này cho user cùng bộ phận." : ""}`}
             </p>
           </div>
           <div className="stat-card admin-stat-card">
@@ -181,7 +183,7 @@ export default async function AdminPage() {
                       permissions={visiblePermissions.map((permission) => ({
                         ...permission,
                         roleGranted: user.role === "admin" && (
-                          permission.key === "receipt.view" || permission.key === "dashboard.view"
+                          permission.key === "dashboard.view" || Boolean(user.position && POSITION_PERMISSIONS[user.position].includes(permission.key))
                         ),
                       }))}
                       userId={user.id}

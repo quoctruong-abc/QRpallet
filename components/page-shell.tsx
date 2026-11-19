@@ -24,9 +24,9 @@ const modules: Array<{
   { path: "/scan-qr", label: "Scan để nhập kho", icon: "▣", permissions: ["scan.standard"] },
   {
     path: "/warehouse-receipt",
-    label: "Xem phiếu nhập kho",
+    label: "Quản lý kho",
     icon: "📦",
-    permissions: ["receipt.view"],
+    permissions: ["receipt.view", "view-WH"],
   },
 ];
 
