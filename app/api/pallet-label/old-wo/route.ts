@@ -25,7 +25,7 @@ type OldWoPalletRow = {
   reprint_count: number | string | null;
 };
 
-async function loadPalletRows(wo: string, deleted: boolean) {
+async function loadPalletRows(wo: string, deleted: boolean | null, itemcode: string) {
   const supabase = await createClient();
   const rows: OldWoPalletRow[] = [];
 
@@ -37,7 +37,9 @@ async function loadPalletRows(wo: string, deleted: boolean) {
       .order("created_at", { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
 
-    query = deleted
+    if (itemcode) query = query.eq("itemcode", itemcode);
+
+    if (deleted !== null) query = deleted
       ? query.not("effect_to", "is", null).ilike("note", "delete:%")
       : query.is("effect_to", null);
 
@@ -61,8 +63,10 @@ export async function GET(request: Request) {
     );
   }
 
-  const wo = new URL(request.url).searchParams.get("wo")?.trim() ?? "";
-  if (!wo || wo.length > MAX_WO_LENGTH) {
+  const params = new URL(request.url).searchParams;
+  const wo = params.get("wo")?.trim() ?? "";
+  const itemFilter = params.get("itemcode")?.trim() ?? "";
+  if (!wo || wo.length > MAX_WO_LENGTH || itemFilter.length > 200) {
     return NextResponse.json(
       { success: false, error: "Vui lòng nhập WO hợp lệ." },
       { status: 400 },
@@ -71,14 +75,18 @@ export async function GET(request: Request) {
 
   try {
     const [activeRows, deletedRows] = await Promise.all([
-      loadPalletRows(wo, false),
-      loadPalletRows(wo, true),
+      loadPalletRows(wo, false, itemFilter),
+      loadPalletRows(wo, true, itemFilter),
     ]);
 
-    const allRows = [...activeRows, ...deletedRows].sort(
+    let allRows = [...activeRows, ...deletedRows].sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
-    const source = activeRows[0] ?? deletedRows[0];
+    // An item lookup also discovers WOs whose pallets now only have expired
+    // versions (for example after a merge). Show those as read-only history;
+    // never pass an expired version to the reprint action.
+    if (!allRows.length && itemFilter) allRows = await loadPalletRows(wo, null, itemFilter);
+    const source = activeRows[0] ?? deletedRows[0] ?? allRows[0];
 
     if (!source) {
       return NextResponse.json(
@@ -112,7 +120,9 @@ export async function GET(request: Request) {
       0,
     );
     const warehouseQuantity = activeRows
-      .filter((row) => (row.status ?? "").toLowerCase() !== "production")
+      .filter((row) => itemFilter
+        ? (row.status ?? "").toLowerCase() === "whdone"
+        : (row.status ?? "").toLowerCase() !== "production")
       .reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
 
     return NextResponse.json({
@@ -133,7 +143,7 @@ export async function GET(request: Request) {
         wo: row.wo ?? wo,
         itemcode: row.itemcode ?? "",
         quantity: Number(row.quantity) || 0,
-        status: row.effect_to ? "deleted" : row.status ?? "",
+        status: row.effect_to ? (row.note?.toLowerCase().startsWith("delete:") ? "deleted" : "historical") : row.status ?? "",
         working_day: row.working_day,
         created_at: row.created_at,
         reprint_count: Number(row.reprint_count) || 0,

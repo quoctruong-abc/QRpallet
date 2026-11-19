@@ -378,6 +378,21 @@ pallet_data
 - list pallet gần nhất phục vụ thao tác nhanh;
 - chức năng sửa/xóa chỉ cho pallet active `production`.
 
+### 8.1.1 In tem ngày cũ
+
+- Tab **WO** giữ luồng tra WO, xem pallet, in lại và in bù hiện tại.
+- Tab **itemcode** tìm chính xác item (hỗ trợ `*` điền 0 thành 13 ký tự), tra WO
+  trong `pallet_data`, hiện bảng tiến độ để chọn. Chi tiết WO luôn lọc thêm item
+  đã tìm; phiên bản lịch sử hết hiệu lực chỉ được xem, không in lại trực tiếp.
+- Nếu chưa có WO: lấy tên sản phẩm từ `item_pallet_config.product_name`, fallback
+  `ERP_name`; lấy khách hàng từ cùng cấu hình. Thiếu tên/khách hàng thì báo cập nhật.
+- Form mới bắt buộc WO, ngày sản xuất, số lượng trên tem và số lượng đơn hàng.
+  Khi lưu, API kiểm tra lại cấu hình và dùng RPC `create_pallet_record` hiện tại.
+- Migration `20261119100000_pallet_itemcode_work_orders.sql` chỉ thêm RPC tra cứu
+  tổng hợp trong DB, quyền `pallet.create`; không sửa dữ liệu hay bật scan nhập tồn.
+  Chạy `supabase db push` sau khi pull code để tab itemcode có thể tra cứu.
+- Kiểm thử API/lookup: `npm run test:pallet-itemcode`.
+
 ### 8.2 Tạo pallet
 
 Pallet mới:

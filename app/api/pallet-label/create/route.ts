@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { itemcodeCatalog } from "@/lib/pallet-label/itemcode-print";
+import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 
 function normalizeDateOnly(value: unknown): string | null | undefined {
   if (value === null || value === undefined || value === "") return null;
@@ -25,7 +27,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const quantity = Number(body.quantity);
-    if (!Number.isInteger(quantity) || quantity <= 0) {
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 2147483647) {
       return NextResponse.json({ error: "Số lượng pallet phải là số nguyên lớn hơn 0." }, { status: 400 });
     }
 
@@ -34,12 +36,31 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Ngày trên tem không hợp lệ." }, { status: 400 });
     }
 
+    const supabase = await createClient();
+    // This new intake path requires explicit date/order/WO and current catalog
+    // identity. Re-read it at save time; never trust the browser's snapshot.
+    if (body.source === "old-itemcode") {
+      const itemcode = normalizeWarehouseItemcode(String(body.itemcode ?? ""));
+      const wo = String(body.wo ?? "").trim();
+      const orderQuantity = Number(body.quanorder);
+      if (/\s/.test(itemcode) || !wo || wo.length > 120 || !workingDay || !Number.isFinite(orderQuantity) || orderQuantity <= 0) {
+        return NextResponse.json({ error: "Vui lòng nhập đầy đủ WO, ngày sản xuất, số lượng và số lượng đơn hàng hợp lệ." }, { status: 400 });
+      }
+      const { data: config, error: configError } = await supabase.from("item_pallet_config")
+        .select('itemcode,product_name,"ERP_name",customer,quantity_per_pallet').eq("itemcode", itemcode).maybeSingle();
+      if (configError) return NextResponse.json({ error: "Chưa kiểm tra được thông tin itemcode. Vui lòng thử lại." }, { status: 500 });
+      if (!config) return NextResponse.json({ error: "Itemcode chưa được khai báo trong danh mục sản phẩm." }, { status: 409 });
+      const item = itemcodeCatalog(config);
+      if (!item.customer) return NextResponse.json({ error: "Vui lòng cập nhật tên khách hàng trong thông tin sản phẩm trước khi in tem." }, { status: 409 });
+      if (!item.product_name) return NextResponse.json({ error: "Vui lòng cập nhật tên sản phẩm trong thông tin sản phẩm trước khi in tem." }, { status: 409 });
+      Object.assign(body, item, { wo, quanorder: orderQuantity, machine: null });
+    }
+
     const configuredQuantity = Number(body.quantity_per_pallet);
     const evenPallet = typeof body.even_pallet === "boolean"
       ? body.even_pallet
       : Number.isInteger(configuredQuantity) && configuredQuantity > 0 && quantity === configuredQuantity;
 
-    const supabase = await createClient();
     const { data, error } = await supabase.rpc("create_pallet_record", {
       p_itemcode: String(body.itemcode ?? "").trim(),
       p_product_name: body.product_name ? String(body.product_name) : null,
