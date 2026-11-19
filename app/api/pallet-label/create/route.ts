@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
+import { palletQuantity } from "@/lib/pallet-label/quantity";
 
 function normalizeDateOnly(value: unknown): string | null | undefined {
   if (value === null || value === undefined || value === "") return null;
@@ -63,10 +64,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, pallet: data });
     }
 
-    const configuredQuantity = Number(body.quantity_per_pallet);
+    const configuredQuantity = palletQuantity(body.quantity_per_pallet);
     const evenPallet = typeof body.even_pallet === "boolean"
       ? body.even_pallet
-      : Number.isInteger(configuredQuantity) && configuredQuantity > 0 && quantity === configuredQuantity;
+      : configuredQuantity !== null && quantity === configuredQuantity;
+
+    if (evenPallet) {
+      const itemcode = String(body.itemcode ?? "").trim();
+      const { data: config, error: configError } = await supabase.from("item_pallet_config")
+        .select("quantity_per_pallet").eq("itemcode", itemcode).maybeSingle();
+      if (configError) return NextResponse.json({ error: "Chưa kiểm tra được số lượng pallet chẵn. Chưa tạo tem, vui lòng thử lại." }, { status: 503 });
+      const currentQuantity = palletQuantity(config?.quantity_per_pallet);
+      if (currentQuantity === null) return NextResponse.json({ code: "PALLET_QUANTITY_MISSING", error: "Item chưa có số lượng pallet chẵn hợp lệ. Vui lòng cập nhật trong Cài đặt pallet." }, { status: 409 });
+      if (currentQuantity !== quantity) return NextResponse.json({ code: "PALLET_QUANTITY_CHANGED", quantity_per_pallet: currentQuantity, error: `Số lượng pallet chẵn đã thay đổi thành ${currentQuantity.toLocaleString("vi-VN")}. Vui lòng kiểm tra lại trước khi in.` }, { status: 409 });
+    }
 
     const { data, error } = await supabase.rpc("create_pallet_record", {
       p_itemcode: String(body.itemcode ?? "").trim(),

@@ -3,6 +3,7 @@ import { PageShell } from "@/components/page-shell";
 import { requirePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PalletLabelClient, type PlanItem } from "./pallet-label-client";
+import { loadPalletQuantities } from "@/lib/pallet-label/quantity";
 
 type PlanDbRow = {
   machine: string | null;
@@ -14,13 +15,12 @@ type PlanDbRow = {
 };
 
 type PalletDbRow = { wo: string; quantity: number; status: string };
-type ConfigDbRow = { itemcode: string; quantity_per_pallet: number | null };
 
 export default async function PalletLabelPage() {
   const profile = await requirePermission("pallet.create");
   const supabase = await createClient();
 
-  const [planResult, palletResult, configResult] = await Promise.all([
+  const [planResult, palletResult] = await Promise.all([
     supabase
       .from("planning_inject")
       .select("machine,itemcode,product_name,customer,wo,quanorder")
@@ -32,15 +32,13 @@ export default async function PalletLabelPage() {
       .from("pallet_data")
       .select("wo,quantity,status")
       .is("effect_to", null),
-    supabase.from("item_pallet_config").select("itemcode,quantity_per_pallet"),
   ]);
 
-  const databaseReady = !planResult.error && !palletResult.error && !configResult.error;
   const planRows = (planResult.data ?? []) as PlanDbRow[];
+  const configResult = await loadPalletQuantities(supabase, planRows.map(row => row.itemcode ?? ""));
+  const databaseReady = !planResult.error && !palletResult.error && !configResult.error;
   const palletRows = (palletResult.data ?? []) as PalletDbRow[];
-  const configs = new Map(
-    ((configResult.data ?? []) as ConfigDbRow[]).map((row) => [row.itemcode, row.quantity_per_pallet === null ? null : Number(row.quantity_per_pallet)]),
-  );
+  const configs = configResult.quantities;
 
   const totals = new Map<string, { produced: number; warehouse: number }>();
   for (const pallet of palletRows) {
@@ -59,14 +57,14 @@ export default async function PalletLabelPage() {
     const total = totals.get(row.wo) ?? { produced: 0, warehouse: 0 };
     uniquePlan.set(key, {
       machine: row.machine,
-      itemcode: row.itemcode,
+      itemcode: row.itemcode.trim(),
       product_name: row.product_name ?? "",
       customer: row.customer ?? "",
       wo: row.wo,
       quanorder: row.quanorder === null ? null : Number(row.quanorder),
       produced_quantity: total.produced,
       warehouse_quantity: total.warehouse,
-      quantity_per_pallet: configs.get(row.itemcode) ?? null,
+      quantity_per_pallet: configs.get(row.itemcode.trim()) ?? null,
     });
   }
 

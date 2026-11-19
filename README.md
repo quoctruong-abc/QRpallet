@@ -427,6 +427,27 @@ ID được sinh trong database transaction để tránh collision khi nhiều u
 
 ### 8.3 Quantity chuẩn mỗi pallet
 
+Số lượng chẵn lấy từ `item_pallet_config.quantity_per_pallet`. Trang chỉ tải các
+item có trong kế hoạch theo batch 100 mã, tránh mất cấu hình khi catalog vượt
+giới hạn trả dữ liệu mặc định 1.000 dòng. Cả trang chính và URL in tem cũ đều dùng
+cách lấy này, chuẩn hóa khoảng trắng đầu/cuối của itemcode khi ghép cấu hình.
+
+Khi mở popup in/in bù, app tra chính xác lại từng item qua
+`GET /api/pallet-label/quantity` (không cache, không phụ thuộc RPC danh sách khách
+hàng). Pallet chẵn tự hiện số lượng mới nhất; đang tải, lỗi đọc hoặc chưa cấu hình
+thì báo rõ và khóa xác nhận chẵn, có nút tải lại. Không tự chuyển sang pallet lẻ.
+In bù lấy cấu hình hiện tại thay vì suy ra từ số lượng pallet chẵn lịch sử.
+
+Backend đối chiếu số lượng chẵn với database trước khi gọi RPC tạo pallet. Nếu
+cấu hình đã đổi, trả 409, cập nhật lại số lượng trong popup và yêu cầu user kiểm
+tra/xác nhận lại; không tự tạo tem bằng số cũ. Luồng pallet lẻ nhập tay giữ nguyên.
+Sửa lỗi này chỉ thay code, không thêm migration hay thay dữ liệu cấu hình.
+
+Kiểm thử: `npm run test:pallet-quantity` tái hiện catalog 2.005 item, chạy cả hai
+server page, tra cứu chính xác, kiểm tra lỗi/quyền, cấu hình thay đổi, in bù và
+luồng in lẻ. Đã kiểm tra thao tác popup: tự điền, chặn dữ liệu cũ và hủy request
+khi đổi item.
+
 Bảng:
 
 ```text
