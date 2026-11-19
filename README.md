@@ -1076,7 +1076,26 @@ API/RPC kho yêu cầu tài khoản hoạt động có `view-WH`; API/RPC lịch
 giữ `receipt.view`. `list_stock_summary`,
 `list_delivery` trả 100 dòng/trang; `preview_delivery_fifo` trả gợi ý không ghi.
 Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đầy đủ vẫn lưu trong DB.
-Chưa nối tự động confirm scan.
+Đồng bộ confirm scan đã có phần chuẩn bị, chưa kích hoạt; xem mục bên dưới.
+
+### Chuẩn bị nối confirm scan vào tồn kho — CHƯA BẬT
+
+Migration `20261119090000_prepare_scan_stock_bridge.sql` chỉ thêm source scan,
+unique ID nguồn và các hàm nội bộ/read-only recovery. Nó không gắn trigger,
+không sửa RPC confirm và không nhập lại pallet WHdone cũ. App mới vẫn chạy khi
+chưa cài preparation; recovery RPC chưa tồn tại thì giữ xử lý cũ.
+
+SQL kích hoạt giữ tại `supabase/activation_pending/activate_scan_stock.sql`,
+ngoài thư mục migrations và có acknowledgement chặn chạy nhầm. Chỉ chuyển file
+vào migrations bằng timestamp mới khi user yêu cầu bật. Chi tiết preflight,
+cutover tồn đầu, rủi ro và test đa session ở
+[`supabase/activation_pending/README.md`](supabase/activation_pending/README.md).
+
+Khi bật, statement trigger ghi một dòng inv_incoming cho mỗi pallet mới WHdone,
+receipt constraint trigger kiểm tra đủ count/quantity tại COMMIT; lỗi rollback
+cả confirm. Summary dùng cơ chế hiện có. Scan không qua Proposal và không yêu
+cầu edit-WH. Recovery chỉ đọc trả lại receipt của đúng người/tập pallet sau khi
+mất HTTP response, không tự backfill stock cho receipt cũ.
 
 Migration `20261118140000_warehouse_permissions.sql` đăng ký hai quyền kho,
 đổi guard API/RPC/RLS (kể cả các hàm private được delegate) và giữ Receipt riêng.

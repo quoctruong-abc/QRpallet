@@ -1,5 +1,6 @@
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { scanStockError } from "@/lib/warehouse-receipt/scan-stock-errors";
 
 const MAX_CONFIRM_PALLETS = 200;
 const MAX_PALLET_ID_LENGTH = 128;
@@ -39,6 +40,20 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
+  const receiptResponse = (receipt: { receipt_id: string; receipt_date: string; total_pallet: number; total_quantity: number }) => Response.json({
+    success: true, receiptId: receipt.receipt_id, receiptDate: receipt.receipt_date,
+    totalPallet: Number(receipt.total_pallet), totalQuantity: Number(receipt.total_quantity),
+  });
+  async function recoverReceipt(): Promise<Response | null> {
+    const { data, error } = await supabase.rpc("recover_scan_receipt", { p_pallet_ids: palletIds });
+    // The new app can be deployed before its preparation migration.
+    if (error?.code === "PGRST202" || error?.code === "42883") return null;
+    if (error) {
+      console.error("Scan receipt recovery failed", { code: error.code, message: error.message });
+      return Response.json({ success: false, error: "Chưa kiểm tra được kết quả xác nhận trước. Giữ nguyên danh sách và thử lại." }, { status: 500 });
+    }
+    return data?.[0] ? receiptResponse(data[0]) : null;
+  }
   const isAdmin = authorization.profile.role === "admin" || authorization.profile.role === "superadmin";
 
   let palletQuery = supabase
@@ -63,6 +78,8 @@ export async function POST(request: Request) {
   }
 
   if (!palletData || palletData.length !== palletIds.length) {
+    const recovered = await recoverReceipt();
+    if (recovered) return recovered;
     return Response.json(
       { success: false, error: "Bạn chỉ được xác nhận các pallet do chính bạn scan. Danh sách có thể đã thay đổi, vui lòng tải lại." },
       { status: 409 },
@@ -75,7 +92,11 @@ export async function POST(request: Request) {
 
   if (error || !data?.[0]) {
     const message = error?.message || "";
+    const stockError = scanStockError(message);
+    if (stockError) return Response.json({ success: false, error: stockError.error }, { status: stockError.status });
     if (message.includes("PALLET_STATUS_CHANGED_OR_NOT_OWNER")) {
+      const recovered = await recoverReceipt();
+      if (recovered) return recovered;
       return Response.json(
         { success: false, error: "Danh sách đã thay đổi hoặc có pallet không thuộc người đang đăng nhập. Vui lòng tải lại." },
         { status: 409 },
@@ -108,11 +129,5 @@ export async function POST(request: Request) {
     total_quantity: number;
   };
 
-  return Response.json({
-    success: true,
-    receiptId: receipt.receipt_id,
-    receiptDate: receipt.receipt_date,
-    totalPallet: Number(receipt.total_pallet),
-    totalQuantity: Number(receipt.total_quantity),
-  });
+  return receiptResponse(receipt);
 }

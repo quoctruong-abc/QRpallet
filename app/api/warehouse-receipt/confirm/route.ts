@@ -1,6 +1,7 @@
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createReceiptPdf, safeReceiptFilename, type ReceiptPalletRow } from "@/lib/warehouse-receipt/pdf";
+import { scanStockError } from "@/lib/warehouse-receipt/scan-stock-errors";
 
 type PalletRow = ReceiptPalletRow & { pallet_id: string };
 
@@ -33,6 +34,8 @@ export async function POST(request: Request) {
 
   const { data, error } = await supabase.rpc("create_warehouse_receipt", { p_pallet_ids: palletIds });
   if (error || !data?.[0]) {
+    const stockError = scanStockError(error?.message || "");
+    if (stockError) return Response.json({ success: false, error: stockError.error }, { status: stockError.status });
     const message = error?.message.includes("PALLET_STATUS_CHANGED")
       ? "Danh sách pallet đã thay đổi. Vui lòng tải lại."
       : error?.message || "Không thể tạo phiếu.";
