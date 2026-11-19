@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { usePalletQuantity } from "@/app/pallet-label/use-pallet-quantity";
 
 export type PlanItem = {
   machine: string;
@@ -94,8 +93,6 @@ export function PalletLabelClient({ rows }: Props) {
   );
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<PlanItem | null>(null);
-  const fullPallet = usePalletQuantity();
-  const fullQuantity = fullPallet.itemcode === selectedRow?.itemcode.trim() ? fullPallet.quantity : null;
   const [mode, setMode] = useState<Mode>("full");
   const [partialQuantity, setPartialQuantity] = useState("");
   const [differentWorkingDay, setDifferentWorkingDay] = useState(false);
@@ -112,12 +109,10 @@ export function PalletLabelClient({ rows }: Props) {
     setDifferentWorkingDay(false);
     setWorkingDay("");
     setMessage(null);
-    void fullPallet.load(row.itemcode);
   }
 
   function closeModal() {
     if (pending) return;
-    fullPallet.clear();
     setSelectedRow(null);
     setMessage(null);
     setDifferentWorkingDay(false);
@@ -128,13 +123,16 @@ export function PalletLabelClient({ rows }: Props) {
     if (!selectedRow) return;
     setMessage(null);
 
-    if (mode === "full" && (fullPallet.status !== "ready" || fullQuantity === null)) {
-      setMessage({ type: "error", text: "Chưa có số lượng pallet chẵn hợp lệ. Vui lòng tải lại số lượng hoặc cập nhật Cài đặt pallet." });
-      return;
-    }
-    const quantity = mode === "full" ? fullQuantity : Number(partialQuantity);
+    const quantity = mode === "full" ? selectedRow.quantity_per_pallet : Number(partialQuantity);
     if (!quantity || !Number.isInteger(quantity) || quantity <= 0) {
       setMessage({ type: "error", text: "Vui lòng nhập số lượng pallet lẻ hợp lệ." });
+      return;
+    }
+    if (mode === "full" && !selectedRow.quantity_per_pallet) {
+      setMessage({
+        type: "error",
+        text: `Chưa khai báo số lượng/pallet cho item ${selectedRow.itemcode} trong item_pallet_config.`,
+      });
       return;
     }
     if (differentWorkingDay && !workingDay) {
@@ -150,16 +148,12 @@ export function PalletLabelClient({ rows }: Props) {
         body: JSON.stringify({
           ...selectedRow,
           quantity,
-          quantity_per_pallet: fullQuantity,
           even_pallet: mode === "full",
           working_day: differentWorkingDay ? workingDay : null,
         }),
       });
       const result = await response.json();
-      if (!response.ok || !result.success) {
-        if (result.code === "PALLET_QUANTITY_CHANGED" || result.code === "PALLET_QUANTITY_MISSING") await fullPallet.load(selectedRow.itemcode);
-        throw new Error(result.error ?? "Không thể lưu pallet.");
-      }
+      if (!response.ok || !result.success) throw new Error(result.error ?? "Không thể lưu pallet.");
 
       setMessage({
         type: "success",
@@ -272,7 +266,7 @@ export function PalletLabelClient({ rows }: Props) {
             <div className="pallet-summary">
               <div><span>Máy</span><strong>{selectedRow.machine}</strong></div>
               <div><span>Sản phẩm</span><strong>{selectedRow.product_name || "—"}</strong></div>
-              <div><span>SL chuẩn/pallet</span><strong>{formatNumber(fullQuantity)}</strong></div>
+              <div><span>SL chuẩn/pallet</span><strong>{formatNumber(selectedRow.quantity_per_pallet)}</strong></div>
             </div>
 
             <div className="pallet-choice-grid">
@@ -294,22 +288,17 @@ export function PalletLabelClient({ rows }: Props) {
                   min="1"
                   step="1"
                   disabled={mode === "full"}
-                  value={mode === "full" ? fullQuantity ?? "" : partialQuantity}
+                  value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : partialQuantity}
                   onChange={(event) => setPartialQuantity(event.target.value)}
-                  placeholder={mode === "full" ? fullPallet.status === "loading" ? "Đang tải..." : "Chưa cấu hình" : "Nhập số lượng pallet lẻ"}
+                  placeholder={mode === "full" ? "Chưa cấu hình" : "Nhập số lượng pallet lẻ"}
                 />
               </label>
               <ProjectedQuantityProgress
                 current={selectedRow.produced_quantity}
-                addition={mode === "full" ? fullQuantity ?? 0 : Number(partialQuantity)}
+                addition={mode === "full" ? selectedRow.quantity_per_pallet ?? 0 : Number(partialQuantity)}
                 total={selectedRow.quanorder}
               />
             </div>
-
-            {mode === "full" ? <div aria-live="polite">
-              {fullPallet.status === "loading" ? <p className="muted">Đang lấy số lượng pallet chẵn...</p> : fullPallet.status === "error" ? <p className="alert alert-error">{fullPallet.error}</p> : fullPallet.status === "ready" && fullQuantity === null ? <p className="alert alert-error">Item chưa có số lượng pallet chẵn. Vui lòng cập nhật trong Cài đặt pallet.</p> : null}
-              <button className="button button-secondary button-small" disabled={pending || fullPallet.status === "loading"} onClick={() => void fullPallet.load(selectedRow.itemcode)} type="button">Tải lại số lượng chẵn</button>
-            </div> : null}
 
             <div className="pallet-date-section">
               <label className="pallet-date-toggle">
@@ -338,7 +327,7 @@ export function PalletLabelClient({ rows }: Props) {
 
             <div className="modal-actions">
               <button className="button button-secondary" type="button" onClick={closeModal} disabled={pending}>Hủy</button>
-              <button className="button button-primary" type="button" onClick={savePallet} disabled={pending || (mode === "full" && (fullPallet.status !== "ready" || fullQuantity === null))}>
+              <button className="button button-primary" type="button" onClick={savePallet} disabled={pending}>
                 {pending ? "Đang lưu..." : "Xác nhận & lưu pallet"}
               </button>
             </div>

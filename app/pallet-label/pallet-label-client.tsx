@@ -6,7 +6,6 @@ import { OldWoPrintDialog } from "./old-wo-print-dialog";
 import { WoReceiptDialog } from "./wo-receipt-dialog";
 import { WoPalletHistoryDialog } from "./wo-pallet-history-dialog";
 import { useMachineWoSelection } from "./use-machine-wo-selection";
-import { usePalletQuantity } from "./use-pallet-quantity";
 
 export type PlanItem = {
   machine: string;
@@ -118,8 +117,6 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   const { selectedMachine, selectedWos, selectMachine, selectWo } = useMachineWoSelection(validRows);
   const [viewAllMachine, setViewAllMachine] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<PlanItem | null>(null);
-  const fullPallet = usePalletQuantity();
-  const fullQuantity = fullPallet.itemcode === selectedRow?.itemcode.trim() ? fullPallet.quantity : null;
   const [selectedPallet, setSelectedPallet] = useState<ActivePallet | null>(null);
   const [historyWo, setHistoryWo] = useState<string | null>(null);
   const [oldWoPrintOpen, setOldWoPrintOpen] = useState(false);
@@ -154,7 +151,6 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
   function closeDialog() {
     if (pending || reprintingPalletId !== null || (dialog === "config" && updatingItemcode !== null)) return;
     configLookup.current?.abort();
-    fullPallet.clear();
     setConfigSearching(false);
     setDialog(null);
     setSelectedPallet(null);
@@ -174,7 +170,6 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
     setWorkingDay("");
     setMessage(null);
     setDialog("create");
-    void fullPallet.load(row.itemcode);
   }
 
   function openCompensationPrint(row: PlanItem) {
@@ -369,11 +364,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
 
   async function savePallet() {
     if (!selectedRow) return;
-    if (mode === "full" && (fullPallet.status !== "ready" || fullQuantity === null)) {
-      setMessage({ type: "error", text: "Chưa có số lượng pallet chẵn hợp lệ. Vui lòng tải lại số lượng hoặc cập nhật Cài đặt pallet." });
-      return;
-    }
-    const finalQuantity = mode === "full" ? fullQuantity : Number(quantity);
+    const finalQuantity = mode === "full" ? selectedRow.quantity_per_pallet : Number(quantity);
     if (!finalQuantity || !Number.isInteger(finalQuantity) || finalQuantity <= 0) {
       setMessage({ type: "error", text: "Vui lòng nhập số lượng hợp lệ." });
       return;
@@ -391,16 +382,12 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
         body: JSON.stringify({
           ...selectedRow,
           quantity: finalQuantity,
-          quantity_per_pallet: fullQuantity,
           even_pallet: mode === "full",
           working_day: differentWorkingDay ? workingDay : null,
         }),
       });
       const result = await response.json();
-      if (!response.ok || !result.success) {
-        if (result.code === "PALLET_QUANTITY_CHANGED" || result.code === "PALLET_QUANTITY_MISSING") await fullPallet.load(selectedRow.itemcode);
-        throw new Error(result.error ?? "Không thể lưu pallet.");
-      }
+      if (!response.ok || !result.success) throw new Error(result.error ?? "Không thể lưu pallet.");
       const pdfUrl = `/api/pallet-label/pdf?palletId=${encodeURIComponent(result.pallet.pallet_id)}`;
       if (pdfWindow) pdfWindow.location.href = pdfUrl;
       else window.location.href = pdfUrl;
@@ -611,17 +598,13 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
           <label className={`choice-card ${mode === "partial" ? "choice-card-active" : ""}`}><input type="radio" checked={mode === "partial"} onChange={() => setMode("partial")} /><span><strong>Pallet lẻ</strong><small>Nhập số lượng thực tế</small></span></label>
         </div>
         <div className="pallet-quantity-grid">
-          <label>Số lượng<input type="number" min="1" disabled={mode === "full"} placeholder={mode === "full" && fullPallet.status === "loading" ? "Đang tải..." : ""} value={mode === "full" ? fullQuantity ?? "" : quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+          <label>Số lượng<input type="number" min="1" disabled={mode === "full"} value={mode === "full" ? selectedRow.quantity_per_pallet ?? "" : quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
           <ProjectedQuantityProgress
             current={selectedRow.produced_quantity}
-            addition={mode === "full" ? fullQuantity ?? 0 : Number(quantity)}
+            addition={mode === "full" ? selectedRow.quantity_per_pallet ?? 0 : Number(quantity)}
             total={selectedRow.quanorder}
           />
         </div>
-        {mode === "full" ? <div aria-live="polite">
-          {fullPallet.status === "loading" ? <p className="muted">Đang lấy số lượng pallet chẵn từ cấu hình sản phẩm...</p> : fullPallet.status === "error" ? <p className="alert alert-error">{fullPallet.error}</p> : fullPallet.status === "ready" && fullQuantity === null ? <p className="alert alert-error">Item chưa có số lượng pallet chẵn. Vui lòng cập nhật trong Cài đặt pallet.</p> : null}
-          <button className="button button-secondary button-small" disabled={pending || fullPallet.status === "loading"} onClick={() => void fullPallet.load(selectedRow.itemcode)} type="button">Tải lại số lượng chẵn</button>
-        </div> : null}
         <div className="pallet-date-section">
           <label className="pallet-date-toggle">
             <input
@@ -639,7 +622,7 @@ export function PalletLabelClient({ rows, pallets: initialPallets }: Props) {
           </label>
           {differentWorkingDay ? <label className="pallet-date-input">Ngày trên tem<input type="date" value={workingDay} onChange={(event) => setWorkingDay(event.target.value)} /></label> : null}
         </div>
-        <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending || (mode === "full" && (fullPallet.status !== "ready" || fullQuantity === null))} onClick={savePallet}>{pending ? "Đang lưu..." : "Xác nhận & lưu"}</button></div>
+        <div className="modal-actions"><button className="button button-secondary" onClick={closeDialog}>Hủy</button><button className="button button-primary" disabled={pending} onClick={savePallet}>{pending ? "Đang lưu..." : "Xác nhận & lưu"}</button></div>
       </> : null}
 
       {dialog === "created" ? <>

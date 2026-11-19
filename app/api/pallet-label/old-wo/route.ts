@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { palletQuantity } from "@/lib/pallet-label/quantity";
 
 const MAX_WO_LENGTH = 120;
 const PAGE_SIZE = 1000;
@@ -97,8 +96,11 @@ export async function GET(request: Request) {
     }
 
     const itemcode = source.itemcode?.trim() ?? "";
-    let quantityPerPallet: number | null = null;
-    if (itemcode) {
+    const historicalEvenPallet = allRows.find((row) => (
+      row.even_pallet && Number.isInteger(Number(row.quantity)) && Number(row.quantity) > 0
+    ));
+    let quantityPerPallet = historicalEvenPallet ? Number(historicalEvenPallet.quantity) : null;
+    if (quantityPerPallet === null && itemcode) {
       const supabase = await createClient();
       const { data: config, error: configError } = await supabase
         .from("item_pallet_config")
@@ -107,7 +109,10 @@ export async function GET(request: Request) {
         .maybeSingle();
 
       if (configError) throw configError;
-      quantityPerPallet = palletQuantity(config?.quantity_per_pallet);
+      const configuredQuantity = Number(config?.quantity_per_pallet);
+      quantityPerPallet = Number.isInteger(configuredQuantity) && configuredQuantity > 0
+        ? configuredQuantity
+        : null;
     }
 
     const producedQuantity = activeRows.reduce(

@@ -432,21 +432,14 @@ item có trong kế hoạch theo batch 100 mã, tránh mất cấu hình khi cat
 giới hạn trả dữ liệu mặc định 1.000 dòng. Cả trang chính và URL in tem cũ đều dùng
 cách lấy này, chuẩn hóa khoảng trắng đầu/cuối của itemcode khi ghép cấu hình.
 
-Khi mở popup in/in bù, app tra chính xác lại từng item qua
-`GET /api/pallet-label/quantity` (không cache, không phụ thuộc RPC danh sách khách
-hàng). Pallet chẵn tự hiện số lượng mới nhất; đang tải, lỗi đọc hoặc chưa cấu hình
-thì báo rõ và khóa xác nhận chẵn, có nút tải lại. Không tự chuyển sang pallet lẻ.
-In bù lấy cấu hình hiện tại thay vì suy ra từ số lượng pallet chẵn lịch sử.
+Popup in/in bù dùng ngay số lượng đã có trong dữ liệu trang/WO, không gọi thêm
+API khi mở, không có bước tải lại số lượng. Lưu pallet theo luồng cũ, không tra
+lại cấu hình để so sánh số lượng ở backend. Giữ các kiểm tra dữ liệu bắt buộc và
+kiểm tra trùng WO mới đã có từ trước. Không thêm migration hoặc sửa dữ liệu.
 
-Backend đối chiếu số lượng chẵn với database trước khi gọi RPC tạo pallet. Nếu
-cấu hình đã đổi, trả 409, cập nhật lại số lượng trong popup và yêu cầu user kiểm
-tra/xác nhận lại; không tự tạo tem bằng số cũ. Luồng pallet lẻ nhập tay giữ nguyên.
-Sửa lỗi này chỉ thay code, không thêm migration hay thay dữ liệu cấu hình.
-
-Kiểm thử: `npm run test:pallet-quantity` tái hiện catalog 2.005 item, chạy cả hai
-server page, tra cứu chính xác, kiểm tra lỗi/quyền, cấu hình thay đổi, in bù và
-luồng in lẻ. Đã kiểm tra thao tác popup: tự điền, chặn dữ liệu cũ và hủy request
-khi đổi item.
+Kiểm thử `npm run test:pallet-quantity` tái hiện catalog 2.005 item và xác nhận
+hai trang lấy đúng cấu hình theo item trong kế hoạch; lưu chẵn/lẻ chỉ gọi RPC tạo
+tem, không đọc lại catalog.
 
 Bảng:
 
