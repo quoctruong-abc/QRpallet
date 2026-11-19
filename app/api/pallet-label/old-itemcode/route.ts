@@ -30,16 +30,16 @@ export async function GET(request: Request) {
       });
       if ((data ?? []).length < 1000) break;
     }
-    if (workOrders.length) return NextResponse.json({ success: true, itemcode, workOrders, item: null });
-
     const { data, error } = await supabase.from("item_pallet_config")
       .select('itemcode,product_name,"ERP_name",customer,quantity_per_pallet').eq("itemcode", itemcode).maybeSingle();
-    if (error) throw error;
-    if (!data) return NextResponse.json({ success: false, error: "Không tìm thấy itemcode trong dữ liệu pallet hoặc danh mục sản phẩm. Vui lòng cập nhật mã sản phẩm trước khi in tem." }, { status: 404 });
-    const item = itemcodeCatalog(data);
-    if (!item.customer) return NextResponse.json({ success: false, error: `Item ${itemcode} chưa có tên khách hàng. Vui lòng cập nhật tên khách hàng trong thông tin sản phẩm trước khi in tem.` }, { status: 409 });
-    if (!item.product_name) return NextResponse.json({ success: false, error: `Item ${itemcode} chưa có tên sản phẩm. Vui lòng cập nhật thông tin sản phẩm trước khi in tem.` }, { status: 409 });
-    return NextResponse.json({ success: true, itemcode, workOrders: [], item });
+    const item = data ? itemcodeCatalog(data) : null;
+    const newWoError = error ? "Chưa tải được thông tin cấu hình để in WO mới. Vui lòng tra cứu itemcode lại."
+      : !item ? "Itemcode chưa có trong danh mục sản phẩm. Vui lòng cập nhật mã sản phẩm trước khi in WO mới."
+      : !item.customer ? `Item ${itemcode} chưa có tên khách hàng. Vui lòng cập nhật tên khách hàng trong thông tin sản phẩm trước khi in tem.`
+      : !item.product_name ? `Item ${itemcode} chưa có tên sản phẩm. Vui lòng cập nhật thông tin sản phẩm trước khi in tem.` : null;
+    // An incomplete catalog must not hide existing WOs or prevent reprinting.
+    if (!workOrders.length && newWoError) return NextResponse.json({ success: false, error: newWoError }, { status: error ? 500 : !item ? 404 : 409 });
+    return NextResponse.json({ success: true, itemcode, workOrders, item: newWoError ? null : item, newWoError });
   } catch (error) {
     console.error("Old itemcode pallet lookup failed", { itemcode, error });
     return NextResponse.json({ success: false, error: "Không thể tra cứu itemcode. Vui lòng thử lại." }, { status: 500 });

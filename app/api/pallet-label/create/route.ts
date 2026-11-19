@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizePermission } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { itemcodeCatalog } from "@/lib/pallet-label/itemcode-print";
 import { normalizeWarehouseItemcode } from "@/lib/warehouse-receipt/itemcode";
 
 function normalizeDateOnly(value: unknown): string | null | undefined {
@@ -37,8 +36,8 @@ export async function POST(request: Request) {
     }
 
     const supabase = await createClient();
-    // This new intake path requires explicit date/order/WO and current catalog
-    // identity. Re-read it at save time; never trust the browser's snapshot.
+    // New-WO validation and creation run together under database locks. A blur
+    // check is advisory only; the database re-checks duplicates and catalog data.
     if (body.source === "old-itemcode") {
       const itemcode = normalizeWarehouseItemcode(String(body.itemcode ?? ""));
       const wo = String(body.wo ?? "").trim();
@@ -46,14 +45,22 @@ export async function POST(request: Request) {
       if (/\s/.test(itemcode) || !wo || wo.length > 120 || !workingDay || !Number.isFinite(orderQuantity) || orderQuantity <= 0) {
         return NextResponse.json({ error: "Vui lòng nhập đầy đủ WO, ngày sản xuất, số lượng và số lượng đơn hàng hợp lệ." }, { status: 400 });
       }
-      const { data: config, error: configError } = await supabase.from("item_pallet_config")
-        .select('itemcode,product_name,"ERP_name",customer,quantity_per_pallet').eq("itemcode", itemcode).maybeSingle();
-      if (configError) return NextResponse.json({ error: "Chưa kiểm tra được thông tin itemcode. Vui lòng thử lại." }, { status: 500 });
-      if (!config) return NextResponse.json({ error: "Itemcode chưa được khai báo trong danh mục sản phẩm." }, { status: 409 });
-      const item = itemcodeCatalog(config);
-      if (!item.customer) return NextResponse.json({ error: "Vui lòng cập nhật tên khách hàng trong thông tin sản phẩm trước khi in tem." }, { status: 409 });
-      if (!item.product_name) return NextResponse.json({ error: "Vui lòng cập nhật tên sản phẩm trong thông tin sản phẩm trước khi in tem." }, { status: 409 });
-      Object.assign(body, item, { wo, quanorder: orderQuantity, machine: null });
+      const { data, error } = await supabase.rpc("create_pallet_from_new_wo", {
+        p_itemcode: itemcode, p_wo: wo, p_quanorder: orderQuantity, p_quantity: quantity, p_working_day: workingDay,
+      });
+      if (error) {
+        const message = error.message ?? "";
+        if (/PALLET_NEW_WO_(EXISTS|ID_CONFLICT)/.test(message)) return NextResponse.json({ error: "WO đã tồn tại hoặc mã pallet bị trùng. Vui lòng chọn WO đã có hoặc nhập WO mới khác." }, { status: 409 });
+        if (message.includes("PALLET_NEW_WO_CUSTOMER_MISSING")) return NextResponse.json({ error: "Vui lòng cập nhật tên khách hàng trong thông tin sản phẩm trước khi in tem." }, { status: 409 });
+        if (/PALLET_NEW_WO_(NAME|ITEM)_MISSING/.test(message)) return NextResponse.json({ error: "Vui lòng khai báo itemcode và tên sản phẩm trước khi in tem." }, { status: 409 });
+        if (message.includes("PALLET_NEW_WO_INVALID")) return NextResponse.json({ error: "Thông tin WO mới không hợp lệ. Vui lòng kiểm tra các trường bắt buộc." }, { status: 400 });
+        if (message.includes("NOT_AUTHORIZED")) return NextResponse.json({ error: "Bạn không có quyền tạo tem pallet." }, { status: 403 });
+        if (message.includes("PALLET_NEW_WO_BUSY")) return NextResponse.json({ error: "WO đang được xử lý. Chưa tạo tem, vui lòng kiểm tra lại WO rồi thử lại." }, { status: 503 });
+        console.error("New WO pallet creation failed", error);
+        return NextResponse.json({ error: "Không thể tạo tem WO mới. Vui lòng thử kiểm tra WO lại." }, { status: 500 });
+      }
+      if (!data) return NextResponse.json({ error: "Chưa nhận được kết quả tạo tem. Vui lòng kiểm tra lại WO trước khi thử tiếp." }, { status: 500 });
+      return NextResponse.json({ success: true, pallet: data });
     }
 
     const configuredQuantity = Number(body.quantity_per_pallet);

@@ -10,10 +10,17 @@ try {
   await db.exec(`alter table public.item_pallet_config add column updated_at timestamptz not null default now();
     create trigger item_pallet_config_set_updated_at before update on public.item_pallet_config
     for each row execute function public.set_updated_at();`);
+  const creationSql = await sql('supabase/migrations/20260827090000_pallet_label_working_day_even_flag.sql');
+  const start = creationSql.indexOf('create function public.create_pallet_record(');
+  await db.exec(creationSql.slice(start, creationSql.indexOf('$$;', start) + 3));
+  await db.exec('revoke all on function public.create_pallet_record(text,text,text,text,numeric,text,integer,text,date,boolean) from public; grant execute on function public.create_pallet_record(text,text,text,text,numeric,text,integer,text,date,boolean) to authenticated;');
+  const creationAcl = (await db.query("select proacl::text acl from pg_proc where oid='public.create_pallet_record(text,text,text,text,numeric,text,integer,text,date,boolean)'::regprocedure")).rows[0].acl;
   const before = (await db.query('select count(*)::int n from public.pallet_data')).rows[0].n;
   await db.exec(await sql('supabase/migrations/20261119090000_prepare_scan_stock_bridge.sql'));
   await db.exec(await sql('supabase/migrations/20261119100000_pallet_itemcode_work_orders.sql'));
   await db.exec(await sql('supabase/migrations/20261119110000_pallet_config_customers.sql'));
+  await db.exec(await sql('supabase/migrations/20261119120000_new_pallet_wo_guard.sql'));
+  assert.equal((await db.query("select proacl::text acl from pg_proc where oid='public.create_pallet_record(text,text,text,text,numeric,text,integer,text,date,boolean)'::regprocedure")).rows[0].acl, creationAcl, 'Counter repair preserves the existing RPC grants');
   assert.equal((await db.query('select count(*)::int n from public.pallet_data')).rows[0].n, before, 'Migration is read-only with respect to business data');
   assert.equal((await db.query('select public.scan_stock_preflight() report')).rows[0].report.ready_to_activate, true, 'Lookup RPC does not conflict with the held scan activation guards');
   assert.equal((await db.query("select count(*)::int n from pg_trigger where tgname in ('scan_stock_receive','scan_stock_receipt_complete')")).rows[0].n, 0, 'Scan activation remains off');
@@ -22,6 +29,8 @@ try {
   await assert.rejects(lookup(), /NOT_AUTHORIZED/, 'Scan permission alone cannot use the print lookup');
   await assert.rejects(db.query('select public.pallet_customer_options()'), /NOT_AUTHORIZED/);
   await assert.rejects(db.query("select public.pallet_config_save('CFG',100)"), /NOT_AUTHORIZED/);
+  await assert.rejects(db.query("select public.check_new_pallet_wo('NEW')"), /NOT_AUTHORIZED/);
+  await assert.rejects(db.query("select public.create_pallet_from_new_wo('NEW','NEW',100,10,'2026-11-18')"), /NOT_AUTHORIZED/);
   await db.exec('reset role');
   await db.exec("insert into public.permissions values('pallet.create','pallet','Create labels')");
   await db.query("insert into public.user_permissions values($1,'pallet.create',$1)", [f.actor]);
@@ -48,10 +57,6 @@ try {
   assert.deepEqual(await lookup('NONE'), []);
   for (const code of ['', null, 'A B', 'A*B', 'A'.repeat(201)]) await assert.rejects(lookup(code), /INVALID_ITEMCODE/);
   await db.exec('reset role');
-  const creationSql = await sql('supabase/migrations/20260827090000_pallet_label_working_day_even_flag.sql');
-  const start = creationSql.indexOf('create function public.create_pallet_record(');
-  await db.exec(creationSql.slice(start, creationSql.indexOf('$$;', start) + 3));
-  await db.exec('revoke all on function public.create_pallet_record(text,text,text,text,numeric,text,integer,text,date,boolean) from public; grant execute on function public.create_pallet_record(text,text,text,text,numeric,text,integer,text,date,boolean) to authenticated;');
   await f.as();
   const created = (await db.query("select * from public.create_pallet_record('NEW','Product','Customer','NEW-WO',500,null,100,null,'2026-11-18',true)")).rows[0];
   assert.equal(created.pallet_id, 'NEW-WO-001');
@@ -88,13 +93,41 @@ try {
   assert.equal(cfg.ERP_name, 'ERP label'); assert.equal(Number(cfg.netweight), 0.5);
   assert.deepEqual((await db.query('select id,customer from public.pallet_data order by id')).rows, historyBefore, 'Settings never rewrite historical pallet customer snapshots');
   await db.exec('reset role');
+  await db.exec(`insert into public.item_pallet_config(itemcode,quantity_per_pallet,product_name,customer) values('NEW-CODE',100,'Trusted product','Customer');
+    insert into public.pallet_data(pallet_id,itemcode,wo,quantity,customer,effect_to) values
+    ('OLD-MISMATCH-001','OTHER','WRONG-WO',1,'Customer',now()),
+    ('COUNTER-100','OTHER','COUNTER',1,'Customer',null),('COUNTER-999','OTHER','COUNTER',1,'Customer',null);`);
+  await f.as();
+  const check = async wo => (await db.query('select public.check_new_pallet_wo($1) result', [wo])).rows[0].result;
+  const createNew = async (wo, code = 'NEW-CODE') => (await db.query("select * from public.create_pallet_from_new_wo($1,$2,500,100,'2026-11-18')", [code, wo])).rows[0];
+  for (const wo of ['WO-1', ' wo-1 ', 'WO-2', 'OLD-MISMATCH']) assert.equal((await check(wo)).valid, false, 'Duplicate check includes other items, expired versions and old label IDs');
+  assert.equal((await check('FRESH-WO')).valid, true);
+  for (const wo of ['', '0', 'W'.repeat(121)]) assert.equal((await check(wo)).reason, 'INVALID');
+  const newLabel = await createNew(' Fresh-WO ');
+  assert.equal(newLabel.pallet_id, 'Fresh-WO-001'); assert.equal(newLabel.product_name, 'Trusted product');
+  assert.equal(newLabel.customer, 'Customer'); assert.equal(newLabel.even_pallet, true);
+  await assert.rejects(createNew('FRESH-WO'), /PALLET_NEW_WO_EXISTS/);
+  await assert.rejects(createNew('WO-2'), /PALLET_NEW_WO_EXISTS/);
+  await assert.rejects(createNew('MISSING-ITEM', 'UNKNOWN'), /ITEM_MISSING/);
+  await db.exec("reset role; update public.item_pallet_config set customer=null where itemcode='NEW-CODE'");
+  await f.as();
+  assert.equal((await check('CATALOG-RETRY')).valid, true);
+  await assert.rejects(createNew('CATALOG-RETRY'), /CUSTOMER_MISSING/);
+  await db.exec("reset role; update public.item_pallet_config set customer='Customer' where itemcode='NEW-CODE'");
+  await f.as(); assert.equal((await createNew('CATALOG-RETRY')).pallet_id, 'CATALOG-RETRY-001');
+  const after999 = (await db.query("select * from public.create_pallet_record('OTHER','Product','Customer','COUNTER',10000,null,1,null,'2026-11-18',false)")).rows[0];
+  assert.equal(after999.pallet_id, 'COUNTER-1000', 'Counter never truncates at 1000');
+  // Ordinary printing continues to append to the freshly created WO.
+  const append = (await db.query("select * from public.create_pallet_record('NEW-CODE','Trusted product','Customer','Fresh-WO',500,null,100,null,'2026-11-18',true)")).rows[0];
+  assert.equal(append.pallet_id, 'Fresh-WO-002');
+  await db.exec('reset role');
   await db.query('update public.profiles set is_active=false where id=$1', [f.actor]);
   await f.as(); await assert.rejects(lookup(), /NOT_AUTHORIZED/);
   await db.exec('reset role; set role anon');
   await assert.rejects(lookup(), /permission denied/);
   await assert.rejects(db.query('select public.pallet_customer_options()'), /permission denied/);
   await assert.rejects(db.query("select public.pallet_config_save('CFG',100)"), /permission denied/);
-  console.log('PASS DB: pallet WO lookup, customer options from history, atomic quantity/customer settings, catalog metadata preservation, unchanged pallet snapshots, permission guards and dormant scan activation.');
+  console.log('PASS DB: item lookup/settings, new-WO duplicate/history/permission guards, trusted catalog and rollback, legacy continuation, counter 999→1000, preserved RPC grants/pallet snapshots and dormant scan activation.');
 } finally {
   await db.close();
 }

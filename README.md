@@ -384,14 +384,26 @@ pallet_data
 - Tab **itemcode** tìm chính xác item (hỗ trợ `*` điền 0 thành 13 ký tự), tra WO
   trong `pallet_data`, hiện bảng tiến độ để chọn. Chi tiết WO luôn lọc thêm item
   đã tìm; phiên bản lịch sử hết hiệu lực chỉ được xem, không in lại trực tiếp.
-- Nếu chưa có WO: lấy tên sản phẩm từ `item_pallet_config.product_name`, fallback
+- Có thể chọn **In theo WO mới** dù item đã có WO. Form này lấy tên sản phẩm từ `item_pallet_config.product_name`, fallback
   `ERP_name`; lấy khách hàng từ cùng cấu hình. Thiếu tên/khách hàng thì báo cập nhật.
 - Form mới bắt buộc WO, ngày sản xuất, số lượng trên tem và số lượng đơn hàng.
-  Khi lưu, API kiểm tra lại cấu hình và dùng RPC `create_pallet_record` hiện tại.
+  Khi rời ô WO, kiểm tra trùng toàn bộ `pallet_data` (không phân biệt hoa/thường,
+  trim khoảng trắng đầu/cuối, bao gồm lịch sử xóa/phiên bản cũ và item khác).
+  Nút in chỉ mở sau khi WO hợp lệ; sửa WO hoặc kiểm tra lỗi thì khóa lại.
+- RPC `create_pallet_from_new_wo` kiểm tra lại WO và cấu hình trong transaction,
+  lấy khóa WO chuẩn hóa rồi khóa chung với `create_pallet_record` trước khi ghi.
+  Kiểm tra blur không phải đặt chỗ; hai người tạo cùng WO chỉ một người thành công.
+  In thêm/in bù WO đã có vẫn theo luồng cũ.
+- Migration `20261119120000_new_pallet_wo_guard.sql` thêm kiểm tra/tạo WO mới và sửa
+  riêng padding số thứ tự để sau `999` là `1000`, không bị `lpad` cắt thành `100`.
+  Guard sẽ từ chối migration nếu không nhận diện được biểu thức counter hiện tại.
 - Migration `20261119100000_pallet_itemcode_work_orders.sql` chỉ thêm RPC tra cứu
   tổng hợp trong DB, quyền `pallet.create`; không sửa dữ liệu hay bật scan nhập tồn.
   Chạy `supabase db push` sau khi pull code để tab itemcode có thể tra cứu.
 - Kiểm thử API/lookup: `npm run test:pallet-itemcode`.
+- Kiểm thử nhiều session: `PALLET_POSTGRES_BIN=/usr/lib/postgresql/17/bin npm run test:pallet-new-wo:postgres`.
+  Script tự tạo/hủy cluster cục bộ, không nhận URL database thật; kiểm tra tạo
+  trùng, khác hoa/thường, rollback, chạy song song với in WO cũ và timeout khóa.
 
 ### 8.2 Tạo pallet
 

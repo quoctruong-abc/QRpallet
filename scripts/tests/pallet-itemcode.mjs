@@ -4,7 +4,7 @@ import { createRequire, Module } from 'node:module';
 import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
-let allowed = true, rows = [], summaries = [], config = null, databaseError = null, calls = [], queries = [];
+let allowed = true, rows = [], summaries = [], config = null, databaseError = null, createError = null, woStatus = { wo: 'FRESH', valid: true }, calls = [], queries = [];
 const client = {
   from(table) {
     const query = { table, filters: [], offset: 0, end: 999 };
@@ -32,7 +32,8 @@ const client = {
         then: (resolve, reject) => Promise.resolve({ data: summaries.slice(query.offset, query.end + 1), error: databaseError }).then(resolve, reject) };
       return builder;
     }
-    calls.push({ name, args }); return Promise.resolve({ data: { pallet_id: 'WO-NEW-001' }, error: null });
+    if (name === 'check_new_pallet_wo') return Promise.resolve({ data: woStatus, error: databaseError });
+    calls.push({ name, args }); return Promise.resolve({ data: createError ? null : { pallet_id: 'WO-NEW-001' }, error: createError });
   },
 };
 const mocks = {
@@ -48,6 +49,7 @@ function load(file) {
   return mod.exports;
 }
 const { GET } = load(new URL('../../app/api/pallet-label/old-itemcode/route.ts', import.meta.url).pathname);
+const checkNewWo = load(new URL('../../app/api/pallet-label/check-new-wo/route.ts', import.meta.url).pathname);
 const oldWo = load(new URL('../../app/api/pallet-label/old-wo/route.ts', import.meta.url).pathname);
 const { POST } = load(new URL('../../app/api/pallet-label/create/route.ts', import.meta.url).pathname);
 const get = code => new Request('http://localhost/api/pallet-label/old-itemcode?' + new URLSearchParams({ itemcode: code }));
@@ -68,7 +70,10 @@ let response = await GET(get('ITEM')), result = await response.json();
 assert.equal(response.status, 200);
 assert.equal(result.workOrders.length, 1001, 'All summary pages are included');
 assert.equal(result.workOrders[0].produced_quantity, 20);
-assert.equal(queries.filter(q => q.table === 'item_pallet_config').length, 0, 'WO history has priority over catalog');
+assert.equal(queries.filter(q => q.table === 'item_pallet_config').length, 1, 'Existing WO results also offer a catalog-backed new-WO form');
+assert.ok(result.newWoError, 'Missing catalog does not hide existing WOs');
+config = { ...catalog };
+assert.ok((await (await GET(get('ITEM'))).json()).item, 'Existing WOs and a valid new-WO form can be returned together');
 assert.equal(queries.filter(q => q.table === 'pallet_data').length, 0, 'Lookup never downloads raw pallet history');
 assert.deepEqual(queries.find(q => q.table === 'WO summary RPC').args, { p_itemcode: 'ITEM' });
 summaries = [];
@@ -99,21 +104,14 @@ for (const change of [
 assert.equal(calls.length, 0, 'Required-field validation happens before any write');
 response = await POST(post(valid));
 assert.equal(response.status, 200);
-assert.equal(calls[0].name, 'create_pallet_record');
+assert.equal(calls[0].name, 'create_pallet_from_new_wo');
 assert.deepEqual(calls[0].args, {
-  p_itemcode: catalog.itemcode, p_product_name: 'Production name', p_customer: 'Customer',
-  p_wo: 'WO-NEW', p_quanorder: 500, p_machine: null, p_quantity: 100, p_note: null,
-  p_working_day: '2026-11-18', p_even_pallet: true,
-});
-calls = []; config.customer = '';
-assert.equal((await POST(post(valid))).status, 409, 'Re-read catalog catches customer removed after lookup');
-assert.equal(calls.length, 0);
-config = null;
-assert.equal((await POST(post(valid))).status, 409);
-config = { ...catalog, product_name: '', ERP_name: ' ERP fallback ' };
-assert.equal((await POST(post({ ...valid, quantity: 60 }))).status, 200);
-assert.equal(calls.at(-1).args.p_product_name, 'ERP fallback');
-assert.equal(calls.at(-1).args.p_even_pallet, false);
+  p_itemcode: catalog.itemcode, p_wo: 'WO-NEW', p_quanorder: 500, p_quantity: 100, p_working_day: '2026-11-18',
+}, 'New-WO API never passes browser product/customer identity or calls the unguarded legacy RPC');
+for (const [message, status] of [['PALLET_NEW_WO_CUSTOMER_MISSING',409],['PALLET_NEW_WO_ITEM_MISSING',409],['PALLET_NEW_WO_EXISTS',409],['PALLET_NEW_WO_ID_CONFLICT',409],['PALLET_NEW_WO_BUSY',503],['PALLET_NEW_WO_INVALID',400],['NOT_AUTHORIZED',403]]) {
+  createError = { message }; assert.equal((await POST(post(valid))).status, status);
+}
+createError = null;
 calls = [];
 assert.equal((await POST(post({ itemcode: 'OLD', wo: 'WO-OLD', quantity: 10, quanorder: null }))).status, 200, 'Existing WO printing keeps its optional date and order quantity');
 assert.equal(calls[0].args.p_working_day, null);
@@ -130,4 +128,11 @@ assert.equal(result.pallets[0].status, 'historical');
 assert.equal(result.pallets[0].is_deleted, true, 'Expired versions cannot be sent to reprint');
 assert.equal(result.workOrder.produced_quantity, 0);
 assert.equal((await oldWo.GET(new Request('http://localhost/api/pallet-label/old-wo?wo=WO-1'))).status, 404, 'WO tab keeps its original current/deleted history scope');
-console.log('PASS: itemcode WO discovery/pagination, version-safe dashboard progress, catalog/customer gates, required print fields, trusted save-time identity, item-scoped WO selection and existing WO print contract.');
+const checkRequest = wo => new Request('http://localhost/api/pallet-label/check-new-wo?' + new URLSearchParams({ wo }));
+allowed = false; assert.equal((await checkNewWo.GET(checkRequest('FRESH'))).status, 403); allowed = true;
+for (const wo of ['', '0', 'X'.repeat(121)]) assert.equal((await checkNewWo.GET(checkRequest(wo))).status, 400);
+response = await checkNewWo.GET(checkRequest('FRESH')); assert.equal((await response.json()).valid, true);
+woStatus = { wo: 'TAKEN', valid: false, reason: 'EXISTS' };
+response = await checkNewWo.GET(checkRequest('TAKEN')); assert.equal(response.status, 200); assert.equal((await response.json()).valid, false);
+databaseError = { message: 'offline' }; assert.equal((await checkNewWo.GET(checkRequest('FRESH'))).status, 503);
+console.log('PASS API: historical/new-WO choice, catalog gates, blur checks, required fields, atomic new-WO RPC contract, duplicate/busy errors, item-scoped history and existing WO print compatibility.');
