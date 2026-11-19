@@ -427,6 +427,20 @@ ID được sinh trong database transaction để tránh collision khi nhiều u
 
 ### 8.3 Quantity chuẩn mỗi pallet
 
+Số lượng chẵn lấy từ `item_pallet_config.quantity_per_pallet`. Trang chỉ tải các
+item có trong kế hoạch theo batch 100 mã, tránh mất cấu hình khi catalog vượt
+giới hạn trả dữ liệu mặc định 1.000 dòng. Cả trang chính và URL in tem cũ đều dùng
+cách lấy này, chuẩn hóa khoảng trắng đầu/cuối của itemcode khi ghép cấu hình.
+
+Popup in/in bù dùng ngay số lượng đã có trong dữ liệu trang/WO, không gọi thêm
+API khi mở, không có bước tải lại số lượng. Lưu pallet theo luồng cũ, không tra
+lại cấu hình để so sánh số lượng ở backend. Giữ các kiểm tra dữ liệu bắt buộc và
+kiểm tra trùng WO mới đã có từ trước. Không thêm migration hoặc sửa dữ liệu.
+
+Kiểm thử `npm run test:pallet-quantity` tái hiện catalog 2.005 item và xác nhận
+hai trang lấy đúng cấu hình theo item trong kế hoạch; lưu chẵn/lẻ chỉ gọi RPC tạo
+tem, không đọc lại catalog.
+
 Bảng:
 
 ```text
@@ -1116,6 +1130,11 @@ Chi tiết lịch sử hiển thị tối đa 500 lần xuất; dữ liệu đ�
 Đồng bộ confirm scan đã có phần chuẩn bị, chưa kích hoạt; xem mục bên dưới.
 
 ### Chuẩn bị nối confirm scan vào tồn kho — CHƯA BẬT
+
+Trước go-live có bộ [kiểm tra và reset dữ liệu kho thử](supabase/operations/WAREHOUSE_CLEANUP.md):
+11 bảng ledger được xử lý cùng transaction, giữ master/production/receipt cũ,
+chặn sau kích hoạt hoặc có nguồn scan. Các file chỉ nằm ở `supabase/operations`,
+không chạy qua migration và không tự phân biệt test với dữ liệu thật.
 
 Migration `20261119090000_prepare_scan_stock_bridge.sql` chỉ thêm source scan,
 unique ID nguồn và các hàm nội bộ/read-only recovery. Nó không gắn trigger,

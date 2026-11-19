@@ -9,7 +9,10 @@
     "lint": "eslint .",
     "test:delivery": "node scripts/tests/delivery.mjs",
     "test:warehouse-admin": "node scripts/tests/warehouse-admin-permissions.mjs",
+    "test:warehouse-cleanup": "node scripts/tests/warehouse-cleanup.mjs",
+    "test:warehouse-cleanup:postgres": "node scripts/tests/warehouse-cleanup-postgres.mjs",
     "test:pallet-itemcode": "node scripts/tests/pallet-itemcode-db.mjs && node scripts/tests/pallet-itemcode.mjs && node scripts/tests/pallet-config.mjs",
+    "test:pallet-quantity": "node scripts/tests/pallet-quantity.mjs",
     "test:pallet-new-wo:postgres": "node scripts/tests/pallet-new-wo-postgres.mjs",
     "test:scan-stock": "node scripts/tests/scan-stock.mjs && node scripts/tests/scan-confirm-api.mjs",
     "test:scan-stock:postgres": "node scripts/tests/scan-stock-postgres.mjs"
